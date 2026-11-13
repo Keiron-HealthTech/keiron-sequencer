@@ -1,0 +1,31 @@
+{
+  "card": "CRM-1",
+  "scope": {
+    "complete": true,
+    "note": null
+  },
+  "cases": [
+    {
+      "given": "a visitor on the home page",
+      "when": "they ask for a greeting",
+      "then": "the api answers with a greeting",
+      "source": "patch",
+      "ref": "patch:api/00001-new.patch"
+    },
+    {
+      "given": "a visitor on the home page",
+      "when": "the greeting arrives",
+      "then": "the web page shows it",
+      "source": "linear",
+      "ref": "linear:CRM-1"
+    }
+  ],
+  "decisions": [
+    {
+      "text": "Greet in English only.",
+      "ref": "linear:CRM-1"
+    }
+  ],
+  "findings": [],
+  "engram": []
+}

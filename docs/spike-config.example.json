@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "checkoutRoots": ["~/src"],
+  "repos": {
+    "api": {
+      "name": "example-api",
+      "github": "example-org/example-api",
+      "checkout": "~/src/example-api",
+      "url": null,
+      "remote": "origin",
+      "defaultBranch": "main",
+      "branchNaming": "verbatim",
+      "setup": [["npm", "ci"]],
+      "setupTimeoutMs": 900000,
+      "typecheck": [["npm", "run", "typecheck"]],
+      "typecheckTimeoutMs": 600000,
+      "notes": ["A stacked PR gets no preview deployment; review it locally."],
+      "risk": [
+        { "kind": "authorization", "paths": ["**/guards/**", "**/authorization/**"] },
+        { "kind": "migrations", "paths": ["**/migrations/**"] }
+      ]
+    },
+    "web": {
+      "name": "example-web",
+      "github": "example-org/example-web",
+      "checkout": null,
+      "url": "https://github.com/example-org/example-web.git",
+      "remote": "origin",
+      "defaultBranch": "main",
+      "branchNaming": "strip-card-id",
+      "setup": [["npm", "ci"]],
+      "risk": []
+    }
+  },
+  "projects": {
+    "0123456789ab": { "repos": ["api", "web"] }
+  }
+}

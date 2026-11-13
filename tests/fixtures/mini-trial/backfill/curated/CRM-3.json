@@ -1,0 +1,19 @@
+{
+  "card": "CRM-3",
+  "scope": {
+    "complete": false,
+    "note": "Only the api side was spiked."
+  },
+  "cases": [
+    {
+      "given": "two callers of the greeting",
+      "when": "the helper is shared",
+      "then": "both use it",
+      "source": "patch",
+      "ref": "patch:api/00003-new.patch"
+    }
+  ],
+  "decisions": [],
+  "findings": [],
+  "engram": []
+}

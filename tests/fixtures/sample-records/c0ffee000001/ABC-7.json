@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "card": "ABC-7",
+  "title": "Add input validation",
+  "project": {
+    "slug": "c0ffee000001",
+    "name": "Sample Project"
+  },
+  "origin": "thin-spike",
+  "spikedAt": "2026-11-06T22:00:00.000Z",
+  "archived": null,
+  "supersededBy": {
+    "card": "ABC-7",
+    "spikedAt": "2026-11-10T10:00:00.000Z"
+  },
+  "alias": {
+    "splitFrom": null,
+    "mergedInto": null
+  },
+  "scope": {
+    "complete": false,
+    "note": "Only the write path; the read path is left for a later card."
+  },
+  "size": {
+    "prodLines": 20,
+    "testLines": 10,
+    "files": 2,
+    "repos": [
+      "example-api"
+    ],
+    "sharedWith": [],
+    "deletionWeight": 0.25
+  },
+  "effort": null,
+  "fixups": {
+    "received": [],
+    "caused": []
+  },
+  "cases": [
+    {
+      "id": "c1",
+      "given": "a record with an empty name",
+      "when": "it is written",
+      "then": "it is refused naming the field",
+      "source": "linear",
+      "ref": "linear:ABC-7"
+    }
+  ],
+  "decisions": [],
+  "findings": [
+    {
+      "kind": "split",
+      "text": "Read-path validation is a card of its own.",
+      "ref": "linear:ABC-7"
+    }
+  ],
+  "refs": {
+    "engram": [],
+    "patches": [],
+    "linear": null
+  }
+}

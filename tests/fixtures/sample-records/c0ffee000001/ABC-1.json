@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "card": "ABC-1",
+  "title": "Set up the project skeleton",
+  "project": {
+    "slug": "c0ffee000001",
+    "name": "Sample Project"
+  },
+  "origin": "thin-spike",
+  "spikedAt": "2026-11-06T22:00:00.000Z",
+  "archived": null,
+  "supersededBy": null,
+  "alias": {
+    "splitFrom": null,
+    "mergedInto": null
+  },
+  "scope": {
+    "complete": true,
+    "note": null
+  },
+  "size": {
+    "prodLines": 15,
+    "testLines": 5,
+    "files": 2,
+    "repos": [
+      "example-api"
+    ],
+    "sharedWith": [],
+    "deletionWeight": 0.25
+  },
+  "effort": {
+    "basis": "transcript-window",
+    "windows": [
+      {
+        "start": "2026-11-06T21:00:00.000Z",
+        "end": "2026-11-06T21:30:00.000Z",
+        "cards": [
+          "ABC-1",
+          "ABC-2"
+        ],
+        "messages": 20,
+        "tokens": {
+          "input": 300,
+          "cacheCreation": 6000,
+          "cacheRead": 150000,
+          "output": 3000,
+          "thinking": 900
+        }
+      }
+    ]
+  },
+  "fixups": {
+    "received": [
+      {
+        "from": "ABC-3",
+        "patch": "example-api/fixup-1-from-3-shared-helper.patch",
+        "note": "ABC-3 renamed the shared helper, so the skeleton call site changed."
+      }
+    ],
+    "caused": []
+  },
+  "cases": [
+    {
+      "id": "c1",
+      "given": "an empty checkout",
+      "when": "the skeleton is generated",
+      "then": "the build passes with no sources",
+      "source": "linear",
+      "ref": "linear:ABC-1"
+    }
+  ],
+  "decisions": [],
+  "findings": [],
+  "refs": {
+    "engram": [],
+    "patches": [
+      "example-api/00001-new.patch"
+    ],
+    "linear": null
+  }
+}

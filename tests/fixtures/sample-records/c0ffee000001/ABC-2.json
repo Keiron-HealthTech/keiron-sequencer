@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "card": "ABC-2",
+  "title": "Add the configuration loader",
+  "project": {
+    "slug": "c0ffee000001",
+    "name": "Sample Project"
+  },
+  "origin": "thin-spike",
+  "spikedAt": "2026-11-06T22:00:00.000Z",
+  "archived": null,
+  "supersededBy": null,
+  "alias": {
+    "splitFrom": "ABC-1",
+    "mergedInto": null
+  },
+  "scope": {
+    "complete": true,
+    "note": null
+  },
+  "size": {
+    "prodLines": 40,
+    "testLines": 20,
+    "files": 3,
+    "repos": [
+      "example-api"
+    ],
+    "sharedWith": [],
+    "deletionWeight": 0.25
+  },
+  "effort": {
+    "basis": "transcript-window",
+    "windows": [
+      {
+        "start": "2026-11-06T21:00:00.000Z",
+        "end": "2026-11-06T21:30:00.000Z",
+        "cards": [
+          "ABC-1",
+          "ABC-2"
+        ],
+        "messages": 20,
+        "tokens": {
+          "input": 300,
+          "cacheCreation": 6000,
+          "cacheRead": 150000,
+          "output": 3000,
+          "thinking": 900
+        }
+      }
+    ]
+  },
+  "fixups": {
+    "received": [],
+    "caused": []
+  },
+  "cases": [
+    {
+      "id": "c1",
+      "given": "a config file with an unknown key",
+      "when": "the loader reads it",
+      "then": "it names the key and refuses",
+      "source": "linear",
+      "ref": "linear:ABC-2"
+    }
+  ],
+  "decisions": [],
+  "findings": [
+    {
+      "kind": "reorder",
+      "text": "The loader is needed before the skeleton can read its defaults.",
+      "ref": "linear:ABC-2"
+    }
+  ],
+  "replayed": {
+    "at": "2026-11-08T09:05:00.000Z",
+    "runId": "20261108T090000Z",
+    "fromRunId": null,
+    "folded": [
+      "example-api/00002-new.patch"
+    ]
+  },
+  "refs": {
+    "engram": [],
+    "patches": [
+      "example-api/00002-new.patch"
+    ],
+    "linear": null,
+    "runId": "20261108T090000Z"
+  }
+}

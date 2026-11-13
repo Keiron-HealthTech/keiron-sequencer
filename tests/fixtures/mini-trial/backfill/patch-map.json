@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "project": {
+    "slug": "mini00000001",
+    "name": "Mini trial"
+  },
+  "repos": {
+    "api": "example-api",
+    "web": "example-web"
+  },
+  "patches": {
+    "api/00001-new.patch": {
+      "kind": "card",
+      "cards": [
+        "CRM-1"
+      ]
+    },
+    "api/00002-existing.patch": {
+      "kind": "card",
+      "cards": [
+        "CRM-2"
+      ],
+      "existing": true
+    },
+    "api/00003-new.patch": {
+      "kind": "card",
+      "cards": [
+        "CRM-3"
+      ]
+    },
+    "api/fixup-1-from-3-shared-helper.patch": {
+      "kind": "fixup",
+      "fixed": [
+        "CRM-1"
+      ],
+      "from": "CRM-3"
+    },
+    "web/00001-new.patch": {
+      "kind": "card",
+      "cards": [
+        "CRM-1"
+      ]
+    }
+  },
+  "cards": {}
+}

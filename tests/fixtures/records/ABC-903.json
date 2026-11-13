@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "card": "ABC-903",
+  "title": "Build the shared export service",
+  "project": {
+    "slug": "c0ffee000001",
+    "name": "Sample Project"
+  },
+  "origin": "thin-spike",
+  "spikedAt": "2026-11-06T21:20:00.000Z",
+  "archived": null,
+  "supersededBy": null,
+  "alias": {
+    "splitFrom": null,
+    "mergedInto": null
+  },
+  "scope": {
+    "complete": true,
+    "note": null
+  },
+  "size": {
+    "prodLines": 113,
+    "testLines": 51,
+    "files": 9,
+    "repos": [
+      "example-api"
+    ],
+    "sharedWith": [],
+    "deletionWeight": 0.25
+  },
+  "effort": {
+    "basis": "transcript-window",
+    "windows": [
+      {
+        "start": "2026-11-06T21:11:00.000Z",
+        "end": "2026-11-06T21:20:00.000Z",
+        "cards": [
+          "ABC-902",
+          "ABC-903"
+        ],
+        "messages": 42,
+        "tokens": {
+          "input": 1200,
+          "cacheCreation": 24000,
+          "cacheRead": 600000,
+          "output": 12000,
+          "thinking": 3600
+        }
+      }
+    ]
+  },
+  "fixups": {
+    "received": [
+      {
+        "from": "ABC-913",
+        "patch": "example-api/refactor-903-from-913-module-move.patch",
+        "note": "The export helpers moved into their own module, so the service changed its import paths."
+      }
+    ],
+    "caused": [
+      {
+        "to": "ABC-911",
+        "patch": "example-api/fixup-911-912-from-903-labels.patch",
+        "note": "The export service now needs the caller id, so the reader gained an argument and its tests changed."
+      },
+      {
+        "to": "ABC-912",
+        "patch": "example-api/fixup-911-912-from-903-labels.patch",
+        "note": "The export service now needs the caller id, so the writer constructor test changed."
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "c1",
+      "given": "a caller allowed to export a record",
+      "when": "the export service builds the file",
+      "then": "it includes every visible field",
+      "source": "engram",
+      "ref": "engram:example-api#635"
+    }
+  ],
+  "decisions": [
+    {
+      "text": "Land this card before every caller of the export service, because it changes the service signature.",
+      "ref": "engram:example-api#635"
+    }
+  ],
+  "findings": [
+    {
+      "kind": "reorder",
+      "text": "Callers built before this card would need the new argument threaded through again.",
+      "ref": "engram:example-api#635"
+    }
+  ],
+  "refs": {
+    "engram": [
+      "example-api#635"
+    ],
+    "patches": [
+      "example-api/00903-new.patch"
+    ],
+    "linear": "https://linear.app/example/issue/ABC-903/build-the-shared-export-service"
+  }
+}

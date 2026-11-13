@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "card": "ABC-3",
+  "title": "Define the data model",
+  "project": {
+    "slug": "c0ffee000001",
+    "name": "Sample Project"
+  },
+  "origin": "thin-spike",
+  "spikedAt": "2026-11-06T22:00:00.000Z",
+  "archived": null,
+  "supersededBy": null,
+  "alias": {
+    "splitFrom": null,
+    "mergedInto": null
+  },
+  "scope": {
+    "complete": true,
+    "note": null
+  },
+  "size": {
+    "prodLines": 113,
+    "testLines": 51,
+    "files": 9,
+    "repos": [
+      "example-api",
+      "example-web"
+    ],
+    "sharedWith": [
+      "ABC-1"
+    ],
+    "deletionWeight": 0.25
+  },
+  "effort": {
+    "basis": "card-run",
+    "runId": "20261107T090000Z",
+    "windows": [
+      {
+        "start": "2026-11-07T09:00:00.000Z",
+        "end": "2026-11-07T09:40:00.000Z",
+        "cards": [
+          "ABC-3"
+        ],
+        "messages": 55,
+        "tokens": {
+          "input": 900,
+          "cacheCreation": 18000,
+          "cacheRead": 450000,
+          "output": 9000,
+          "thinking": 2700
+        }
+      }
+    ]
+  },
+  "fixups": {
+    "received": [],
+    "caused": [
+      {
+        "to": "ABC-1",
+        "patch": "example-api/fixup-1-from-3-shared-helper.patch",
+        "note": "ABC-3 renamed the shared helper, so the skeleton call site changed."
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "c1",
+      "given": "a record with an optional field left out",
+      "when": "it is saved",
+      "then": "it reads back with the field absent",
+      "source": "linear",
+      "ref": "linear:ABC-3"
+    },
+    {
+      "id": "c2",
+      "given": "two records with the same key",
+      "when": "the second is saved",
+      "then": "it is refused as a duplicate",
+      "source": "engram",
+      "ref": "engram:example-api#12"
+    }
+  ],
+  "decisions": [
+    {
+      "text": "Keys are case-sensitive.",
+      "ref": "engram:example-api#12"
+    }
+  ],
+  "findings": [
+    {
+      "kind": "risk",
+      "text": "The web client caches the old field names.",
+      "ref": "linear:ABC-3"
+    }
+  ],
+  "priorFindings": [
+    {
+      "text": "The model needs a version field.",
+      "outcome": "holds",
+      "ref": "linear:ABC-3"
+    }
+  ],
+  "openDecisions": [
+    {
+      "text": "Which field wins when two sources disagree.",
+      "impact": "design",
+      "status": "narrowed",
+      "owner": "people",
+      "eliminated": [
+        {
+          "option": "always take the newest",
+          "why": "clocks on the clients drift"
+        }
+      ],
+      "ref": "linear:ABC-3"
+    }
+  ],
+  "riskAreas": [
+    {
+      "kind": "migrations",
+      "paths": [
+        "example-api/db/migrations/",
+        "example-api/src/model.ts"
+      ]
+    }
+  ],
+  "novelty": {
+    "newPaths": [
+      "example-api/src/model/"
+    ]
+  },
+  "timeBox": {
+    "budget": 100,
+    "spent": 60,
+    "over": false
+  },
+  "refs": {
+    "engram": [
+      "example-api#12"
+    ],
+    "patches": [
+      "example-api/00003-new.patch",
+      "example-web/00003-new.patch"
+    ],
+    "linear": "https://linear.app/example/issue/ABC-3/define-the-data-model",
+    "runId": "20261107T090000Z"
+  }
+}

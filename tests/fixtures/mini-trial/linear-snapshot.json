@@ -1,0 +1,24 @@
+{
+  "project": {
+    "name": "Mini trial",
+    "issues": {
+      "nodes": [
+        {
+          "identifier": "CRM-1",
+          "title": "Add the greeting endpoint",
+          "url": "https://linear.app/example/issue/CRM-1"
+        },
+        {
+          "identifier": "CRM-2",
+          "title": "Keep the existing export",
+          "url": "https://linear.app/example/issue/CRM-2"
+        },
+        {
+          "identifier": "CRM-3",
+          "title": "Share the greeting helper",
+          "url": "https://linear.app/example/issue/CRM-3"
+        }
+      ]
+    }
+  }
+}

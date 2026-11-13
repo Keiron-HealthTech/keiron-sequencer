@@ -1,0 +1,7 @@
+{
+  "api/00001-new.patch": "diff --git a/src/greet.js b/src/greet.js\nindex 1111111..2222222 100644\n--- a/src/greet.js\n+++ b/src/greet.js\n@@ -1,2 +1,4 @@\n export const route = '/'\n-export const greet = () => null\n+export const greet = () => 'hello'\n+export const loud = () => 'HELLO'\n+export const quiet = () => 'hi'\ndiff --git a/src/greet.test.js b/src/greet.test.js\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/src/greet.test.js\n@@ -0,0 +1,2 @@\n+import { greet } from './greet.js'\n+assert(greet() === 'hello')\n",
+  "web/00001-new.patch": "diff --git a/src/home.js b/src/home.js\nindex 1111111..2222222 100644\n--- a/src/home.js\n+++ b/src/home.js\n@@ -1,1 +1,2 @@\n export const home = () => ''\n+export const banner = greeting => greeting\n",
+  "api/00002-existing.patch": "diff --git a/src/export.js b/src/export.js\nindex 1111111..2222222 100644\n--- a/src/export.js\n+++ b/src/export.js\n@@ -1,1 +1,3 @@\n export const rows = []\n+export const csv = () => rows.join(',')\n+export const tsv = () => rows.join('\\t')\n",
+  "api/00003-new.patch": "diff --git a/src/helper.js b/src/helper.js\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/src/helper.js\n@@ -0,0 +1,1 @@\n+export const greeting = () => 'hello'\n",
+  "api/fixup-1-from-3-shared-helper.patch": "diff --git a/src/greet.js b/src/greet.js\nindex 1111111..2222222 100644\n--- a/src/greet.js\n+++ b/src/greet.js\n@@ -2,1 +2,1 @@\n-export const greet = () => 'hello'\n+export { greeting as greet } from './helper.js'\n"
+}

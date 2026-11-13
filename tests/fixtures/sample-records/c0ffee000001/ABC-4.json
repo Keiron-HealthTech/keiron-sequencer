@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "card": "ABC-4",
+  "title": "Build the storage layer",
+  "project": {
+    "slug": "c0ffee000001",
+    "name": "Sample Project"
+  },
+  "origin": "thin-spike",
+  "spikedAt": "2026-11-06T22:00:00.000Z",
+  "archived": null,
+  "supersededBy": null,
+  "alias": {
+    "splitFrom": "ABC-2",
+    "mergedInto": null
+  },
+  "scope": {
+    "complete": true,
+    "note": null
+  },
+  "size": {
+    "prodLines": 300,
+    "testLines": 100,
+    "files": 12,
+    "repos": [
+      "example-api"
+    ],
+    "sharedWith": [],
+    "deletionWeight": 0.25
+  },
+  "effort": null,
+  "fixups": {
+    "received": [],
+    "caused": []
+  },
+  "cases": [
+    {
+      "id": "c1",
+      "given": "a full disk",
+      "when": "a record is written",
+      "then": "the write fails without a partial file",
+      "source": "patch",
+      "ref": "patch:example-api/00004-new.patch"
+    }
+  ],
+  "decisions": [],
+  "findings": [],
+  "refs": {
+    "engram": [],
+    "patches": [
+      "example-api/00004-new.patch"
+    ],
+    "linear": null
+  }
+}

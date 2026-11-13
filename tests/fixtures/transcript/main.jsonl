@@ -1,0 +1,6 @@
+{"type":"custom-title","customTitle":"fixture"}
+{"type":"user","timestamp":"2026-01-01T00:00:00.000Z","message":{"role":"user","content":"start"}}
+{"type":"assistant","timestamp":"2026-01-01T00:00:10.000Z","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":5,"output_tokens_details":{"thinking_tokens":2}}}}
+{"type":"assistant","timestamp":"2026-01-01T00:01:00.000Z","message":{"id":"m2","role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"S=/x/spike; $S/snap.sh $PWD $S/backend 00001-new"}}],"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":100,"output_tokens":1,"output_tokens_details":{"thinking_tokens":0}}}}
+{"type":"user","timestamp":"2026-01-01T00:01:01.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","is_error":false,"content":"00001-new: 1 file changed"}]}}
+{"type":"assistant","timestamp":"2026-01-01T00:02:00.000Z","message":{"id":"m3","role":"assistant","content":[{"type":"text","text":"after"}],"usage":{"input_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1000,"output_tokens_details":{"thinking_tokens":0}}}}

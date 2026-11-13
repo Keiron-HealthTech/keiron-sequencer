@@ -1,0 +1,25 @@
+{
+  "card": "CRM-2",
+  "scope": {
+    "complete": true,
+    "note": null
+  },
+  "cases": [
+    {
+      "given": "an existing export",
+      "when": "the card is spiked",
+      "then": "the open PR is copied as is",
+      "source": "linear",
+      "ref": "linear:CRM-2"
+    }
+  ],
+  "decisions": [],
+  "findings": [
+    {
+      "kind": "risk",
+      "text": "The PR has no tests.",
+      "ref": "linear:CRM-2"
+    }
+  ],
+  "engram": []
+}

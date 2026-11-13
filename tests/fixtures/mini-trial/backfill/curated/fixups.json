@@ -1,0 +1,6 @@
+{
+  "api/fixup-1-from-3-shared-helper.patch": {
+    "note": "CRM-3 moved the greeting into a shared helper; the fixup points CRM-1's endpoint at it.",
+    "ref": "linear:CRM-3"
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "card": "ABC-6",
+  "title": "Expose the write API",
+  "project": {
+    "slug": "c0ffee000001",
+    "name": "Sample Project"
+  },
+  "origin": "thin-spike",
+  "spikedAt": "2026-11-06T22:00:00.000Z",
+  "archived": {
+    "at": "2026-11-09",
+    "reason": "archived in Linear"
+  },
+  "supersededBy": null,
+  "alias": {
+    "splitFrom": null,
+    "mergedInto": "ABC-5"
+  },
+  "scope": {
+    "complete": true,
+    "note": null
+  },
+  "size": {
+    "prodLines": 8,
+    "testLines": 2,
+    "files": 1,
+    "repos": [
+      "example-api"
+    ],
+    "sharedWith": [],
+    "deletionWeight": 0.25
+  },
+  "effort": null,
+  "fixups": {
+    "received": [],
+    "caused": []
+  },
+  "cases": [],
+  "decisions": [],
+  "findings": [],
+  "refs": {
+    "engram": [],
+    "patches": [],
+    "linear": null
+  }
+}

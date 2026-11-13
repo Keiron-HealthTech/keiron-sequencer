@@ -1,0 +1,638 @@
+{
+  "project": "Sample Project",
+  "fetchedAt": "2026-11-09",
+  "issues": [
+    {
+      "identifier": "ABC-1",
+      "title": "Set up the project skeleton",
+      "url": "https://linear.app/example/issue/ABC-1/set-up-the-project-skeleton",
+      "estimate": 1,
+      "archivedAt": null,
+      "state": {
+        "name": "Done",
+        "type": "completed"
+      },
+      "projectMilestone": {
+        "name": "Foundations"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "parent": null,
+      "relations": {
+        "nodes": [
+          {
+            "type": "blocks",
+            "relatedIssue": {
+              "identifier": "ABC-3"
+            }
+          },
+          {
+            "type": "blocks",
+            "relatedIssue": {
+              "identifier": "ABC-4"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "identifier": "ABC-2",
+      "title": "Add the configuration loader",
+      "url": "https://linear.app/example/issue/ABC-2/add-the-configuration-loader",
+      "estimate": 2,
+      "archivedAt": null,
+      "state": {
+        "name": "Done",
+        "type": "completed"
+      },
+      "projectMilestone": {
+        "name": "Foundations"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "parent": null,
+      "relations": {
+        "nodes": [
+          {
+            "type": "blocks",
+            "relatedIssue": {
+              "identifier": "ABC-5"
+            }
+          },
+          {
+            "type": "blocks",
+            "relatedIssue": {
+              "identifier": "ABC-12"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "identifier": "ABC-3",
+      "title": "Define the data model",
+      "url": "https://linear.app/example/issue/ABC-3/define-the-data-model",
+      "estimate": 3,
+      "archivedAt": null,
+      "state": {
+        "name": "In Progress",
+        "type": "started"
+      },
+      "projectMilestone": {
+        "name": "Foundations"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "parent": null,
+      "relations": {
+        "nodes": [
+          {
+            "type": "blocks",
+            "relatedIssue": {
+              "identifier": "ABC-6"
+            }
+          },
+          {
+            "type": "related",
+            "relatedIssue": {
+              "identifier": "ABC-1"
+            }
+          },
+          {
+            "type": "related",
+            "relatedIssue": {
+              "identifier": "ABC-2"
+            }
+          },
+          {
+            "type": "related",
+            "relatedIssue": {
+              "identifier": "ABC-4"
+            }
+          },
+          {
+            "type": "related",
+            "relatedIssue": {
+              "identifier": "ABC-5"
+            }
+          },
+          {
+            "type": "related",
+            "relatedIssue": {
+              "identifier": "ABC-7"
+            }
+          },
+          {
+            "type": "related",
+            "relatedIssue": {
+              "identifier": "ABC-8"
+            }
+          },
+          {
+            "type": "related",
+            "relatedIssue": {
+              "identifier": "ABC-9"
+            }
+          },
+          {
+            "type": "related",
+            "relatedIssue": {
+              "identifier": "ABC-10"
+            }
+          },
+          {
+            "type": "related",
+            "relatedIssue": {
+              "identifier": "ABC-12"
+            }
+          },
+          {
+            "type": "related",
+            "relatedIssue": {
+              "identifier": "ABC-13"
+            }
+          },
+          {
+            "type": "related",
+            "relatedIssue": {
+              "identifier": "ABC-14"
+            }
+          },
+          {
+            "type": "related",
+            "relatedIssue": {
+              "identifier": "ABC-15"
+            }
+          },
+          {
+            "type": "related",
+            "relatedIssue": {
+              "identifier": "ABC-16"
+            }
+          },
+          {
+            "type": "related",
+            "relatedIssue": {
+              "identifier": "ABC-17"
+            }
+          },
+          {
+            "type": "blocks",
+            "relatedIssue": {
+              "identifier": "ABC-11"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "identifier": "ABC-4",
+      "title": "Build the storage layer",
+      "url": "https://linear.app/example/issue/ABC-4/build-the-storage-layer",
+      "estimate": null,
+      "archivedAt": null,
+      "state": {
+        "name": "Backlog",
+        "type": "backlog"
+      },
+      "projectMilestone": {
+        "name": "Foundations"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "parent": null,
+      "relations": {
+        "nodes": [
+          {
+            "type": "blocks",
+            "relatedIssue": {
+              "identifier": "ABC-7"
+            }
+          },
+          {
+            "type": "blocks",
+            "relatedIssue": {
+              "identifier": "ABC-10"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "identifier": "ABC-5",
+      "title": "Expose the read API",
+      "url": "https://linear.app/example/issue/ABC-5/expose-the-read-api",
+      "estimate": null,
+      "archivedAt": null,
+      "state": {
+        "name": "Backlog",
+        "type": "backlog"
+      },
+      "projectMilestone": {
+        "name": "Core features"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "parent": null,
+      "relations": {
+        "nodes": [
+          {
+            "type": "blocks",
+            "relatedIssue": {
+              "identifier": "ABC-8"
+            }
+          },
+          {
+            "type": "blocks",
+            "relatedIssue": {
+              "identifier": "ABC-20"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "identifier": "ABC-6",
+      "title": "Expose the write API",
+      "url": "https://linear.app/example/issue/ABC-6/expose-the-write-api",
+      "estimate": null,
+      "archivedAt": null,
+      "state": {
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "projectMilestone": {
+        "name": "Core features"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "parent": null,
+      "relations": {
+        "nodes": [
+          {
+            "type": "blocks",
+            "relatedIssue": {
+              "identifier": "ABC-8"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "identifier": "ABC-7",
+      "title": "Add input validation",
+      "url": "https://linear.app/example/issue/ABC-7/add-input-validation",
+      "estimate": null,
+      "archivedAt": null,
+      "state": {
+        "name": "Backlog",
+        "type": "backlog"
+      },
+      "projectMilestone": {
+        "name": "Core features"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "parent": null,
+      "relations": {
+        "nodes": [
+          {
+            "type": "blocks",
+            "relatedIssue": {
+              "identifier": "ABC-10"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "identifier": "ABC-8",
+      "title": "Add the export command",
+      "url": "https://linear.app/example/issue/ABC-8/add-the-export-command",
+      "estimate": null,
+      "archivedAt": null,
+      "state": {
+        "name": "Backlog",
+        "type": "backlog"
+      },
+      "projectMilestone": {
+        "name": "Core features"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "parent": null,
+      "relations": {
+        "nodes": [
+          {
+            "type": "blocks",
+            "relatedIssue": {
+              "identifier": "ABC-11"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "identifier": "ABC-9",
+      "title": "¿Should exports be paginated?",
+      "url": "https://linear.app/example/issue/ABC-9/should-exports-be-paginated",
+      "estimate": null,
+      "archivedAt": null,
+      "state": {
+        "name": "Backlog",
+        "type": "backlog"
+      },
+      "projectMilestone": {
+        "name": "Core features"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "parent": null,
+      "relations": {
+        "nodes": []
+      }
+    },
+    {
+      "identifier": "ABC-10",
+      "title": "Write the user guide",
+      "url": "https://linear.app/example/issue/ABC-10/write-the-user-guide",
+      "estimate": null,
+      "archivedAt": null,
+      "state": {
+        "name": "Backlog",
+        "type": "backlog"
+      },
+      "projectMilestone": {
+        "name": "Release"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "parent": null,
+      "relations": {
+        "nodes": [
+          {
+            "type": "blocks",
+            "relatedIssue": {
+              "identifier": "ABC-12"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "identifier": "ABC-11",
+      "title": "Publish the first release",
+      "url": "https://linear.app/example/issue/ABC-11/publish-the-first-release",
+      "estimate": null,
+      "archivedAt": null,
+      "state": {
+        "name": "Backlog",
+        "type": "backlog"
+      },
+      "projectMilestone": {
+        "name": "Release"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "parent": null,
+      "relations": {
+        "nodes": []
+      }
+    },
+    {
+      "identifier": "ABC-12",
+      "title": "Add usage metrics",
+      "url": "https://linear.app/example/issue/ABC-12/add-usage-metrics",
+      "estimate": null,
+      "archivedAt": null,
+      "state": {
+        "name": "Backlog",
+        "type": "backlog"
+      },
+      "projectMilestone": null,
+      "labels": {
+        "nodes": []
+      },
+      "parent": null,
+      "relations": {
+        "nodes": []
+      }
+    },
+    {
+      "identifier": "ABC-13",
+      "title": "¿Which storage engine should we use?",
+      "url": "https://linear.app/example/issue/ABC-13/which-storage-engine-should-we-use",
+      "estimate": null,
+      "archivedAt": null,
+      "state": {
+        "name": "Backlog",
+        "type": "backlog"
+      },
+      "projectMilestone": null,
+      "labels": {
+        "nodes": [
+          {
+            "name": "map"
+          }
+        ]
+      },
+      "parent": null,
+      "relations": {
+        "nodes": [
+          {
+            "type": "blocks",
+            "relatedIssue": {
+              "identifier": "ABC-4"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "identifier": "ABC-14",
+      "title": "Deliver the export screen design",
+      "url": "https://linear.app/example/issue/ABC-14/deliver-the-export-screen-design",
+      "estimate": null,
+      "archivedAt": null,
+      "state": {
+        "name": "Backlog",
+        "type": "backlog"
+      },
+      "projectMilestone": null,
+      "labels": {
+        "nodes": [
+          {
+            "name": "map:design-delivery"
+          }
+        ]
+      },
+      "parent": null,
+      "relations": {
+        "nodes": [
+          {
+            "type": "blocks",
+            "relatedIssue": {
+              "identifier": "ABC-13"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "identifier": "ABC-15",
+      "title": "¿Do we need an offline mode?",
+      "url": "https://linear.app/example/issue/ABC-15/do-we-need-an-offline-mode",
+      "estimate": null,
+      "archivedAt": null,
+      "state": {
+        "name": "Backlog",
+        "type": "backlog"
+      },
+      "projectMilestone": null,
+      "parent": null,
+      "relations": {
+        "nodes": []
+      }
+    },
+    {
+      "identifier": "ABC-16",
+      "title": "QA",
+      "url": "https://linear.app/example/issue/ABC-16/qa",
+      "estimate": null,
+      "archivedAt": null,
+      "state": {
+        "name": "Backlog",
+        "type": "backlog"
+      },
+      "projectMilestone": {
+        "name": "Core features"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "parent": {
+        "identifier": "ABC-7"
+      },
+      "relations": {
+        "nodes": []
+      }
+    },
+    {
+      "identifier": "ABC-17",
+      "title": "Check the read API by hand",
+      "url": "https://linear.app/example/issue/ABC-17/check-the-read-api-by-hand",
+      "estimate": null,
+      "archivedAt": null,
+      "state": {
+        "name": "Backlog",
+        "type": "backlog"
+      },
+      "projectMilestone": {
+        "name": "Core features"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "QA"
+          }
+        ]
+      },
+      "parent": {
+        "identifier": "ABC-5"
+      },
+      "relations": {
+        "nodes": []
+      }
+    },
+    {
+      "identifier": "ABC-18",
+      "title": "QA: export command (ABC-8)",
+      "url": "https://linear.app/example/issue/ABC-18/qa-export-command-abc-8",
+      "estimate": null,
+      "archivedAt": null,
+      "state": {
+        "name": "Backlog",
+        "type": "backlog"
+      },
+      "projectMilestone": {
+        "name": "Core features"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "parent": {
+        "identifier": "ABC-8"
+      },
+      "relations": {
+        "nodes": []
+      }
+    },
+    {
+      "identifier": "ABC-19",
+      "title": "Add a legacy importer",
+      "url": "https://linear.app/example/issue/ABC-19/add-a-legacy-importer",
+      "estimate": null,
+      "archivedAt": null,
+      "state": {
+        "name": "Canceled",
+        "type": "canceled"
+      },
+      "projectMilestone": {
+        "name": "Core features"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "parent": null,
+      "relations": {
+        "nodes": []
+      }
+    },
+    {
+      "identifier": "ABC-20",
+      "title": "Migrate the old settings file",
+      "url": "https://linear.app/example/issue/ABC-20/migrate-the-old-settings-file",
+      "estimate": null,
+      "archivedAt": "2026-11-02T09:00:00.000Z",
+      "state": {
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "projectMilestone": {
+        "name": "Core features"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "parent": null,
+      "relations": {
+        "nodes": []
+      }
+    }
+  ],
+  "milestones": [
+    {
+      "name": "Release",
+      "sortOrder": 30.5
+    },
+    {
+      "name": "Foundations",
+      "sortOrder": 10
+    },
+    {
+      "name": "Core features",
+      "sortOrder": 20
+    }
+  ]
+}

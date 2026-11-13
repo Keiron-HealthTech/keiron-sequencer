@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "repos": { "backend": "example-api" },
+  "patches": {
+    "backend/00000-old.patch": { "kind": "skip", "replacedBy": "backend/00001-new.patch" },
+    "backend/00001-new.patch": { "kind": "card", "cards": ["CRM-1"] }
+  },
+  "cards": {}
+}

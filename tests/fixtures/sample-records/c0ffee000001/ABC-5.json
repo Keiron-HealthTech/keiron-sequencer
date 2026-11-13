@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "card": "ABC-5",
+  "title": "Expose the read API",
+  "project": {
+    "slug": "c0ffee000001",
+    "name": "Sample Project"
+  },
+  "origin": "existing-pr",
+  "spikedAt": "2026-11-06T22:00:00.000Z",
+  "archived": null,
+  "supersededBy": null,
+  "alias": {
+    "splitFrom": null,
+    "mergedInto": null
+  },
+  "scope": {
+    "complete": true,
+    "note": null
+  },
+  "size": {
+    "prodLines": 70,
+    "testLines": 20,
+    "files": 4,
+    "repos": [
+      "example-api"
+    ],
+    "sharedWith": [],
+    "deletionWeight": 0.25
+  },
+  "effort": null,
+  "fixups": {
+    "received": [],
+    "caused": []
+  },
+  "cases": [
+    {
+      "id": "c1",
+      "given": "a stored record",
+      "when": "it is read by key",
+      "then": "the API returns it",
+      "source": "linear",
+      "ref": "linear:ABC-5"
+    },
+    {
+      "id": "c2",
+      "given": "a missing key",
+      "when": "it is read",
+      "then": "the API answers not found",
+      "source": "engram",
+      "ref": "engram:example-api#20"
+    },
+    {
+      "id": "c3",
+      "given": "a malformed key",
+      "when": "it is read",
+      "then": "the API answers bad request",
+      "source": "patch",
+      "ref": "patch:example-api/00005-existing.patch"
+    }
+  ],
+  "decisions": [
+    {
+      "text": "Reads never create a record.",
+      "ref": "engram:example-api#20"
+    }
+  ],
+  "findings": [
+    {
+      "kind": "under-scoped",
+      "text": "Paging is not in the card but the list endpoint needs it.",
+      "ref": "linear:ABC-5"
+    }
+  ],
+  "refs": {
+    "engram": [
+      "example-api#20"
+    ],
+    "patches": [
+      "example-api/00005-existing.patch"
+    ],
+    "linear": null,
+    "runId": "20261109T090000Z"
+  }
+}

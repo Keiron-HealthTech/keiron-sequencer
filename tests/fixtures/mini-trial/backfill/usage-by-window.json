@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "windows": [
+    {
+      "start": "2026-01-05T10:00:00.000Z",
+      "end": "2026-01-05T10:10:00.000Z",
+      "patches": [
+        "api/00001-new.patch",
+        "web/00001-new.patch"
+      ],
+      "messages": 4,
+      "tokens": {
+        "input": 10,
+        "cacheCreation": 100,
+        "cacheRead": 1000,
+        "output": 20,
+        "thinking": 5
+      }
+    },
+    {
+      "start": "2026-01-05T10:10:00.000Z",
+      "end": "2026-01-05T10:12:00.000Z",
+      "patches": [
+        "api/00002-existing.patch"
+      ],
+      "messages": 1,
+      "tokens": {
+        "input": 20,
+        "cacheCreation": 200,
+        "cacheRead": 2000,
+        "output": 40,
+        "thinking": 10
+      }
+    },
+    {
+      "start": "2026-01-05T10:12:00.000Z",
+      "end": "2026-01-05T10:30:00.000Z",
+      "patches": [
+        "api/00003-new.patch",
+        "api/fixup-1-from-3-shared-helper.patch"
+      ],
+      "messages": 6,
+      "tokens": {
+        "input": 30,
+        "cacheCreation": 300,
+        "cacheRead": 3000,
+        "output": 60,
+        "thinking": 15
+      }
+    }
+  ]
+}
