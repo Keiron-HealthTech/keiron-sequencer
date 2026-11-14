@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
+import { run as respike } from './respike.mjs';
 import { basename, join, resolve } from 'node:path';
 import { fail, isEntry, lines, ok, parseArgs, redacted } from './lib/cli.mjs';
 import { analyzeProject } from './lib/graph.mjs';
@@ -37,11 +38,13 @@ const USAGE = [
   'usage: node scripts/spike.mjs abandon [--discard] [--project <project ref>]',
   'usage: node scripts/spike.mjs prune [<slug>] [--dry-run]',
   'usage: node scripts/spike.mjs status [--project <project ref>]',
+  'usage: node scripts/spike.mjs config <project ref> --out <draft.json> [--root <dir>]...',
+  'usage: node scripts/spike.mjs config --draft <draft.json> [--approve <hash>]',
 ];
 
 const cardNumber = key => Number(String(key).match(/(\d+)$/)?.[1] ?? 0);
 
-const COMMANDS = { begin, next, tree, candidates, 'notes-template': notesTemplateFor, end, fixup, rebuild, pause, abandon, prune, status };
+const COMMANDS = { begin, next, tree, candidates, 'notes-template': notesTemplateFor, end, fixup, rebuild, pause, abandon, prune, status, config };
 
 // transcripts: null means no session discovery, so only an explicit --session-file is ever read.
 export async function run(argv, {
@@ -687,6 +690,11 @@ async function status(args, { home, now, transcripts }) {
     trees: Object.entries(state.repos).filter(([, r]) => r.status !== 'removed').map(([repo, r]) => ({ repo, kind: r.kind, status: r.status, path: r.path })),
     unsettled: unsettledWindows(state).map(({ card, window }) => ({ card, execution: window.execution, end: window.end })),
   });
+}
+
+// The draft is respike's config step; before a first spike no card has a record, so every card counts as stale.
+function config(args, { env, fetchImpl, keyFile, now, home, dataDir, git, gh }) {
+  return respike(['config', ...args], { env, fetchImpl, keyFile, now, home, dataDir, git, gh });
 }
 
 async function prune(args, { home, dataDir }) {

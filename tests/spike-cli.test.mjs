@@ -267,3 +267,21 @@ test('end refuses with exit 8 on a failing typecheck and accepts --skip-typechec
   assert.equal(ended.code, 0, ended.stderr);
   assert.ok(runs.calls.some(c => c.argv.join(' ') === 'tc README.md'), JSON.stringify(runs.calls));
 });
+
+test('config is respike\'s config step: the same draft review and the same refusals', async () => {
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { run: respike } = await import('../scripts/respike.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'spike-config-'));
+  const home = join(dir, 'home');
+  mkdirSync(home);
+  const draft = join(dir, 'draft.json');
+  writeFileSync(draft, `${JSON.stringify({ schemaVersion: 1, repos: {} }, null, 2)}\n`);
+  for (const args of [['--draft', draft], ['--draft', join(dir, 'missing.json')], []]) {
+    const deps = { env: {}, home, keyFile: join(dir, 'no-key') };
+    const [a, b] = [await run(['config', ...args], deps), await respike(['config', ...args], deps)];
+    assert.equal(a.code, b.code, args.join(' '));
+    assert.equal(a.stdout, b.stdout, args.join(' '));
+    if (args.length) assert.equal(a.stderr, b.stderr, args.join(' '));
+  }
+});

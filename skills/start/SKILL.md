@@ -47,7 +47,7 @@ checkout only.
 - Every bash fence below runs only `node ${CLAUDE_PLUGIN_ROOT}/scripts/start.mjs …`.
 
 Install: the user installs it as a plugin; do not run these yourself:
-`claude plugin marketplace add <repo folder>`, then
+`claude plugin marketplace add <owner>/keiron-sequencer`, then
 `claude plugin install keiron-sequencer@keiron-sequencer`.
 
 ## Step 1: Preflight

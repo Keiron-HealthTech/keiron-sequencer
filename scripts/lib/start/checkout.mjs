@@ -77,7 +77,7 @@ export function mapRepo(config, given) {
 }
 
 const TITLE_PREFIX = /^\s*([^\s:]+):\s/;
-const REPO_LINE = /^\s*Repo:\s*`?([^\s`]+)`?/m;
+const REPO_LINE = /^\s*(?:[-*]\s+)?Repo:\s*`?([^\s`]+)`?/m;
 
 export function cardRepos(card, record, patches, config) {
   const out = [];
@@ -89,7 +89,7 @@ export function cardRepos(card, record, patches, config) {
   const titled = mapRepo(config, TITLE_PREFIX.exec(card.title ?? '')?.[1] ?? '');
   if (titled) add(titled, 'title');
   else {
-    const line = REPO_LINE.exec(card.description ?? '')?.[1];
+    const line = REPO_LINE.exec(card.description ?? '')?.[1]?.replace(/[.,;:]+$/, '');
     if (line) add(given(line), 'repo-line');
   }
   for (const name of record?.size?.repos ?? []) add(given(name), 'record');

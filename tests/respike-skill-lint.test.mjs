@@ -240,7 +240,7 @@ test('the skill never shows a key or a key path, or tells anyone to read one', (
 });
 
 test('the plugin install is documented, not performed, and no symlink is named', () => {
-  says('`claude plugin marketplace add <repo folder>`');
+  says('`claude plugin marketplace add <owner>/keiron-sequencer`');
   says('`claude plugin install keiron-sequencer@keiron-sequencer`');
   says('do not run these yourself');
   assert.doesNotMatch(skill, /ln -s|\.claude\/skills/);

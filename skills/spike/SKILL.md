@@ -44,11 +44,39 @@ subagent per card, no headless runs.
 
 ## Preflight (before the first live run)
 
-1. The user writes `~/.keiron-sequencer/config.json` from
-   `docs/spike-config.example.json` (repos, checkouts, setup commands, risk
-   path globs, `projects.<slug>.repos`). If a command fails with a config
-   error, show the error and stop. An empty `projects.<slug>.repos: []` is an
-   error: leave the key out to allow every repo.
+1. Draft `~/.keiron-sequencer/config.json` yourself; the user never writes it by
+   hand and does not need to know its shape. Before the first live run of a
+   project, run:
+
+   ```bash
+   node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs config <project ref> --out <draft.json> [--root <dir>]...
+   node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs config --draft <draft.json>
+   node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs config --draft <draft.json> --approve <hash>
+   ```
+
+   - **Where the checkouts are.** Pass `--root` with the folder that holds the
+     checkout this session runs in (for a worktree, the folder that holds the
+     repo's main checkout). Only when the draft still reports a
+     repo not found, or exits 2 with `no checkout roots` outside any checkout,
+     ask once which folders hold their checkouts and draft again with each as
+     `--root <dir>`.
+   - **What the draft fills.** Each card's repo comes from its title prefix or
+     its `Repo:` line. For each repo the draft reads the GitHub name and remote
+     from the checkout's git remote, the default branch from the remote's HEAD,
+     the setup command from the lockfile and standard risk paths from
+     `docs/spike-config.example.json`. The typecheck needs no config.
+   - **What the user sees.** One line per repo: `<repo> → <checkout path>`, plus
+     each repo not found and each value the draft could not fill, in plain
+     words, then one question: use these? Never show the JSON, the hash, the
+     setup or the risk paths unless the user asks, and then the review
+     (`config --draft <draft.json>`) shows them.
+   - **Write** only on the user's yes, with `--approve <hash>`. A change the user
+     asks for (another path, a repo to leave out) goes into a new draft; follow
+     /keiron-sequencer:respike's config step (Missing config: draft, review,
+     write) for every other case. `message: 'nothing to draft'` means the config
+     already covers the project: say nothing and go on.
+   - An empty `projects.<slug>.repos: []` is an error: leave the key out to
+     allow every repo.
 2. Ask the user to add `~/.keiron-sequencer` as a Claude Code additional directory
    before the first live run (for example `/add-dir ~/.keiron-sequencer`). Without it,
    every edit in a spike tree asks for permission. Ask; do not edit their
@@ -60,7 +88,7 @@ subagent per card, no headless runs.
    checkout listed there to the user.
 
 Install: the user installs it as a plugin; do not run these yourself:
-`claude plugin marketplace add <repo folder>`, then
+`claude plugin marketplace add <owner>/keiron-sequencer`, then
 `claude plugin install keiron-sequencer@keiron-sequencer`.
 
 ## Step 1: Begin or resume

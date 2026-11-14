@@ -339,8 +339,8 @@ test('spike: the skill holds no old name, in its front matter or its text', () =
 
 test('spike: every command the skill runs is a spike CLI command, and the skill runs all of them', async () => {
   const named = new Set([...spike.matchAll(/node \$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/spike\.mjs ([a-z-]+)/g)].map(m => m[1]));
-  const commands = [...(await spikeUsage()).matchAll(/^usage: node scripts\/spike\.mjs ([a-z-]+)/gm)].map(m => m[1]).sort();
-  assert.deepEqual(commands, ['abandon', 'begin', 'candidates', 'end', 'fixup', 'next', 'notes-template', 'pause', 'prune', 'rebuild', 'status', 'tree']);
+  const commands = [...new Set([...(await spikeUsage()).matchAll(/^usage: node scripts\/spike\.mjs ([a-z-]+)/gm)].map(m => m[1]))].sort();
+  assert.deepEqual(commands, ['abandon', 'begin', 'candidates', 'config', 'end', 'fixup', 'next', 'notes-template', 'pause', 'prune', 'rebuild', 'status', 'tree']);
   assert.deepEqual([...named].sort(), commands);
 });
 
@@ -448,7 +448,7 @@ test('spike: nothing-to-do on a completed project points to /keiron-sequencer:re
 });
 
 test('spike: the plugin install is documented, not performed, and no symlink is named', () => {
-  spikeSays('`claude plugin marketplace add <repo folder>`');
+  spikeSays('`claude plugin marketplace add <owner>/keiron-sequencer`');
   spikeSays('`claude plugin install keiron-sequencer@keiron-sequencer`');
   spikeSays('the user installs it');
   assert.doesNotMatch(spike, /ln -s|\.claude\/skills/);
@@ -595,4 +595,18 @@ test('local clones are found from the checkouts in the sequencer config, never a
   assert.doesNotMatch(skill, /~\/Desktop\//);
   says('the parent folder of every `checkout` in `~/.keiron-sequencer/config.json`');
   has('KEIRON_SEQUENCER_HOME');
+});
+
+test('spike: the config is drafted by the skill from the cards and the checkouts, and written only on the approved hash', () => {
+  spikeSays('the user never writes it by hand');
+  spikeSays('node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs config <project ref> --out <draft.json>');
+  spikeSays('--approve <hash>');
+  spikeSays('ask once which folders hold their checkouts');
+  assert.doesNotMatch(spikeFlat, /The user writes `~\/\.keiron-sequencer\/config\.json`/);
+});
+
+test('spike: the config is shown as one line per repo and its path, found from this session\'s checkout first', () => {
+  spikeSays('One line per repo: `<repo> → <checkout path>`');
+  spikeSays('the folder that holds the checkout this session runs in');
+  spikeSays('Never show the JSON, the hash, the setup or the risk paths unless the user asks');
 });

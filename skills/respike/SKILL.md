@@ -62,7 +62,7 @@ card, no headless runs.
   or `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs …`.
 
 Install: the user installs it as a plugin; do not run these yourself:
-`claude plugin marketplace add <repo folder>`, then
+`claude plugin marketplace add <owner>/keiron-sequencer`, then
 `claude plugin install keiron-sequencer@keiron-sequencer`.
 
 ## Preflight (before the first live run)

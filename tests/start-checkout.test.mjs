@@ -279,3 +279,10 @@ test('a gh failure marks the remote unavailable', () => {
   assert.equal(failed.out.remote, 'unavailable');
   assert.match(failed.out.unavailable, /401/);
 });
+
+test('a Repo: line written as a list item still names the card\'s repo', () => {
+  const config = { repos: {} };
+  for (const description of ['## Qué\n\n* Repo: app-repo (`apps/base`).\n* más', '- Repo: `app-repo`', '  * Repo: app-repo', '* Repo: app-repo.', '* Repo: app-repo, with its jobs']) {
+    assert.deepEqual(cardRepos({ title: 'Hacer algo', description }, null, [], config), [{ dir: null, name: 'app-repo', source: 'repo-line' }], description);
+  }
+});

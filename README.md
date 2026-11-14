@@ -32,10 +32,14 @@ the skills work without it.
 - **A Linear key**, in `LINEAR_API_KEY` or in `~/.config/keiron-planner/linear.key`
   (the same file keiron-planner's `/keiron-planner:planner-setup` writes). The
   skills never print it.
-- **A config** at `~/.keiron-sequencer/config.json` naming each repo a project
-  touches: its checkout, default branch, setup and typecheck commands, and risk
-  paths. See [docs/spike-config.example.json](docs/spike-config.example.json);
-  `/keiron-sequencer:respike` can draft one from your checkouts.
+- **Nothing to write by hand for the config.** On a project's first spike,
+  `/keiron-sequencer:spike` reads each card's repo from Linear, finds your
+  checkouts next to the one you run it in, and asks you to confirm one line per
+  repo (`api → ~/src/api`). It reads the rest from each checkout
+  and writes `~/.keiron-sequencer/config.json` on your yes. The shape is
+  [docs/spike-config.example.json](docs/spike-config.example.json).
+- **Edit access** to `~/.keiron-sequencer` in Claude Code (`/add-dir ~/.keiron-sequencer`)
+  before the first spike.
 
 ## Your data stays local
 
