@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, globSync, readdirSync, readFileSync } from 'node:fs';
-import { ORDER_KEYS, SOON_DAYS } from '../scripts/lib/next-order.mjs';
+import { ORDER_KEYS } from '../scripts/lib/next-order.mjs';
 import { run as runSpike } from '../scripts/spike.mjs';
 import { guardNetwork } from './helpers/no-network.mjs';
 
@@ -26,11 +26,20 @@ test('the next skill holds no old name, in its front matter or its text', () => 
   assert.doesNotMatch(skill, new RegExp('mi' + 'kado', 'i'));
 });
 
-test('Step 0 calls the graph CLI with the project reference and handles every exit code', () => {
-  has('node ${CLAUDE_PLUGIN_ROOT}/scripts/graph.mjs "<project-ref>"');
-  for (const code of ['Exit 0', 'Exit 1', 'Exit 2', 'Exit 3']) has(code);
-  has('DEGRADED');
-  has('warnings[]');
+const STEP0 = 'Step 0: Run the CLI';
+const LIB = name => readFileSync(new URL(`../scripts/${name}`, import.meta.url), 'utf8');
+
+test('next runs only next.mjs, packs.mjs and move-data.mjs, with no DEGRADED mode and no gh or git recipe', () => {
+  const scripts = [...skill.matchAll(/\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/([\w/.-]+\.mjs)/g)].map(m => m[1]);
+  assert.deepEqual([...new Set(scripts)].sort(), ['maintenance/move-data.mjs', 'next.mjs', 'packs.mjs']);
+  assert.doesNotMatch(skill, /DEGRADED|graph\.mjs|gh pr list|gh search prs|gh api|for-each-ref|worktree list|ls-remote/);
+});
+
+test('Step 0 runs the CLI with a long timeout and stops on exits 1, 2 and 3', () => {
+  const step0 = section(STEP0);
+  assert.ok(step0.includes('node ${CLAUDE_PLUGIN_ROOT}/scripts/next.mjs "<project-ref>"'), 'Step 0 must run next.mjs');
+  assert.ok(step0.includes('timeout: 180000'));
+  for (const code of ['Exit 0', 'Exit 1', 'Exit 2', 'Exit 3']) assert.ok(step0.includes(code), code);
   has('LINEAR_API_KEY');
   has('~/.config/keiron-planner/linear.key');
 });
@@ -42,87 +51,67 @@ test('the spike-record check names the data folder in the spike home, and the da
   assert.ok(!skill.includes('${CLAUDE_PLUGIN_ROOT}/data/'), 'SKILL.md names a data folder inside the plugin');
 });
 
-test('the spike-record check reads records.count; the pick and the alternate show size.label, never effort', () => {
-  has('records.count');
-  for (const heading of ['The pick', 'The alternate']) {
-    const item = section('Output').split('\n- **').find(b => b.startsWith(`${heading}**`)) ?? '';
-    assert.ok(item.includes('size.label'), `Output "${heading}" must show size.label`);
-  }
-  says('Never show effort');
-});
-
-test('Step 0 tells "no spike record" from "records unreadable" with records.count and records.invalid', () => {
-  const step0 = section('Step 0: Read the Graph');
+test('Step 0 tells "no spike record" from "records unreadable" with records.count and records.invalid, one line at most', () => {
+  const step0 = section(STEP0);
   for (const text of ['records.count', 'records.invalid', '~/.keiron-sequencer/<project.slug>', 'No spike record for', 'Spike records unreadable for', 'record-invalid']) {
     assert.ok(step0.includes(text), `Step 0 is missing ${JSON.stringify(text)}`);
   }
   assert.equal(count('No spike record for'), 1);
   assert.equal(count('Spike records unreadable for'), 1);
+  says('Print at most one of these lines for this project in this run, and continue');
+  assert.ok(step0.replace(/\s+/g, ' ').includes('are ignored: neither counted nor invalid'));
 });
 
-test('the size shown is the CLI\'s label: never a tier read from a record file, none in DEGRADED mode, never effort', () => {
-  says('never from a record file');
-  says('In DEGRADED mode no `size.label` is shown (the tier only appears inside the label)');
-  assert.doesNotMatch(flat, /show no tier/);
-  has('ls ~/.keiron-sequencer/<project.slug>/*.json');
-  says('Never show effort');
-  for (const heading of ['The pick', 'The alternate']) {
-    const item = section('Output').split('\n- **').find(b => b.startsWith(`${heading}**`)) ?? '';
-    assert.doesNotMatch(item.replace(/\s+/g, ' ').replace('Never show effort', ''), /effort/i, `Output "${heading}" must not show effort`);
-  }
-});
-
-test('the pick and the alternate state one size rule: size.label, else the Linear estimate (rough size), else "no size"', () => {
+test('the pick and the alternate state one size rule and the verdict tag, never effort', () => {
   const rule = 'its size (`size.label` when non-null, else the Linear `estimate` (rough size), else "no size")';
   for (const heading of ['The pick', 'The alternate']) {
     const item = section('Output').split('\n- **').find(b => b.startsWith(`${heading}**`)) ?? '';
     assert.ok(item.replace(/\s+/g, ' ').includes(rule), `Output "${heading}" must state the size rule`);
+    assert.ok(item.includes('verdict tag'), `Output "${heading}" must show the verdict tag`);
   }
-  assert.equal(count('rough size'), count('the Linear `estimate` (rough size)'), '"rough size" only names the Linear estimate');
-});
-
-test('Step 0 prints at most one spike-record line, with no leftover candidate wording', () => {
-  says('Print at most one of these lines for this project in this run, and continue');
-  assert.doesNotMatch(flat, /however many candidates/);
-});
-
-test('record files for archived cards or cards off the map are ignored, neither counted nor invalid', () => {
-  const step0 = section('Step 0: Read the Graph').replace(/\s+/g, ' ');
-  assert.match(step0, /`CRM-\d+\.json`/, 'Step 0 must name a record file as the example');
-  assert.ok(step0.includes('are ignored: neither counted nor invalid'), 'Step 0 must say ignored files are neither counted nor invalid');
-});
-
-test('"existing PR" in a size label comes from the spike record, not GitHub; reconciliation still decides', () => {
+  has('`<tier> · <verdict>`');
+  says('`unknown` is shown literally, never replaced by `No SDD`');
+  says('Never show effort or `timeBox`');
   says("comes from the spike record's origin (the trial copied a real PR), not from GitHub");
-  says('PR reconciliation (patterns 1 and 1b) still decides whether the card is taken');
 });
 
-test("the per-card PR search runs in the card's own repo, with an org-wide gh search prs when the repo is unknown", () => {
-  says("in the card's own repo (its title prefix, else the `Repo:` line in its description)");
-  says("When a card's repo is unknown, cross-check across the org with `gh search prs`");
-  assert.match(skill, /gh search prs --owner \S+/, 'SKILL.md is missing the org-wide gh search prs');
+test('the skill names every ranking key of the order lib, in order, and never re-derives them', () => {
+  const json = section('What the JSON says').replace(/\s+/g, ' ');
+  const at = ORDER_KEYS.map(k => json.indexOf(k));
+  assert.ok(at.every(i => i >= 0), ORDER_KEYS.filter((k, i) => at[i] < 0).join(', '));
+  assert.deepEqual([...at].sort((a, b) => a - b), at);
+  says('Never re-derive');
 });
 
-test('dependencies come from Linear blocks and every card-text phrase', () => {
-  for (const field of ['edges[]', 'offMapBlockers', 'danglingBlocks', 'free[]', 'critical', 'criticalTies', 'downstream', 'cycles']) has(field);
-  for (const phrase of ['Depende de', 'Gates:', 'espera a', 'bloquea', 'habilita', 'deployado en QA']) has(phrase);
-  has('move it to Linear');
+test('every overdue reason and every warning kind the CLI emits is named in the skill', () => {
+  const free = LIB('lib/next/free.mjs');
+  const reasons = ['in-review', 'taken', 'started-local', 'started-remote', 'started-linear', 'triage', 'assigned-other', 'blocked', 'waiting-reviews', 'excluded'];
+  for (const r of reasons) {
+    assert.ok(free.includes(`'${r}'`), `free.mjs no longer emits ${r}`);
+    has(`\`${r}\``);
+  }
+  const kinds = new Set([...`${free}\n${LIB('next.mjs')}`.matchAll(/kind: '([a-z-]+)'/g)].map(m => m[1]));
+  for (const k of ['backward-milestone', 'record-invalid', 'data-in-repo', 'relations-truncated']) kinds.add(k);
+  assert.ok(kinds.size >= 12, [...kinds].join(', '));
+  for (const k of kinds) has(`\`${k}\``);
 });
 
-test("next-card's preserved rules are all present", () => {
-  for (const anchor of [
-    '[Prod]', 'Draft PR', 'Open non-draft PR', '[CRM-XXXX]', 'Linear attachments',
-    'git ls-remote --heads origin', 'git-common-dir', 'commits ahead', 'dirty files',
-    'list_milestones', 'targetDate', 'progress',
-    'whoami', 'ask <name>', 'alternate', 'Amplify', 'bottom-up', 'bad base',
-    'Self QA', 'Peer QA', 'Discovery', 'No lleva PR', 'map:design-delivery', 'QA sub-cards',
-    'se puede diferir', 'carta elástica', 'Diferido', 'file-area', 'Parallel tracks',
-    'gh pr list', '/keiron-sequencer:start CRM-XXXX',
-  ]) has(anchor);
+test('the pick says unverified and checks, a deferrable card drops only inside a tie, and textBlockers go to start', () => {
+  has('`unverified`');
+  has('`checks`');
+  says('a `deferrable` card drops below');
+  has('`textBlockers`');
+  has('--blocker');
+});
+
+test('the output names the rule that chose the milestone, lists the overdue cards and states today', () => {
+  for (const rule of ['deadline <date> (<card or milestone>)', 'milestone order (<name> is the first with writable work)', 'no milestone (no milestone has writable work)']) has(rule);
+  has('**Overdue**');
+  has('`today`');
 });
 
 test('starting a card hands off to /keiron-sequencer:start, never to an older start command', () => {
-  has('`/keiron-sequencer:start`');
+  has('`/keiron-sequencer:start');
   assert.ok(!skill.includes('/linear-card-start'), 'SKILL.md still names /linear-card-start');
   assert.ok(!skill.includes('/mi' + 'kado-start'), 'SKILL.md still names the old start command');
 });
@@ -133,185 +122,10 @@ test('the skill never shows a key or an auth header', () => {
   assert.doesNotMatch(skill, /LINEAR_API_KEY\s*=\s*\S/);
 });
 
-test('Board hygiene keeps open blocks from a map card to a card outside the project', () => {
-  const anchor = 'a map card that blocks an open card outside the project';
-  assert.ok(skill.split(anchor).length - 1 >= 2, `pattern 2 and Board hygiene must both carry ${JSON.stringify(anchor)}`);
-});
-
-test('an off-project blocker merged on GitHub counts as done; its stale Linear state goes to hygiene', () => {
-  has('merged, still open in Linear');
-  assert.doesNotMatch(skill, /until Linear agrees/);
-});
-
-test('a blocker merged to development counts as done; its pending [Prod] port goes to hygiene', () => {
-  says('merged to `development` → done for unblocking');
-  assert.ok(count('[Prod] port pending') >= 2, 'pattern 2 and Board hygiene must both carry "[Prod] port pending"');
-});
-
-test('two open-PR blockers on separate branches make the card wait and name the reviews to push', () => {
-  says('two or more blockers are open PRs or branches where neither contains the other');
-  says('the card waits');
-  says('stack on the top branch');
-  says('exactly one blocker is an open PR');
-  assert.ok(count('Push these reviews') >= 2, 'pattern 2 and Output must both carry "Push these reviews"');
-  assert.ok(section('Output').includes('**Push these reviews**'), 'Output must list a "Push these reviews" item');
-});
-
-test('the nearest deadline goes first: a card\'s due date or its milestone\'s target, whichever comes first', () => {
-  says('sortOrder');
-  says('milestoneOrder');
-  says('card\'s deadline is its own due date or its milestone\'s target date, whichever comes first');
-  says('a card due today in milestone 4 comes before milestone 3 when milestone 3 has no target date');
-  assert.doesNotMatch(flat, /does not pull its milestone forward/);
-});
-
-test('a nearer milestone target date no longer moves a milestone ahead', () => {
-  assert.ok(!flat.includes('nearest milestone `targetDate`'), 'SKILL.md still ranks by the nearest milestone targetDate');
-});
-
-const ranking = (skill.split('**6. Ranking**')[1] ?? '').split('**7.')[0];
-
-test('the ranking pattern lists the order keys of the order lib, one numbered item each, in order', () => {
-  const items = ranking.split(/\n(?=\d+\. )/).slice(1).map(i => i.replace(/\s+/g, ' ').toLowerCase());
-  assert.equal(items.length, ORDER_KEYS.length);
-  ORDER_KEYS.forEach((label, i) => assert.ok(items[i].startsWith(`${i + 1}. `) && items[i].includes(label), `Ranking key ${i + 1} is not ${JSON.stringify(label)}`));
-});
-
-test('the ranking pattern takes the best rank among the survivors and names the facts that detect a tie', () => {
-  const text = ranking.replace(/\s+/g, ' ');
-  for (const anchor of [`within ${SOON_DAYS} days`, '`rank`', '`deadline`', '`due`', '`scripts/lib/next-order.mjs`'])
-    assert.ok(text.includes(anchor), `Ranking is missing ${JSON.stringify(anchor)}`);
-});
-
-test('the output names the rule that chose the milestone, flags overdue cards elsewhere and states today', () => {
-  const output = section('Output').replace(/\s+/g, ' ');
-  for (const rule of ['deadline <date> (<card or milestone>)', 'milestone order (<name> is the first with writable work)',
-    'no milestone (no milestone has writable work)', '**Overdue elsewhere**', 'the date used as today'])
-    assert.ok(output.includes(rule), `Output is missing ${JSON.stringify(rule)}`);
-});
-
-test('the commands note says the graph JSON carries the dates; only the assignee needs MCP', () => {
-  says('carries `milestoneTargetDate`, `dueDate`, `due`, `deadline` and `rank`');
-  assert.ok(!flat.includes('carries neither'), 'the commands note still says the JSON has no dates');
-});
-
-test('PRs are looked up per card id, not from the latest 40', () => {
-  has('--search');
-  assert.doesNotMatch(skill, /--limit 40/);
-});
-
-test('«Necesita» is a text-dependency keyword', () => {
-  has('Necesita CRM-B');
-  has('necesita CRM-B');
-});
-
-test('"its own QA card" is documented as a guess from the title', () => {
-  says("a guess from the QA card's title");
-});
-
-test('the CLI takes the project URL, slug, UUID or identifier directly', () => {
-  says('URL, slug, UUID or identifier');
-  assert.doesNotMatch(skill, /<project-url>/);
-});
-
-test('with no free frontend card, a different backend file zone is a different area', () => {
-  says('no frontend card is free');
-  says('a different backend file zone');
-});
-
-test('next-card rules these fixes touch stay intact', () => {
-  says('merged-to-development ≠ Done');
-  says('neither is "get PR #N reviewed"');
-  says('Review latency is not a reason to start it again');
-  says('compare every `targetDate` against today');
-  says('stacked on that PR\'s head branch');
-  says('(frontend vs backend, or different file zone)');
-});
-
-test("a card's repo comes from its title prefix, else the description's Repo: line", () => {
-  says('when the title has none, the `Repo: <repo>` line in its description');
-  assert.match(skill, /`[\w-]+: …`/, 'SKILL.md is missing a title-prefix example');
-});
-
-test('text dependencies written as Linear issue tags are read by their label', () => {
-  has('<issue id="…" label="CRM-B" …/>');
-  says("read the tag's `label` as the card id");
-});
-
-test('list_issues asks for description and labels; every open card with a truncated description gets get_issue', () => {
-  has('fields: id,title,description,labels,');
-  says('fetch the full description with `get_issue` for every open card whose description came back truncated');
-  says('candidates and their potential blockers alike');
-  says('skip only done, canceled or archived cards');
-  assert.doesNotMatch(flat, /can change the pick/);
-  says("Read the blockers' cards too, since `bloquea` / `habilita` / `Gates:` live on the blocker");
-});
-
-test('Step 0 gives the CLI a long Bash timeout and treats a killed call like exit 1', () => {
-  says('Bash timeout of at least 3 minutes');
-  has('timeout: 180000');
-  says('killed by the caller, treat it like Exit 1');
-});
-
-test('PR search hits count only when the title carries the card id in any bracket style', () => {
-  has('[CRM-XXXX]');
-  has('(CRM-XXXX)');
-  says('drop hits matched only by PR number');
-  assert.match(skill, /select\(\.title \| test\(/);
-});
-
-test('the PR search filter reads the card id from the environment, so the query stays one single-quoted string in a loop', () => {
-  has('export CARD=CRM-XXXX');
-  has('--search "$CARD"');
-  assert.equal(count('+ env.CARD +'), 2, 'both PR searches build the title pattern from env.CARD');
-  assert.doesNotMatch(skill, /test\("\[\\\\\[\(\]CRM-XXXX/, 'no filter hard-codes the card id');
-});
-
-test('hygiene tells a stale dangling block by its reason, not by open alone', () => {
-  says('`open` alone does not mark a stale block');
-  for (const reason of ['`archived`', '`canceled`', '`qa`', '`planner`', '`outside-project`']) has(reason);
-});
-
-test('a blocker with its [Prod] port pending gets only the port line in hygiene', () => {
-  says('gets only the port line, not also "still open in Linear"');
-  has('merged, still open in Linear');
-});
-
-test('crossing forward counts locally-started and draft-taken cards as not writable', () => {
-  says('started locally (pattern 1b), taken by a draft PR (pattern 1)');
-});
-
-test('the alternate is the next-ranked card in a different area: different repo first, else file zone', () => {
-  says('the next-ranked card (pattern 6 order) in a different area');
-  says('prefer a different repo, else a different file zone');
-  says('whether that is a different repo or only a different file zone');
-});
-
-test('the Graph line shows both the Linear free count and the reconciled count', () => {
-  says('free in Linear');
-  says('startable after reconciliation');
-});
-
-test('the local-work loop labels hits with the repo from the common git dir, not the folder', () => {
-  has('r=${c%/.git}');
-  assert.doesNotMatch(skill, /sed "s\|\^\|\$d /);
-});
-
-test('the pick and the alternate tag the size with `<tier> · <verdict>` from size.tier and size.verdict, unknown shown literally', () => {
-  for (const heading of ['The pick', 'The alternate']) {
-    const item = section('Output').split('\n- **').find(b => b.startsWith(`${heading}**`)) ?? '';
-    assert.ok(item.includes('verdict tag'), `Output "${heading}" must show the verdict tag`);
-  }
-  has('`<tier> · <verdict>`');
-  has('`size.tier`');
-  has('`size.verdict`');
-  has('`XL · SDD`');
-  has('`L · unknown`');
-  says('`unknown` is shown literally, never replaced by `No SDD`');
-  says('No tag in DEGRADED mode or for existing-pr cards');
-  says('Never show effort or `timeBox`');
-  says('In DEGRADED mode no `size.label` is shown (the tier only appears inside the label), and no verdict tag');
-  assert.doesNotMatch(flat.replace('Never show effort or `timeBox`', ''), /timeBox/);
+test('next: a backward-milestone warning and cards with no milestone are named, the latter to fix before a respike', () => {
+  says('`backward-milestone`');
+  says('`no-milestone`');
+  says('before a respike');
 });
 
 const SPIKE_SKILL = new URL('../skills/spike/SKILL.md', import.meta.url);
@@ -503,12 +317,6 @@ test('spike: the auto typecheck checks the whole program and refuses only on err
   spikeSays('only an error in a file the card changed refuses');
 });
 
-test('next: a backward-milestone warning and cards with no milestone are named, the latter to fix before a respike', () => {
-  says('`backward-milestone`');
-  says('cards with no milestone');
-  says('before a respike');
-});
-
 test('spike: a reorder finding that would run backward across milestones is recorded as a milestone question', () => {
   spikeSays("compare the two cards' milestones");
   spikeSays('a milestone question (which card moves)');
@@ -545,14 +353,13 @@ test('plugin: no skill holds the old name, in its front matter or its text', () 
 
 test('plugin: no skill names the plugin repo folder or sets, defaults or reads the plugin root variable', () => {
   for (const planted of ['~/Desktop/' + 'mi' + 'kado/scripts', '~/Desktop/keiron-sequencer/scripts']) assert.match(planted, REPO_PATH);
-  for (const planted of ['export CLAUDE_PLUGIN_ROOT=/x', '${CLAUDE_PLUGIN_ROOT:-/x}', 'node $CLAUDE_PLUGIN_ROOT/scripts/graph.mjs']) assert.match(planted, ROOT_MISUSE);
-  assert.doesNotMatch('node ${CLAUDE_PLUGIN_ROOT}/scripts/graph.mjs', ROOT_MISUSE);
+  for (const planted of ['export CLAUDE_PLUGIN_ROOT=/x', '${CLAUDE_PLUGIN_ROOT:-/x}', 'node $CLAUDE_PLUGIN_ROOT/scripts/next.mjs']) assert.match(planted, ROOT_MISUSE);
+  assert.doesNotMatch('node ${CLAUDE_PLUGIN_ROOT}/scripts/next.mjs', ROOT_MISUSE);
   assert.doesNotMatch('cd ~/Desktop/work/<repo>', REPO_PATH);
   for (const [folder, text] of Object.entries(skills)) {
     assert.doesNotMatch(text, REPO_PATH, folder);
     assert.doesNotMatch(text, ROOT_MISUSE, folder);
   }
-  assert.match(skills.next, /`checkout` in `~\/\.keiron-sequencer\/config\.json`/, 'the next skill finds the user checkouts in the config');
 });
 
 test('plugin: every script a skill runs goes through the plugin root, and every script it names exists', () => {
@@ -579,22 +386,6 @@ test('plugin: the install is the plugin install, and no skill or script names a 
   const scripts = globSync('scripts/**/*.mjs', { cwd: ROOT });
   assert.ok(scripts.length > 0);
   assert.deepEqual(scripts.filter(f => /\.claude\/skills/.test(readFileSync(new URL(f, ROOT), 'utf8'))), []);
-});
-
-test('a blocker with a draft PR or only a branch is stackable, as in start, and its costs are named', () => {
-  assert.doesNotMatch(flat, /draft PR only, or no PR at all → blocked/);
-  says('open PR, ready or draft → the card is startable stacked on that PR\'s head branch');
-  says('no PR and exactly one branch carrying the blocker\'s id, pushed or only in the checkout → startable stacked on that branch');
-  says('no PR and no branch → blocked');
-  says('marked ready and merge before this one');
-  says('push it before pushing this branch');
-  says('`--blocker-branch`');
-});
-
-test('local clones are found from the checkouts in the sequencer config, never a fixed folder', () => {
-  assert.doesNotMatch(skill, /~\/Desktop\//);
-  says('the parent folder of every `checkout` in `~/.keiron-sequencer/config.json`');
-  has('KEIRON_SEQUENCER_HOME');
 });
 
 test('spike: the config is drafted by the skill from the cards and the checkouts, and written only on the approved hash', () => {

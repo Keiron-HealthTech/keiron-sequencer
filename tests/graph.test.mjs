@@ -361,3 +361,17 @@ test('a map card blocking an archived card in the project is dangling as archive
   assert.deepEqual(analyzeProject({ issues, milestones: [] }).danglingBlocks,
     [{ from: 'CRM-1184', to: 'CRM-1218', offMap: 'CRM-1218', reason: 'archived', open: false }]);
 });
+
+test('buildCardMap keeps assignee, label names and pull-request attachments', () => {
+  const { cards } = buildCardMap({ issues: [node({
+    identifier: 'CRM-1', assignee: { id: 'u1', name: 'Ana' }, labels: { nodes: [{ name: 'Backend' }] },
+    attachments: { nodes: [{ url: 'https://github.com/o/r/pull/7' }, { url: 'https://figma.com/x' }] },
+  })], milestones: [] });
+  assert.deepEqual([cards[0].assignee, cards[0].labels, cards[0].attachments],
+    [{ id: 'u1', name: 'Ana' }, ['Backend'], ['https://github.com/o/r/pull/7']]);
+});
+
+test('buildCardMap gives an unassigned card with no attachments null and []', () => {
+  const { cards } = buildCardMap({ issues: [node()], milestones: [] });
+  assert.deepEqual([cards[0].assignee, cards[0].labels, cards[0].attachments], [null, [], []]);
+});

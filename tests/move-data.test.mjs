@@ -4,10 +4,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { run } from '../scripts/maintenance/move-data.mjs';
-import { run as graph } from '../scripts/graph.mjs';
+import { fakeNextFixture } from './helpers/next-fixture.mjs';
 import { run as packs } from '../scripts/packs.mjs';
 import { run as spike } from '../scripts/spike.mjs';
-import { fakeLinear, fakeLinearStore, FIXTURE_SLUG as SLUG, FIXTURE_URL } from './helpers/fake-linear.mjs';
+import { fakeLinearStore, FIXTURE_SLUG as SLUG } from './helpers/fake-linear.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'keiron-sequencer-move-data-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
@@ -72,11 +72,12 @@ test('a slug with nothing in the repo data dir moves nothing and says so', async
   assert.deepEqual(JSON.parse(r.stdout).moves, []);
 });
 
-test('graph warns data-in-repo instead of reporting no record', async () => {
+test('next warns data-in-repo instead of reporting no record', async t => {
   const { data, home } = layout();
-  const { fetchImpl } = fakeLinear();
-  const deps = { env: { LINEAR_API_KEY: 'lin_api_dummy_' + 'm'.repeat(30) }, keyFile: join(TMP, 'absent.key'), now: () => new Date('2026-11-12T10:00:00.000Z'), fetchImpl };
-  const r = await graph([FIXTURE_URL], { ...deps, dataDir: home, repoDataDir: data });
+  const f = fakeNextFixture({ slug: SLUG });
+  t.after(f.dispose);
+  const next = async () => f.run([SLUG], { dataDir: home, repoDataDir: data });
+  const r = await next();
   assert.equal(r.code, 0, r.stderr);
   const out = JSON.parse(r.stdout);
   assert.equal(out.records.count, 0);
@@ -87,15 +88,13 @@ test('graph warns data-in-repo instead of reporting no record', async () => {
   assert.match(r.stderr, /data-in-repo|move-data/);
 
   put(join(home, SLUG, 'ABC-903.json'), RECORD);
-  const partial = JSON.parse((await graph([FIXTURE_URL], { ...deps, fetchImpl: fakeLinear().fetchImpl, dataDir: home, repoDataDir: data })).stdout);
-  const still = partial.warnings.find(x => x.kind === 'data-in-repo');
+  const still = JSON.parse((await next()).stdout).warnings.find(x => x.kind === 'data-in-repo');
   assert.ok(still, 'a home holding some records does not silence the warning');
   assert.match(still.message, /already exists/);
 
   rmSync(join(home, SLUG, 'ABC-903.json'));
   assert.equal((await run([SLUG, '--data', data, '--home', home, '--apply'])).code, 0);
-  const moved = JSON.parse((await graph([FIXTURE_URL], { ...deps, fetchImpl: fakeLinear().fetchImpl, dataDir: home, repoDataDir: data })).stdout);
-  assert.equal(moved.warnings.some(x => x.kind === 'data-in-repo'), false);
+  assert.equal(JSON.parse((await next()).stdout).warnings.some(x => x.kind === 'data-in-repo'), false);
 });
 
 test('spike begin and packs warn data-in-repo while the repo still holds records', async () => {

@@ -10,7 +10,7 @@ export function githubOf(url) {
   return m ? `${m[1]}/${m[2]}`.toLowerCase() : null;
 }
 
-const remoteSlugs = text => new Set(lines(text)
+export const remoteSlugs = text => new Set(lines(text)
   .filter(l => l.endsWith('(fetch)'))
   .map(l => githubOf(l.split(/\s+/)[1] ?? ''))
   .filter(Boolean));
@@ -152,6 +152,7 @@ export function ghLookup(gh, known) {
     failures,
     search: (github, key) => (read(['pr', 'list', '--repo', github, '--state', 'all', '--search', key, '--json', PR_FIELDS]) ?? [])
       .filter(p => titleTag(key).test(p.title ?? '')).map(shaped(github, 'search')),
+    list: (github, args, via) => (read(['pr', 'list', '--repo', github, ...args, '--json', PR_FIELDS]) ?? []).map(shaped(github, via)),
     head: (github, branch, via) => (read(['pr', 'list', '--repo', github, '--head', branch, '--state', 'all', '--json', PR_FIELDS]) ?? [])
       .map(shaped(github, via)),
     view: (url, via) => {

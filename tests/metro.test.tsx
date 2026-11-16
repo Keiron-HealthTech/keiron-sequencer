@@ -36,7 +36,7 @@ const OLD_NAME = new RegExp('mi' + 'kado', 'i')
 type Run = { exitCode: number; stdout: string; stderr: string }
 
 function engine(on: any, run: Run) {
-  const seen = { argvs: [] as string[][], opened: [] as { id: string; title: string }[], commands: [] as { name: string; description: string }[] }
+  const seen = { argvs: [] as string[][], opened: [] as { id: string; title: string; columns?: number }[], commands: [] as { name: string; description: string }[] }
   on('command.register', (_: unknown, e: { name: string; description: string }) => (seen.commands.push(e), { value: { command: e.name } }))
   on('ui.open', (_: unknown, e: { id: string; title: string }) => (seen.opened.push(e), { value: { isPlaced: true } }))
   on('ui.status', () => ({ value: undefined }))
@@ -109,4 +109,17 @@ test('a run with no project name is titled keiron-sequencer, under the spike-met
   for (const text of [...seen.commands.flatMap(c => [c.name, c.description]), ...seen.opened.flatMap(o => [o.id, o.title])]) {
     expect(text).not.toMatch(OLD_NAME)
   }
+})
+
+test('the pane asks for a narrow dock, and every line it draws fits in it', async ($, on) => {
+  const seen = engine(on, { exitCode: 0, stdout: JSON.stringify(STATUS), stderr: '' })
+  await start($)
+
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 40 }, surface: 'desktop' })
+  for (const legend of [/● spiked/, /↻ re-spiked/]) {
+    const line = (await ui.find({ type: 'Text', text: legend }))?.text ?? ''
+    expect(line.length > 0 && line.length <= 40).toBe(true)
+  }
+  await ui.unmount()
+  expect(seen.opened.map(o => o.columns)).toEqual([40])
 })

@@ -49,6 +49,7 @@ export function rankCards(cards, { today, critical = [], criticalTies = [], soon
       due: finished ? null : dueBucket(c.dueDate, today, soonDays),
       milestoneOverdue: target !== null && target < today,
       deadline: finished ? null : dueBucket(earliest, today, soonDays),
+      deadlineFrom: finished || !dueBucket(earliest, today, soonDays) ? null : (earliest === due ? 'card' : 'milestone'),
     };
   });
   const first = (a, b) => {

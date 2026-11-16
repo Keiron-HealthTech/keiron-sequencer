@@ -175,12 +175,16 @@ test('records resolve under KEIRON_SEQUENCER_HOME/<slug>, not the repo', () => {
   const repoData = join(DIR, 'records-repo-data');
   mkdirSync(repoData, { recursive: true });
   const helper = new URL('./helpers/fake-linear.mjs', import.meta.url).pathname;
-  const cli = new URL('../scripts/graph.mjs', import.meta.url).pathname;
+  const cli = new URL('../scripts/next.mjs', import.meta.url).pathname;
+  const web = { name: 'example-web', github: 'example-org/example-web', checkout: null, url: 'https://github.com/example-org/example-web.git',
+    remote: 'origin', defaultBranch: 'main', branchNaming: 'verbatim', setup: [], risk: [] };
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ schemaVersion: 1, repos: { web } }));
   const script = `
     import { run } from ${JSON.stringify(cli)};
-    import { fakeLinear, FIXTURE_URL } from ${JSON.stringify(helper)};
-    const { fetchImpl } = fakeLinear();
-    const r = await run([FIXTURE_URL], { env: { ...process.env, LINEAR_API_KEY: 'lin_api_dummy_${'h'.repeat(30)}' }, keyFile: '/nonexistent/linear.key', fetchImpl, repoDataDir: ${JSON.stringify(repoData)} });
+    import { fakeLinearStore, FIXTURE, FIXTURE_URL } from ${JSON.stringify(helper)};
+    const { fetchImpl } = fakeLinearStore({ issues: FIXTURE.issues, milestones: FIXTURE.milestones });
+    const gh = () => ({ status: 0, stdout: '[]', stderr: '' });
+    const r = await run([FIXTURE_URL], { env: { ...process.env, LINEAR_API_KEY: 'lin_api_dummy_${'h'.repeat(30)}' }, keyFile: '/nonexistent/linear.key', fetchImpl, gh, repoDataDir: ${JSON.stringify(repoData)} });
     process.stdout.write(r.stdout);
     process.stderr.write(r.stderr);
     process.exitCode = r.code;`;

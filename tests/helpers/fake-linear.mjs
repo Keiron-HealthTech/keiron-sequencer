@@ -46,6 +46,7 @@ export function fakeLinearStore({
   markdown = {},
   members = [],
   cycles = { active: null, next: null, past: [] },
+  viewer = { id: 'viewer-1', name: 'Me' },
 } = {}) {
   const sent = [];
   const mutations = [];
@@ -89,6 +90,7 @@ export function fakeLinearStore({
     return {
       ...fields,
       team: teamRef(i),
+      attachments: { nodes: (attachments ?? []).slice(0, 50) },
       relations: { nodes: store.relations.filter(r => r.from === i.identifier).map(r => ({ ...rel(r), relatedIssue: brief(r.to) })) },
       inverseRelations: { nodes: store.relations.filter(r => r.to === i.identifier).map(r => ({ ...rel(r), issue: brief(r.from) })) },
     };
@@ -122,6 +124,15 @@ export function fakeLinearStore({
         project: projectRef(i), projectMilestone: i.projectMilestone ?? null,
         attachments: { nodes: (i.attachments ?? []).slice(0, 50) },
         comments: { pageInfo: { hasNextPage: comments.length > 50 }, nodes: comments.slice(0, 50) },
+      } };
+    },
+    Viewer: () => ({ viewer }),
+    OffMapIssue: ({ id }) => {
+      const i = find(id);
+      if (!i) throw new Error(`Entity not found: ${id}`);
+      return { issue: {
+        identifier: i.identifier, title: i.title, description: i.description, archivedAt: i.archivedAt, state: i.state ?? null,
+        labels: i.labels ?? { nodes: [] }, attachments: { nodes: (i.attachments ?? []).slice(0, 50) },
       } };
     },
     IssueTeamStates: ({ id }) => {

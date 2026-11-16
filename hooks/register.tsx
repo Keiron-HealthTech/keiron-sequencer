@@ -5,6 +5,8 @@ import type { Snapshot, Station, StationKind } from '../types'
 
 const PANE = 'spike-metro'
 const TITLE = 'Spike metro'
+// The docked width it asks for; a width the person drags the dock to wins.
+const OPEN = { id: PANE, title: TITLE, columns: 40 }
 const POLL_MS = 10_000
 // A login shell finds the same node the user runs the CLIs with. The root is passed as $1, never spliced into the script.
 export const statusArgv = (root: string) => ['/bin/sh', '-lc', 'exec node "$1/scripts/spike.mjs" status', 'sh', root]
@@ -123,7 +125,7 @@ export const register: Register = on => {
       $.ui.status(snap.isRunning ? `🚃 ${snap.done}/${snap.total} · ${snap.current ?? 'between stations'}` : undefined)
       if (snap.isRunning && !hasOpened) {
         hasOpened = true
-        void $.ui.open({ id: PANE, title: TITLE })
+        void $.ui.open(OPEN)
       }
     }
     void refresh()
@@ -132,7 +134,7 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'spike-metro' }, async $ => {
-    await $.ui.open({ id: PANE, title: TITLE })
+    await $.ui.open(OPEN)
     return { text: 'Spike metro opened.' }
   })
 
@@ -184,7 +186,8 @@ export const register: Register = on => {
         })}
         {after > 0 && <Text dimColor>   ┆ {after} more stations ahead</Text>}
         <Text> </Text>
-        <Text dimColor>● spiked  ◆ express (replayed, no tokens)  ↻ re-spiked  ○ ahead</Text>
+        <Text dimColor>● spiked  ◆ express (no tokens)</Text>
+        <Text dimColor>↻ re-spiked  ○ ahead</Text>
         <Text dimColor>updated {snap.at.slice(11, 19)} UTC</Text>
       </Box>
     )

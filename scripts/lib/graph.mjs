@@ -1,3 +1,5 @@
+import { GITHUB_PULL } from './linear-fetch.mjs';
+
 export const DECISION_LABEL = 'map';
 export const DELIVERY_LABEL = 'map:design-delivery';
 
@@ -60,6 +62,9 @@ export function buildCardMap({ issues, milestones }, { sizes = {} } = {}) {
       dueDate: n.dueDate ?? null,
       estimate: n.estimate ?? null,
       gitBranchName: n.gitBranchName ?? null,
+      assignee: n.assignee ? { id: n.assignee.id, name: n.assignee.name ?? null } : null,
+      labels: (n.labels?.nodes ?? []).map(l => l.name),
+      attachments: (n.attachments?.nodes ?? []).map(a => a?.url).filter(url => GITHUB_PULL.test(url ?? '')),
       size: sizes[n.identifier] ?? null,
     };
   });

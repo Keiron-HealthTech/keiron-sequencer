@@ -65,6 +65,7 @@ query($projectId: ID!, $after: String) {
     nodes {
       id identifier title url estimate dueDate archivedAt completedAt ${BRANCH_NAME}
       assignee { id name } cycle { id number } team { id key }
+      attachments(first: ${ATTACHMENTS_PAGE}) { nodes { url } }
       state { name type } projectMilestone { name } labels(first: 20) { nodes { name } }
       relations(first: ${RELATIONS_PAGE}, includeArchived: true) { nodes { id type relatedIssue { identifier archivedAt state { type } } } }
       inverseRelations(first: ${RELATIONS_PAGE}, includeArchived: true) { nodes { id type issue { identifier archivedAt state { type } } } }
@@ -245,7 +246,7 @@ export async function fetchIssueState(id, apiKey, { fetchImpl = fetch, timeoutMs
   };
 }
 
-const GITHUB_PULL = /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+(?:[/?#]|$)/i;
+export const GITHUB_PULL = /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+(?:[/?#]|$)/i;
 
 // Linear answers an unknown identifier with a GraphQL error, not a null issue.
 const NOT_FOUND = /^Linear: Entity not found\b/;
@@ -314,4 +315,43 @@ export async function fetchIssueCycle(id, apiKey, { fetchImpl = fetch, timeoutMs
   const { issue } = await linearQuery(CYCLE_ISSUE, { id }, apiKey, fetchImpl, timeoutMs);
   if (!issue) return null;
   return { id: issue.id, key: issue.identifier, cycleId: issue.cycle?.id ?? null, assigneeId: issue.assignee?.id ?? null };
+}
+
+const VIEWER = `
+query Viewer {
+  viewer { id name }
+}`;
+
+export async function fetchViewer(apiKey, { fetchImpl = fetch, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
+  const { viewer } = await linearQuery(VIEWER, {}, apiKey, fetchImpl, timeoutMs);
+  return { id: viewer.id, name: viewer.name ?? null };
+}
+
+const OFF_MAP_ISSUE = `
+query OffMapIssue($id: String!) {
+  issue(id: $id) {
+    identifier title description archivedAt
+    state { name type } labels(first: 20) { nodes { name } }
+    attachments(first: ${ATTACHMENTS_PAGE}) { nodes { url } }
+  }
+}`;
+
+export async function fetchOffMapIssue(identifier, apiKey, { fetchImpl = fetch, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
+  let issue;
+  try {
+    ({ issue } = await linearQuery(OFF_MAP_ISSUE, { id: identifier }, apiKey, fetchImpl, timeoutMs));
+  } catch (e) {
+    if (NOT_FOUND.test(e.message)) return null;
+    throw e;
+  }
+  if (!issue) return null;
+  return {
+    key: issue.identifier,
+    title: issue.title,
+    description: issue.description ?? '',
+    archivedAt: issue.archivedAt ?? null,
+    state: { name: issue.state?.name ?? null, type: issue.state?.type ?? null },
+    labels: (issue.labels?.nodes ?? []).map(l => l.name),
+    attachments: (issue.attachments?.nodes ?? []).map(a => a?.url).filter(url => GITHUB_PULL.test(url ?? '')),
+  };
 }

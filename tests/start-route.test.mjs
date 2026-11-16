@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { run as graph } from '../scripts/graph.mjs';
+import { run as next } from '../scripts/next.mjs';
 import { routeFor, verdictFor } from '../scripts/lib/start/route.mjs';
 import { verdict } from '../scripts/lib/records.mjs';
 import { guardNetwork } from './helpers/no-network.mjs';
@@ -57,13 +57,13 @@ test('the tier is taken over the live records of the map: adding one moves it, a
   assert.equal(offMap.verdict.tier, 'XL');
 });
 
-test('the verdict and tier equal the ones the graph CLI shows for the same card', async t => {
+test('the verdict and tier equal the ones the next CLI shows for the same card', async t => {
   const issues = [card, startIssue('ABC-2'), startIssue('ABC-3')];
   const f = fixture(t, { issues, records: [sized(CARD, 50), sized('ABC-2', 5), sized('ABC-3', 500)] });
   const out = await plan(f);
-  const shown = await graph([SLUG], { env: {}, fetchImpl: f.linear.fetchImpl, keyFile: f.keyFile, dataDir: f.dataDir });
+  const shown = await next([SLUG], { env: {}, fetchImpl: f.linear.fetchImpl, keyFile: f.keyFile, dataDir: f.dataDir, home: f.home, gh: f.gh.run, git: f.git.run, listDir: () => [] });
   assert.equal(shown.code, 0, shown.stderr);
-  const size = JSON.parse(shown.stdout).cards.find(c => c.key === CARD).size;
+  const size = JSON.parse(shown.stdout).free.find(c => c.key === CARD).size;
   assert.deepEqual([out.verdict.value, out.verdict.tier, out.verdict.label], [size.verdict, size.tier, size.label]);
 });
 

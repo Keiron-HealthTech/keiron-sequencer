@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
-import { run as graph } from '../scripts/graph.mjs';
+import { run as next } from '../scripts/next.mjs';
 import { sandboxGit } from './helpers/git-sandbox.mjs';
 import { guardNetwork } from './helpers/no-network.mjs';
 import { CARD, GIT_BRANCH_NAME, SENTINEL, SLUG, snapshot, startFixture, startRecord } from './helpers/start-fixture.mjs';
@@ -49,16 +49,15 @@ test('the Linear reads ask for the branch name under its exposed key', async t =
   for (const q of [start, pages]) assert.ok(q.includes('gitBranchName: branchName'), q);
 });
 
-test('the brief carries the record and the verdict equals the one the graph CLI shows for the same card', async t => {
+test('the brief carries the record and the verdict equals the one the next CLI shows for the same card', async t => {
   const f = fixture(t);
   const { out } = await plan(f);
   const record = startRecord(CARD);
   assert.deepEqual(out.brief.record.decisions, record.decisions);
   assert.equal(out.brief.record.scope.note, record.scope.note);
-  const shown = await graph([SLUG], { env: {}, fetchImpl: f.linear.fetchImpl, keyFile: f.keyFile, dataDir: f.dataDir });
+  const shown = await next([SLUG], { env: {}, fetchImpl: f.linear.fetchImpl, keyFile: f.keyFile, dataDir: f.dataDir, home: f.home, gh: f.gh.run, git: f.git.run, listDir: () => [] });
   assert.equal(shown.code, 0, shown.stderr);
-  const card = JSON.parse(shown.stdout).cards.find(c => c.key === CARD);
-  assert.equal(card.gitBranchName, GIT_BRANCH_NAME);
+  const card = JSON.parse(shown.stdout).free.find(c => c.key === CARD);
   assert.equal(card.size.verdict, 'SDD');
   assert.equal(out.verdict.value, card.size.verdict);
 });

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { buildCardMap } from '../scripts/lib/graph.mjs';
 import {
   ENDPOINT, ISSUES_PAGE, PLANNER_KEY_FILE, RELATIONS_MAX, RELATIONS_PAGE, REQUEST_TIMEOUT_MS,
-  fetchDescriptions, fetchIssueState, fetchIssueTeamStates, fetchProjectMap, fetchStartIssue, parseProjectRef, projectSlugFromUrl, readLinearKey,
+  fetchDescriptions, fetchIssueState, fetchIssueTeamStates, fetchOffMapIssue, fetchProjectMap, fetchStartIssue, fetchViewer, parseProjectRef, projectSlugFromUrl, readLinearKey,
 } from '../scripts/lib/linear-fetch.mjs';
 import { fakeLinear, fakeLinearStore, FIXTURE_NAME, FIXTURE_SLUG, FIXTURE_URL } from './helpers/fake-linear.mjs';
 
@@ -594,4 +594,30 @@ test('the team states stay out of the project read', async () => {
 test('a card Linear answers with "Entity not found" reads as missing; other GraphQL errors still throw', async () => {
   assert.equal(await fetchStartIssue('CRM-404', KEY, { fetchImpl: reply(200, 'OK', { errors: [{ message: 'Entity not found: Issue' }] }) }), null);
   await assert.rejects(fetchStartIssue('CRM-1', KEY, { fetchImpl: reply(200, 'OK', { errors: [{ message: 'Authentication required' }] }) }), /^Error: Linear: Authentication required$/);
+});
+
+test('fetchViewer returns the owner of the key, in one Viewer query', async () => {
+  const { fetchImpl, sent } = fakeLinearStore({ viewer: { id: 'u-7', name: 'Cris' } });
+  assert.deepEqual(await fetchViewer(KEY, { fetchImpl }), { id: 'u-7', name: 'Cris' });
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].body.query, /query Viewer\b[\s\S]*viewer \{ id name \}/);
+});
+
+test('fetchOffMapIssue returns labels, state and pull attachments, and null when Linear has no such card', async () => {
+  const { fetchImpl } = startStore({
+    description: 'QA de CRM-9', labels: { nodes: [{ name: 'QA' }] },
+    attachments: [{ url: 'https://github.com/acme/app/pull/3' }, { url: 'https://example.com/x' }],
+  });
+  assert.deepEqual(await fetchOffMapIssue('CRM-1', KEY, { fetchImpl }), {
+    key: 'CRM-1', title: 'Card', description: 'QA de CRM-9', archivedAt: null,
+    state: { name: 'Todo', type: 'unstarted' }, labels: ['QA'], attachments: ['https://github.com/acme/app/pull/3'],
+  });
+  assert.equal(await fetchOffMapIssue('CRM-404', KEY, { fetchImpl }), null);
+});
+
+test('the project map asks for each card\'s attachments', async () => {
+  const { fetchImpl, sent } = fakeLinear({ issues: [node()], page: 60 });
+  await fetchProjectMap('c0ffee000001', KEY, { fetchImpl });
+  const q = sent.map(s => s.body.query.replace(/\s+/g, ' ')).find(x => x.includes('issues(filter'));
+  assert.ok(q.includes('attachments(first: 50) { nodes { url } }'), q);
 });

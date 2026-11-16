@@ -158,7 +158,7 @@ test('open cards are ranked 1 to N and the output keeps the input order', () => 
   const out = rankCards(input, { today: TODAY });
   assert.deepEqual(out.map(c => c.key), ['CRM-3', 'CRM-1', 'CRM-2', 'CRM-4']);
   assert.deepEqual(out.map(c => c.rank), [2, null, 1, 3]);
-  assert.deepEqual(out[0], { ...input[0], due: null, milestoneOverdue: false, deadline: null, rank: 2 });
+  assert.deepEqual(out[0], { ...input[0], due: null, milestoneOverdue: false, deadline: null, deadlineFrom: null, rank: 2 });
   assert.deepEqual(input, before);
 });
 
@@ -266,4 +266,14 @@ test('an overdue card outranks a milestone that is only due soon, and overdue ti
 
 test('a card with no milestone but an overdue due date ranks ahead of undated milestones', () => {
   assert.deepEqual(orderOf([card('CRM-40', M(4)), card('CRM-5', { ...NO_MILESTONE, dueDate: '2026-11-01' })]), ['CRM-5', 'CRM-40']);
+});
+
+test('deadlineFrom names whose deadline it is', () => {
+  const out = byKey(rankCards([
+    card('CRM-1', { dueDate: '2026-11-10', milestoneTargetDate: '2026-11-20' }),
+    card('CRM-2', { dueDate: null, milestoneTargetDate: '2026-11-12' }),
+    card('CRM-3', { dueDate: '2026-11-12', milestoneTargetDate: '2026-11-12' }),
+    card('CRM-4', { dueDate: null, milestoneTargetDate: null }),
+  ], { today: '2026-11-16' }));
+  assert.deepEqual(['CRM-1', 'CRM-2', 'CRM-3', 'CRM-4'].map(k => out[k].deadlineFrom), ['card', 'milestone', 'card', null]);
 });
