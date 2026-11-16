@@ -27,8 +27,29 @@ export type Snapshot = {
   cardCap: number | null
 }
 
+export type Route = 'sdd' | 'light' | 'tdd'
+
+export type CardStatus = {
+  key: string
+  slug: string | null
+  branch: string | null
+  currentBranch: string | null
+  route: Route | null
+  isRouteFixed: boolean
+  facts: { isMultiRepo: boolean; tier: string | null; newPaths: number; fixupsReceived: number; peopleDecisions: number }
+  stackedOn: string | null
+  pack: { isStale: boolean; answered: number; open: number } | null
+  flow: 'sdd' | 'superpowers' | null
+  phase: string | null
+  isDone: boolean
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    'keiron-sequencer': { snapshot: Shaped<Snapshot | null> }
+    'keiron-sequencer': {
+      snapshot: Shaped<Snapshot | null>
+      planned: Shaped<CardStatus | null>
+      card: Shaped<CardStatus | null>
+    }
   }
 }

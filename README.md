@@ -33,8 +33,11 @@ Respike refreshes the records and never writes to Linear; harvest writes to
 Linear and never spikes.
 
 The plugin also ships a spike metro pane (`/spike-metro`) that shows a running spike
-pass as a metro line. It is a hooks module, so it needs Claude Code's mods feature;
-the skills work without it.
+pass as a metro line, and a status line that turns on once `/keiron-sequencer:start`
+creates or resumes a card's branch in a session: the card, its route, the blocker it
+stacks on and the decisions still open in its pack (`ABC-7 · sdd · stacked on ABC-6 ·
+2 open decisions`). Both are a hooks module, so they need Claude Code's mods feature;
+the skills work without them.
 
 ## Install
 

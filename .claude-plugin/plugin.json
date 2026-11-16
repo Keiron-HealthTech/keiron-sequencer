@@ -1,6 +1,6 @@
 {
   "name": "keiron-sequencer",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Sequences a Linear project's cards: spike, respike, harvest, next, start and cycle, with a spike metro pane",
   "author": { "name": "Keiron-HealthTech" }
 }
