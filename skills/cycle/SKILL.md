@@ -112,7 +112,7 @@ The rule: never apply without the user's command and the hash. Do not apply on y
 initiative, after a silence, or because an earlier message approved a different
 plan. When the user's message asks for it with the hash:
 
-`node ${CLAUDE_PLUGIN_ROOT}/scripts/cycle.mjs apply <project-ref> --plan <plan.json> --approve <hash>`
+`node ${CLAUDE_PLUGIN_ROOT}/scripts/cycle.mjs apply <project-ref> [--team KEY] --plan <plan.json> --approve <hash>`
 
 It re-reads Linear, checks every change before the first write, writes, reads
 each change back, and appends one line per change to `applied.jsonl`.

@@ -120,10 +120,8 @@ test('the move is never run without an explicit yes and the repeated card key', 
   says('never run `move` without `--confirm <CARD>`');
 });
 
-test('the first live move is the user\'s decision, and its Linear field names are said to be unverified', () => {
-  says('The first live `move` is the user\'s decision');
-  says('`IssueTeamStates`');
-  says('have not been checked against the live Linear API');
+test('the move carries no unverified-API warning', () => {
+  assert.doesNotMatch(flat, /have not been checked against the live Linear API/);
 });
 
 test('the show step renders every plan reason, the non-blocking ones included', () => {
@@ -192,9 +190,8 @@ test('the skill runs no SDD phase itself', () => {
   assert.doesNotMatch(skill.replace(/never replaces sdd-explore/g, ''), /sdd-(explore|spec|design)\b/);
 });
 
-test('the predecessor skill is named only as the fallback', () => {
-  const lines = skill.split('\n').filter(l => l.includes('linear-card-start'));
-  for (const line of lines) assert.match(line, /fallback/, line);
+test('the predecessor skill is not named', () => {
+  assert.ok(!skill.includes('linear-card-start'), 'SKILL.md still names /linear-card-start');
 });
 
 test('the plugin install is documented, not performed, and no symlink is named', () => {

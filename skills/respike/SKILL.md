@@ -108,7 +108,7 @@ when the card's own patch cannot be read, or when the base was a combine. `--car
 well they select the union. `--all` selects every open execution card, as a
 first spike does: offer it only when the user asks to re-spike everything. `--built` and
 `--unbuilt` answer the asks (Step 3). Repeat the same flags on every later
-`preflight`, `fetch` and `begin` of this respike: different flags give a
+`preflight`, `config`, `fetch`, `fast-forward` and `begin` of this respike: different flags give a
 different plan and hash.
 
 Preflight reads Linear, `gh pr list` and git in the configured checkouts, and
@@ -143,7 +143,7 @@ the CLI writes the spike config only with the hash of the draft the user
 approved. Three forms, in this order: the draft, the review and the write.
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs config <project ref> --out <draft.json> [--root <dir>]... [--cards <CARD>[,<CARD>]...] [--stale] [--built <CARD>=<branch>]... [--unbuilt <CARD>]...
+node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs config <project ref> --out <draft.json> [--root <dir>]... [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]...
 node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs config --draft <draft.json>
 node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs config --draft <draft.json> --approve <hash>
 ```
@@ -294,7 +294,7 @@ On `action: 'ask'`: One question per ask, with its `message`, offering its
   `--unbuilt <CARD>`. On the user's yes, run with the ask plan's `approve`:
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs fetch <project ref> --approve <hash> [--cards <CARD>[,<CARD>]...] [--stale] [--built <CARD>=<branch>]... [--unbuilt <CARD>]...
+node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs fetch <project ref> --approve <hash> [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]...
 ```
 
   It prints `fetched` and `nextApprove`. Preflight again with the same flags
@@ -308,7 +308,7 @@ naming the repo, the base and how many commits it misses.
   `approve`:
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs fast-forward <project ref> --repo <repoDir> --approve <hash> [--cards <CARD>[,<CARD>]...] [--stale] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]...
+node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs fast-forward <project ref> --repo <repoDir> --approve <hash> [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]...
 ```
 
   It moves only that branch, refuses a checked-out one with uncommitted work,
@@ -335,7 +335,7 @@ the user wants. Anything other than an explicit yes is a no.
 ## Step 5: Begin
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs begin <project ref> --approve <hash> [--cards <CARD>[,<CARD>]...] [--stale] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--max-tokens <n>] [--max-cards <n>] [--box <n>] [--session-file <transcript.jsonl>]
+node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs begin <project ref> --approve <hash> [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]... [--max-tokens <n>] [--max-cards <n>] [--box <n>] [--session-file <transcript.jsonl>]
 ```
 
 It recomputes the plan and creates the run only when the hash matches and
@@ -355,8 +355,8 @@ The loop is exactly as /keiron-sequencer:spike Step 2, with its rules:
 node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs next [--project <project ref>]
 node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs tree <repoDir> [--project <project ref>]
 node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs candidates [--repo <repoDir>] [--project <project ref>]
-node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs fixup --fixes <CARD>[,<CARD>] --slug <kebab-slug> --note "<English>" --repo <repoDir> [--project <project ref>] -- <path>...
-node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs end <CARD> [--notes <notes.json>] [--allow <kind>:<path>]... [--project <project ref>]
+node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs fixup --fixes <CARD>[,<CARD>] --slug <kebab-slug> --note "<English>" --repo <repoDir> [--allow <kind>:<path>]... [--project <project ref>] -- <path>...
+node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs end <CARD> [--notes <notes.json>] [--allow <kind>:<path>]... [--skip-typecheck <reason>] [--project <project ref>]
 ```
 
 - `next` processes the ready replay entries first, inline: no window, no box,

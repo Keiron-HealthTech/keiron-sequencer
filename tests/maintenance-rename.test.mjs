@@ -298,7 +298,7 @@ test('the inverse refuses once a top-level record has a run id or a replay marke
     const r = await s.go('--inverse', '--apply');
     assert.equal(r.code, 5);
     assert.match(r.stderr, /CRM-9\.json/);
-    assert.match(r.stderr, /git/);
+    assert.doesNotMatch(r.stderr, /with git/);
     assert.match(r.stderr, /rename the folders by hand/);
     assert.deepEqual(s.state(), before);
   }

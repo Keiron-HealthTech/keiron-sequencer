@@ -260,7 +260,7 @@ test('the config rule: the skill never edits the file, and the CLI writes it onl
 });
 
 test('the config step runs its three forms in order: --out only on the draft, --draft only on the review and the write', () => {
-  const draftForm = `${RESPIKE}config <project ref> --out <draft.json> [--root <dir>]... [--cards <CARD>[,<CARD>]...] [--stale] [--built <CARD>=<branch>]... [--unbuilt <CARD>]...`;
+  const draftForm = `${RESPIKE}config <project ref> --out <draft.json> [--root <dir>]... [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]...`;
   const reviewForm = `${RESPIKE}config --draft <draft.json>`;
   const writeForm = `${RESPIKE}config --draft <draft.json> --approve <hash>`;
   const lines = commandLines('scripts/respike.mjs').filter(l => /respike\.mjs config\b/.test(l));

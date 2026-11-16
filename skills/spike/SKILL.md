@@ -184,7 +184,7 @@ reports nothing; run it again.
    `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs candidates [--repo <repoDir>] [--project <project ref>]`.
    `action: 'candidates'` lists `{card, repo, path, ranges}` suggestions and
    records nothing. Confirm which earlier card the change fixes, then run
-   `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs fixup --fixes <CARD>[,<CARD>] --slug <kebab-slug> --note "<English>" --repo <repoDir> [--project <project ref>] -- <path>...`.
+   `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs fixup --fixes <CARD>[,<CARD>] --slug <kebab-slug> --note "<English>" --repo <repoDir> [--allow <kind>:<path>]... [--project <project ref>] -- <path>...`.
    It snapshots only those paths as a fixup patch, updates the fixed cards'
    records, and leaves every other change for the current card's patch.
    Record a fixup before the current card touches the same file: a fixup
@@ -277,7 +277,9 @@ them. Ask the user mid-card only on real conflicts.
 - **Exit 2**: usage. Fix the command.
 - **Exit 3**: no Linear key found.
 - **Exit 4**: secret-like content in a patch; nothing was written.
-- **Exit 5**: a cycle among the run's cards; nothing was created.
+- **Exit 5**: a cycle among the run's cards; nothing was created. From
+  `config`: the draft or config.json changed since its hash was shown; review
+  again.
 - **Exit 6**: a tree guard failed; nothing was written.
 - **Exit 7**: usage unmeasured while a token cap is set.
 - **Exit 8**: the typecheck failed at `end`; nothing was written.

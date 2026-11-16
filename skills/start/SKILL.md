@@ -37,8 +37,7 @@ checkout only.
   Never invent, shorten or reuse a hash from another plan. Stop and ask only
   where Step 6 says.
 - Never move a card in Linear unless the user explicitly opts in, and
-  never run `move` without `--confirm <CARD>`. The first live `move` is the user's decision: the Linear field names behind it (the
-  `IssueTeamStates` read and the state update) have not been checked against the live Linear API.
+  never run `move` without `--confirm <CARD>`.
 - Never read, print or cat the Linear key. The CLI finds it, uses it and
   redacts it from every output. If it finds none (Exit 3), tell the user;
   never ask them to paste a key into the chat.
@@ -180,9 +179,9 @@ Show, in this order:
   started branch is never renamed (renaming a pushed branch closes its PR). A
   branch `where: 'worktree'` means "work there": nothing runs here.
 - `create`: go to Step 6.
-- If the card text names a dependency the Linear map lacks (the phrase table
-  of /keiron-sequencer:next, such as "after ABC-12"), plan again with
-  `--blocker <CARD>`.
+- If the card text names a dependency the Linear map lacks (a `textBlockers`
+  entry of /keiron-sequencer:next, or a phrase such as "Depende de ABC-12"),
+  plan again with `--blocker <CARD>`.
 
 ## Step 6: Go on, or stop on a real choice
 
@@ -211,12 +210,12 @@ Stop and ask only when there is a real choice or a risk:
 Then two questions, asked once, after the branch and the baseline exist, in
 one message:
 
-- (b) Accept or override the route (Step 10).
-- (c) Move <CARD> to In Progress in Linear? Default: no. The PR automation
+- (a) Accept or override the route (Step 10).
+- (b) Move <CARD> to In Progress in Linear? Default: no. The PR automation
   moves the card when its PR opens.
 
-Anything other than an explicit yes to (c) (no answer, "later", a doubt) is a
-no. Ask (c) on a resume too.
+Anything other than an explicit yes to (b) (no answer, "later", a doubt) is a
+no. Ask (b) on a resume too.
 
 ## Step 7: Fetch, then branch
 
@@ -275,7 +274,7 @@ plan, and go on as Step 6 says.
 
 ## Step 9: Move, only on an explicit yes
 
-Only on an explicit yes to (c):
+Only on an explicit yes to (b):
 
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/scripts/start.mjs move <CARD> --confirm <CARD>
@@ -340,9 +339,8 @@ With a pack, say these four rules in the hand-off, whatever the route:
   Report it; do not retry blindly.
 - **Exit 2**: usage, a config error naming the key, `fetch`, `branch` or
   `baseline` without `--approve`, or `move` without `--confirm`.
-- **Exit 3**: no Linear key found. Tell the user, or use the older
-  `/linear-card-start` skill as the fallback, which still works.
+- **Exit 3**: no Linear key found. Tell the user.
 - **Exit 5**: refused, nothing ran: a hash that does not match the
   recomputed plan, an action `branch` cannot take, an invalid `--name`, an
   `--accept` the plan does not allow, a resume branch in another worktree, or
-  a move refusal. Plan again, show the new plan and ask again.
+  a move refusal. Plan again, show the new plan, and go on as Step 6 says.

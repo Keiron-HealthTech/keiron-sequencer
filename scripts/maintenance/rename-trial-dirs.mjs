@@ -182,7 +182,7 @@ function planInverse({ home, dataDir, trial }) {
   for (const file of filesIn(dir).filter(f => f.endsWith('.json'))) {
     const value = JSON.parse(readFileSync(join(dir, file), 'utf8'));
     if (value.refs?.runId || value.replayed) {
-      throw exitError(5, `${file} has a run id or a replay marker: a respike has run since the rename, and the inverse would also rename that run's references; nothing was changed. Restore the records of data/${slug} with git and rename the folders by hand`);
+      throw exitError(5, `${file} has a run id or a replay marker: a respike has run since the rename, and the inverse would also rename that run's references; nothing was changed. Fix the trial references in the records under ${dir} and rename the folders by hand`);
     }
   }
   const moves = Object.fromEntries(Object.entries(invert(applied)).sort(([a], [b]) => compare(a, b)));
