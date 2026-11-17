@@ -61,6 +61,18 @@ test('an open PR, draft included, makes the card built with its head branch and 
   assert.deepEqual(demoted.built, []);
 });
 
+test('a card merged into the default branch adds no open PR into another branch, such as a [Prod] port, to the base', () => {
+  const port = pr(20, '[Prod] [CRM-5] port', { baseRefName: 'prod', headRefName: 'crm-5-prod', isDraft: true });
+  const out = classify([issue('CRM-5', started)], [merged(10, '[CRM-5] done'), port]);
+  assert.deepEqual(out.built.map(b => [b.key, b.kind, b.pr.number]), [['CRM-5', 'merged', 10]]);
+  assert.deepEqual(out.asks, []);
+});
+
+test('a card merged into the default branch keeps an open follow-up PR into the default branch as built code', () => {
+  const out = classify([issue('CRM-5', started)], [merged(10, '[CRM-5] done'), pr(21, '[CRM-5] follow-up')]);
+  assert.deepEqual(out.built.map(b => [b.key, b.kind, b.pr.number]), [['CRM-5', 'merged', 10], ['CRM-5', 'pr', 21]]);
+});
+
 test('a PR merged into another branch is pending, unless answered built (pinned) or unbuilt', () => {
   const into = [merged(14, '[CRM-5] into feature', { baseRefName: 'feature' })];
   assert.deepEqual(classify([issue('CRM-5')], into).pending, [{ key: 'CRM-5', repoDir: 'backend', branch: 'feature', pr: { number: 14, url: into[0].url, headRefName: 'b14', baseRefName: 'feature', isDraft: false } }]);

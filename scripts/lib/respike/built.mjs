@@ -88,7 +88,11 @@ export function classifyBuilt(analysis, { config, prs, refs, answers, pin }) {
     const { key } = card;
     const tagged = [...prs].map(([dir, list]) => ({ dir, list: list.filter(p => titleTag(key).test(String(p.title ?? ''))) }));
     const intoDefault = tagged.flatMap(({ dir, list }) => list.filter(p => isMerged(p) && p.baseRefName === config.repos[dir]?.defaultBranch).map(p => ({ dir, p })));
-    const open = tagged.flatMap(({ dir, list }) => list.filter(isOpen).sort((a, b) => b.number - a.number).slice(0, 1).map(p => ({ dir, p })));
+    // Once merged into the default branch, the card's code is there; an open PR into another branch (a [Prod] port to
+    // main) is cut from that branch, and as a base head it would pull in all of its drift from the default branch.
+    const mergedIn = new Set(intoDefault.map(({ dir }) => dir));
+    const counts = (dir, p) => isOpen(p) && (!mergedIn.has(dir) || p.baseRefName === config.repos[dir]?.defaultBranch);
+    const open = tagged.flatMap(({ dir, list }) => list.filter(p => counts(dir, p)).sort((a, b) => b.number - a.number).slice(0, 1).map(p => ({ dir, p })));
     const elsewhere = tagged.flatMap(({ dir, list }) => list.filter(p => isMerged(p) && p.baseRefName !== config.repos[dir]?.defaultBranch).map(p => ({ dir, p })));
     const completed = card.statusType === 'completed';
     for (const { dir, p } of intoDefault) {
