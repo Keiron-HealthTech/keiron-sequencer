@@ -69,7 +69,7 @@ test('an interrupted card is resumed: its window closes at the last transcript e
   const interrupted = stateIn(dir);
   assert.equal(interrupted.tracks.t1.current, null);
   assert.equal(interrupted.cards['CRM-1'].status, 'in-progress');
-  assert.deepEqual(interrupted.cards['CRM-1'].windows, [{
+  assert.deepEqual(interrupted.cards['CRM-1'].windows.map(({ mark, ...w }) => w), [{
     execution: 1, start: '2026-11-10T10:01:00.000Z', end: '2026-11-10T10:03:00.000Z', endReason: 'interrupted', settled: true, messages: 2,
     tokens: { input: 80, cacheCreation: 0, cacheRead: 0, output: 0, thinking: 0 }, w: 80,
   }]);

@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run } from '../scripts/spike.mjs';
+import { readState, saveState } from '../scripts/lib/spike/state.mjs';
 import { bindSession, sessionFiles, transcriptsRoot, weighted, windowUsage, WEIGHTS } from '../scripts/lib/spike/usage-window.mjs';
 import { tempDir } from './helpers/git-sandbox.mjs';
 import { guardNetwork } from './helpers/no-network.mjs';
@@ -96,12 +97,23 @@ test('bindSession keeps a bound transcript that holds the nonce, else binds the 
   assert.deepEqual(await bindSession({ root: join(DIR, 'missing-root'), nonce: 'abc123abc123', issuedAt, bound: [bound] }), { file: bound });
 
   appendTranscript(join(root, '-old', 'stale.jsonl'), [holding], '2026-11-10T09:59:54.000Z');
-  appendTranscript(join(root, '-p', 's1', 'subagents', 'agent-1.jsonl'), [holding]);
   appendTranscript(join(root, '-p', 'other.jsonl'), [usageEntry('x', '2026-11-10T10:00:02.000Z')]);
   assert.equal(await bindSession({ root, nonce: 'abc123abc123', issuedAt, bound: [] }), null);
   const fresh = appendTranscript(join(root, '-p', 's2.jsonl'), [holding], '2026-11-10T09:59:56.000Z');
   assert.deepEqual(await bindSession({ root, nonce: 'abc123abc123', issuedAt, bound: [] }), { file: fresh });
   assert.equal(await bindSession({ root, nonce: 'ffffffffffff', issuedAt, bound: [bound] }), null);
+});
+
+test('a mark written in a subagent transcript binds that file', async () => {
+  const root = join(DIR, 'sub-root');
+  const issuedAt = '2026-11-10T10:00:00.000Z';
+  const holding = toolResult('{"mark":"keiron-sequencer-spike:20261110T100000Z:1:def456def456"}', '2026-11-10T10:00:01.000Z');
+  const main = appendTranscript(join(root, '-p', 's1.jsonl'), [usageEntry('m', '2026-11-10T10:00:02.000Z')]);
+  const worker = appendTranscript(join(root, '-p', 's1', 'subagents', 'agent-1.jsonl'), [holding]);
+  appendTranscript(join(root, '-p', 's1', 'subagents', 'agent-2.jsonl'), [usageEntry('y', '2026-11-10T10:00:02.000Z')]);
+  assert.deepEqual(await bindSession({ root, nonce: 'def456def456', issuedAt, bound: [] }), { file: worker, subagent: true });
+  assert.deepEqual(await bindSession({ root: null, nonce: 'def456def456', issuedAt, bound: [main, worker] }), { file: worker, subagent: true });
+  assert.deepEqual(await bindSession({ root, nonce: 'ffffffffffff', issuedAt, bound: [] }), null);
 });
 
 const stateOf = (home, runId) => JSON.parse(readFileSync(join(home, SLUG, 'runs', runId, 'run.json'), 'utf8'));
@@ -210,4 +222,44 @@ test('--session-file overrides discovery, and with nothing bindable the card is 
   assert.equal(ended.code, 0, ended.stderr);
   assert.equal(JSON.parse(ended.stdout).usage, 'unmeasured');
   assert.equal(JSON.parse(readFileSync(join(other.dataDir, SLUG, 'CRM-1.json'), 'utf8')).effort, null);
+});
+
+test('two cards in two subagent transcripts are measured on their own files only', async () => {
+  const fixture = spikeFixture({ issues: [issue('CRM-1'), issue('CRM-2')] });
+  const { deps, transcripts, home, dataDir, at } = fixture;
+  const begun = await run(['begin', PROJECT_URL], deps);
+  const dir = join(home, SLUG, 'runs', JSON.parse(begun.stdout).runId);
+  const main = appendTranscript(join(transcripts, '-work', 'session-1.jsonl'), [toolResult(begun.stdout, '2026-11-10T10:00:01.000Z')]);
+  const workerOf = n => join(transcripts, '-work', 'session-1', 'subagents', `agent-${n}.jsonl`);
+  const state = readState(dir);
+  state.tracks = { t1: { ...state.tracks.t1, cards: ['CRM-1'] }, t2: { ...state.tracks.t1, cards: ['CRM-2'] } };
+  saveState(dir, state, deps.now());
+  mkdirSync(join(dir, 'notes'), { recursive: true });
+
+  const start = async (cardKey, track, n, when) => {
+    at(when);
+    const brief = await run(['next', '--track', track], deps);
+    assert.equal(JSON.parse(brief.stdout).card, cardKey, brief.stderr);
+    appendTranscript(workerOf(n), [toolResult(brief.stdout, new Date(Date.parse(when) + 1000).toISOString())]);
+    const tree = JSON.parse((await run(['tree', 'backend', '--track', track], deps)).stdout).path;
+    writeFileSync(join(tree, `${cardKey}.txt`), `${cardKey}\n`);
+    writeFileSync(join(dir, 'notes', `${cardKey}.json`), JSON.stringify(notes));
+  };
+  await start('CRM-1', 't1', 1, '2026-11-10T10:01:00.000Z');
+  await start('CRM-2', 't2', 2, '2026-11-10T10:02:00.000Z');
+  appendTranscript(workerOf(1), [usageEntry('w1', '2026-11-10T10:03:00.000Z', 40)]);
+  appendTranscript(workerOf(2), [usageEntry('w2', '2026-11-10T10:03:30.000Z', 7)]);
+  appendTranscript(main, [usageEntry('controller', '2026-11-10T10:03:40.000Z', 1000)]);
+
+  at('2026-11-10T10:05:00.000Z');
+  const first = await run(['end', 'CRM-1', '--track', 't1'], deps);
+  assert.equal(first.code, 0, first.stderr);
+  at('2026-11-10T10:06:00.000Z');
+  const second = await run(['end', 'CRM-2', '--track', 't2'], deps);
+  assert.equal(second.code, 0, second.stderr);
+  assert.deepEqual(JSON.parse(first.stdout).usage, { messages: 1, w: 40 });
+  assert.deepEqual(JSON.parse(second.stdout).usage, { messages: 1, w: 7 });
+  const after = readState(dir);
+  assert.deepEqual(after.cards['CRM-1'].windows[0].worker, workerOf(1));
+  assert.equal(JSON.parse(readFileSync(join(dataDir, SLUG, 'CRM-2.json'), 'utf8')).effort.windows[0].tokens.input, 7);
 });

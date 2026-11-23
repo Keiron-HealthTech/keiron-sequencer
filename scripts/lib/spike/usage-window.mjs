@@ -22,20 +22,40 @@ const holds = (file, nonce) => {
 
 const entries = dir => readdirSync(dir, { withFileTypes: true });
 
-// Main transcripts sit one level under the root; subagent transcripts sit deeper and never carry a mark.
+const jsonl = (dir, file) => (file.isFile() && file.name.endsWith('.jsonl') ? [join(dir, file.name)] : []);
+
+const isSubagent = file => basename(dirname(file)) === 'subagents';
+
+// Main transcripts sit one level under the root, <session>/subagents/*.jsonl one level further down.
 function mainTranscripts(root) {
   if (!existsSync(root)) return [];
   return entries(root).filter(e => e.isDirectory())
-    .flatMap(d => entries(join(root, d.name)).filter(e => e.isFile() && e.name.endsWith('.jsonl')).map(e => join(root, d.name, e.name)))
+    .flatMap(d => entries(join(root, d.name)).flatMap(e => jsonl(join(root, d.name), e)))
     .sort();
 }
 
+function subagentTranscripts(root) {
+  if (!existsSync(root)) return [];
+  return entries(root).filter(e => e.isDirectory())
+    .flatMap(d => entries(join(root, d.name)).filter(e => e.isDirectory())
+      .flatMap(s => {
+        const dir = join(root, d.name, s.name, 'subagents');
+        return existsSync(dir) ? entries(dir).flatMap(e => jsonl(dir, e)) : [];
+      }))
+    .sort();
+}
+
+// A subagent file wins over a main transcript that echoes the same mark: the worker is who ran the command.
 export async function bindSession({ root, nonce, issuedAt, bound = [] }) {
-  const kept = bound.find(f => holds(f, nonce));
-  if (kept) return { file: kept };
+  const kept = bound.filter(f => holds(f, nonce));
+  const keptFile = kept.find(isSubagent) ?? kept[0];
+  if (keptFile) return isSubagent(keptFile) ? { file: keptFile, subagent: true } : { file: keptFile };
   if (!root) return null;
   const since = Date.parse(issuedAt) - RESCAN_SLACK_MS;
-  const file = mainTranscripts(root).find(f => statSync(f).mtimeMs >= since && holds(f, nonce));
+  const recent = f => statSync(f).mtimeMs >= since && holds(f, nonce);
+  const worker = subagentTranscripts(root).find(recent);
+  if (worker) return { file: worker, subagent: true };
+  const file = mainTranscripts(root).find(recent);
   return file ? { file } : null;
 }
 

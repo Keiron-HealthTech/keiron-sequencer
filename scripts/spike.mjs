@@ -139,10 +139,21 @@ async function bindExecution(execution, { transcripts, now }) {
   if (!execution?.mark || execution.sessions.some(s => s.given)) return;
   const bound = execution.sessions.map(s => s.file);
   const found = await bindSession({ root: transcripts, nonce: execution.mark.nonce, issuedAt: execution.mark.issuedAt, bound });
-  if (found && !bound.includes(found.file)) execution.sessions.push({ file: found.file, boundAt: now().toISOString() });
+  if (found && !bound.includes(found.file)) execution.sessions.push({ file: found.file, boundAt: now().toISOString(), ...(found.subagent ? { subagent: true } : {}) });
 }
 
-const usageFiles = execution => execution.sessions.flatMap(s => sessionFiles(s.file));
+const usageFiles = execution => execution.sessions.flatMap(s => (s.subagent ? [s.file] : sessionFiles(s.file)));
+
+// A card whose mark landed in a worker's transcript is measured on that file alone: tracks overlap in time, so every
+// other file of the execution holds someone else's spend. Any other card is measured on the whole execution.
+async function windowFiles(window, execution, { transcripts, now, keep = true }) {
+  if (window.worker) return [window.worker];
+  if (!window.mark || execution.sessions.some(s => s.given)) return usageFiles(execution);
+  const found = await bindSession({ root: transcripts, nonce: window.mark.nonce, issuedAt: window.mark.issuedAt, bound: execution.sessions.map(s => s.file) });
+  if (!found?.subagent) return usageFiles(execution);
+  if (keep) window.worker = found.file;
+  return [found.file];
+}
 
 async function measure(window, files) {
   if (!files.length) return null;
@@ -159,12 +170,12 @@ async function measure(window, files) {
 const sameUsage = (window, usage) => window.messages === usage.messages && JSON.stringify(window.tokens) === JSON.stringify(usage.tokens);
 
 // A done card whose window sum moved gets its record's effort and timeBox rewritten.
-async function settleWindows(state, { dataDir }) {
+async function settleWindows(state, { dataDir, transcripts, now }) {
   const moved = new Set();
   const unsettled = new Set();
   for (const { card, window, execution } of unsettledWindows(state)) {
     const before = { messages: window.messages, tokens: window.tokens };
-    const usage = await measure(window, usageFiles(execution));
+    const usage = await measure(window, await windowFiles(window, execution, { transcripts, now }));
     if (!usage) continue;
     if (!sameUsage(before, usage)) moved.add(card);
     if (!usage.settled) unsettled.add(card);
@@ -201,11 +212,11 @@ function openPrs(config, slug, gh) {
   return lists;
 }
 
-async function startRun(ref, key, flags, { fetchImpl, now, home, dataDir, gh, git, lock }) {
+async function startRun(ref, key, flags, { fetchImpl, now, home, dataDir, gh, git, lock, transcripts }) {
   const config = loadConfig(home);
   const known = await fetchProject(ref, key, { fetchImpl });
   const existing = activeRunFor(home, known.slugId);
-  if (existing) return withLock(existing.dir, () => resumeRun({ dir: existing.dir, state: readState(existing.dir) }, flags, { now, git, dataDir }), lock);
+  if (existing) return withLock(existing.dir, () => resumeRun({ dir: existing.dir, state: readState(existing.dir) }, flags, { now, git, dataDir, transcripts }), lock);
   const last = latestRun(home, known.slugId);
   if (last?.state.status === 'complete') {
     return ok({ action: 'nothing-to-do', runId: last.state.runId, project: { slug: last.state.project.slug, name: last.state.project.name } });
@@ -248,7 +259,7 @@ const anyRemoved = state => allRepos(state).some(([, r]) => r.status === 'remove
 
 // The card in progress keeps its status; its open window closes at the last transcript line of its execution,
 // and next opens a new one. A window with no line after its start held no work and is dropped.
-async function closeInterruptedCard(state, track, at) {
+async function closeInterruptedCard(state, track, at, { transcripts, now }) {
   const { current } = track;
   if (!current) return;
   track.current = null;
@@ -256,7 +267,7 @@ async function closeInterruptedCard(state, track, at) {
   const window = cardState.windows.at(-1);
   if (window.end) return;
   const execution = state.executions.find(e => e.id === current.execution);
-  const files = usageFiles(execution);
+  const files = await windowFiles(window, execution, { transcripts, now });
   if (!files.length) {
     Object.assign(window, { end: execution.mark?.issuedAt ?? window.start, endReason: 'interrupted' });
     return;
@@ -271,11 +282,11 @@ async function closeInterruptedCard(state, track, at) {
   window.settled = true;
 }
 
-async function resumeRun({ dir, state }, flags, { now, git, dataDir }) {
+async function resumeRun({ dir, state }, flags, { now, git, dataDir, transcripts }) {
   for (const [repoDir, repo] of allRepos(state).filter(isOpen)) checkTree(git, repoDir, repo);
   const at = now();
-  for (const track of Object.values(state.tracks)) await closeInterruptedCard(state, track, at);
-  await settleWindows(state, { dataDir });
+  for (const track of Object.values(state.tracks)) await closeInterruptedCard(state, track, at, { transcripts, now });
+  await settleWindows(state, { dataDir, transcripts, now });
   closeOpenExecutions(state);
   state.status = 'active';
   const execution = openExecution(state, { now: at, sessions: sessionsFrom(flags, at), ...flags.limits });
@@ -378,7 +389,7 @@ async function nextCard(dir, state, trackId, { now, ...deps }, replayed = []) {
   if (refused) return refused;
   const execution = state.executions.at(-1);
   await bindExecution(execution, { ...deps, now });
-  const settled = await settleWindows(state, deps);
+  const settled = await settleWindows(state, { ...deps, now });
   const respike = state.plan.respike ? { replayed } : {};
   const track = state.tracks[trackId];
   const card = pendingCard(state, trackId);
@@ -405,6 +416,7 @@ async function nextCard(dir, state, trackId, { now, ...deps }, replayed = []) {
   const planned = state.plan.cards[card];
   const pr = planned.pr ? applyCardPr(state, trackId, planned.pr.repoDir, { ...deps, dir }) : {};
   const mark = issueMark(state, execution, at);
+  window.mark = { ...execution.mark };
   saveState(dir, state, at);
   return ok({
     mark, action: 'card', card, track: trackId, ...respike, ...replayContext(state.cards[card]), ...(resumed ? { resumed } : {}), title: planned.title, url: planned.url, description: planned.description,
@@ -448,10 +460,10 @@ function replayNext(dir, state, trackId, { now, git, dataDir, runSetup, config }
   return entry;
 }
 
-async function completeRun(dir, state, settled, { home, now, git, dataDir, sleep }, respike = {}) {
+async function completeRun(dir, state, settled, { home, now, git, dataDir, sleep, transcripts }, respike = {}) {
   for (let i = 0; i < SETTLE_POLLS && settled.unsettled.length; i++) {
     await sleep(SETTLE_POLL_MS);
-    settled = await settleWindows(state, { dataDir });
+    settled = await settleWindows(state, { dataDir, transcripts, now });
   }
   const at = now();
   let removed;
@@ -723,7 +735,7 @@ async function endCard(dir, state, trackId, card, { notesFile, notes }, flags, {
   const window = cardState.windows.at(-1);
   window.end = at.toISOString();
   await bindExecution(execution, { transcripts, now });
-  const usage = await measure(window, usageFiles(execution));
+  const usage = await measure(window, await windowFiles(window, execution, { transcripts, now }));
 
   const open = openRepos(after, trackId);
   const skip = flags['skip-typecheck'];
@@ -791,7 +803,7 @@ async function closeCurrentWindow(state, endReason, { now, transcripts }) {
     const execution = state.executions.find(e => e.id === current.execution);
     await bindExecution(execution, { transcripts, now });
     Object.assign(window, { end: now().toISOString(), endReason });
-    await measure(window, usageFiles(execution));
+    await measure(window, await windowFiles(window, execution, { transcripts, now }));
   }
 }
 
@@ -840,7 +852,8 @@ async function currentSpend(state, { now, transcripts }) {
   const found = execution.mark && !execution.sessions.some(s => s.given)
     ? await bindSession({ root: transcripts, nonce: execution.mark.nonce, issuedAt: execution.mark.issuedAt, bound })
     : null;
-  const files = [...new Set([...bound, ...(found ? [found.file] : [])])].flatMap(sessionFiles);
+  const unbound = found && !bound.includes(found.file) ? [{ file: found.file, ...(found.subagent ? { subagent: true } : {}) }] : [];
+  const files = await windowFiles(cardState.windows.at(-1), { ...execution, sessions: [...execution.sessions, ...unbound] }, { transcripts, now, keep: false });
   const closed = cardState.windows.slice(0, -1);
   let spent = 'unmeasured';
   if (files.length && closed.every(w => typeof w.w === 'number')) {
