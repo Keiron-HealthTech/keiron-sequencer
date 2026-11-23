@@ -596,3 +596,55 @@ test('the start brief carries answered outcomes', async t => {
   writePack(f.dataDir, SLUG, { ...pack, stamp: { ...pack.stamp, bases: { app: 'b'.repeat(40) } } });
   assert.equal(JSON.parse((await f.run(['plan', CARD])).stdout).brief.pack.stale, 'base');
 });
+
+// A card with no Linear project: no map, record, pack or staleness, but the parts that apply to any card still run.
+const loose = (over = {}) => startIssue(CARD, { gitBranchName: GIT_BRANCH_NAME, projectId: null, ...over });
+const projectReads = f => f.linear.sent.filter(s => s.body.query.includes('project(id:') || s.body.query.includes('issues(filter:'));
+
+test('a card with no project plans in no-project mode: default base, Linear branch name, no project read', async t => {
+  const f = fakeStartFixture({ issues: [loose()] });
+  t.after(f.dispose);
+  const out = await plan(f);
+  assertKeys(out, 'no project');
+  assert.deepEqual(projectReads(f), []);
+  assert.deepEqual([out.action, out.base.kind, out.base.ref], ['create', 'default', 'origin/main']);
+  assert.deepEqual(out.reasons.map(r => [r.code, r.blocking]), [['no-project', false]]);
+  assert.match(out.reasons[0].message, /no Linear project/);
+  assert.deepEqual([out.branch.name, out.branch.source], [GIT_BRANCH_NAME, 'linear']);
+  assert.equal(out.card.project, null);
+  assert.deepEqual([out.brief.record, out.brief.pack, out.brief.recordNote], [null, null, 'no record: the card has no Linear project']);
+  assert.deepEqual([out.verdict.value, out.route.route, out.route.said], ['no project', null, 'no project']);
+  assert.deepEqual([out.staleness.computed, out.staleness.reason], [false, 'no project']);
+  assert.deepEqual(out.siblings, { dependents: [], milestone: null });
+  assert.ok(out.warnings.some(w => /--blocker/.test(w)), JSON.stringify(out.warnings));
+});
+
+test('a no-project card still resumes its started branch, takes --blocker, and stops when closed or in another repo', async t => {
+  const resumed = fakeStartFixture({ issues: [loose()], git: { refs: ['refs/heads/main', `refs/heads/${GIT_BRANCH_NAME}`, 'refs/remotes/origin/main'] } });
+  t.after(resumed.dispose);
+  const r = await plan(resumed);
+  assert.deepEqual([r.action, r.resume.branches], ['resume', [{ name: GIT_BRANCH_NAME, where: 'local', path: null }]]);
+
+  const stacked = fakeStartFixture({ issues: [loose(), blocker('ABC-2', { projectId: null, relations: { nodes: [] } })], gh: ghFrom({ search: { 'ABC-2': [ghPr(2)] } }) });
+  t.after(stacked.dispose);
+  const s = await plan(stacked, ['--blocker', 'ABC-2']);
+  assert.deepEqual([s.action, s.base.kind, s.base.ref, s.blockers.map(b => [b.key, b.source])], ['create', 'stack', 'origin/user/abc-2-x', [['ABC-2', 'given']]]);
+
+  const closed = fakeStartFixture({ issues: [loose({ state: { name: 'Done', type: 'completed' } })] });
+  t.after(closed.dispose);
+  assert.deepEqual(codes(await plan(closed)), ['card-closed', 'no-project']);
+
+  const other = fakeStartFixture({ issues: [loose({ title: 'web-repo: Card ABC-1' })],
+    repos: { app: appRepo(FAKE_CHECKOUT), web: appRepo('/fake/web', { name: 'web-repo', github: 'acme/web' }) } });
+  t.after(other.dispose);
+  const w = await plan(other);
+  assert.deepEqual([w.action, codes(w)], ['stop', ['wrong-repo', 'no-project']]);
+});
+
+test('a no-project card never reads the spike records or a pack, even with a record of the same key on disk', async t => {
+  const f = fakeStartFixture({ issues: [loose()], records: [startRecord(CARD)] });
+  t.after(f.dispose);
+  writePack(f.dataDir, SLUG, draftPack(startRecord(CARD, { openDecisions: [{ text: 'Who may see it.', impact: 'design', owner: 'people' }] }), { description: loose().description }, {}));
+  const out = await plan(f);
+  assert.deepEqual([out.brief.record, out.brief.pack, out.verdict.value], [null, null, 'no project']);
+});

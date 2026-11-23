@@ -158,20 +158,17 @@ Today is the JSON's `today`, the machine's local calendar date.
   in the config: its local work is not seen),
   `record-invalid` and `data-in-repo`. Offer to fix the Linear ones; don't fix
   unprompted.
-- **Decision packs**, when the project has spike records: offer to draft them
-  for the startable frontier, so the people-owned open decisions are answered
-  in one sitting and the work later runs without stopping. `packs.mjs draft`
-  writes one pack per frontier card (blockers all done) that has a
-  people-owned open or narrowed decision, never for a descendant: its
-  questions change when its parent lands. Each question carries what the
-  spike already ruled out (`evidence`); add the options still standing.
-  `packs.mjs status` lists each pack as `fresh`, `unanswered`, or `stale` with
-  its reason (`card-text`, `record` or `base`): draft a stale one again, which
-  keeps the answers to questions asked in the same words. Ask the user each
-  open question, then record the answer with `packs.mjs answer`, stated as
-  outcomes, not mechanisms ("no patient data reaches an internal user without
-  a grant", not "return 403"): /keiron-sequencer:start carries them as binding
-  requirements. Never answer a question for the user.
+- **Decision packs**, only when `records.count` is 1 or more: run
+  `packs.mjs status` and report, one line each, the cards in `free[]` whose
+  pack is `unanswered` or `stale`, the pick first: an unanswered pack with its
+  `open` count, a stale one with its reason (`card-text`, `record` or `base`). Skip `fresh` packs and
+  packs of cards not in `free[]`. The user is not starting a card here:
+  Never ask a pack question here, and never draft or answer a pack.
+  /keiron-sequencer:start drafts the pack of the card it starts, again when it
+  is stale, asks its open questions and saves the answers. `status` lists only
+  the packs already drafted, so a free card with no pack yet is not listed;
+  say nothing about it. A `status` that fails is one Board hygiene line, never
+  a stop.
 - End with: start it via `/keiron-sequencer:start CRM-XXXX`, adding
   `--blocker <CARD>` for each entry of the pick's `textBlockers` (start reads no
   card text).
@@ -182,10 +179,8 @@ Today is the JSON's `today`, the machine's local calendar date.
 # Step 0. Exit 0 JSON; 1 Linear or internal error; 2 usage or config; 3 no key.
 node ${CLAUDE_PLUGIN_ROOT}/scripts/next.mjs "<project-ref>"
 
-# Decision packs (Output). draft and status read Linear (exit 3 with no key); answer reads only the pack.
-node ${CLAUDE_PLUGIN_ROOT}/scripts/packs.mjs draft <project-ref>
+# Decision packs (Output): report only. It reads Linear (exit 3 with no key) and writes nothing.
 node ${CLAUDE_PLUGIN_ROOT}/scripts/packs.mjs status <project-ref>
-node ${CLAUDE_PLUGIN_ROOT}/scripts/packs.mjs answer <slug> <CARD> <question id> --outcome "<the outcome>"
 ```
 
 ## Gotchas

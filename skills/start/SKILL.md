@@ -43,7 +43,9 @@ checkout only.
   never ask them to paste a key into the chat.
 - The default branch comes from the repo's config, never from origin/HEAD.
 - Spike patches are reference only: chained diffs, never applied to the tree.
-- Every bash fence below runs only `node ${CLAUDE_PLUGIN_ROOT}/scripts/start.mjs …`.
+- Every bash fence below runs only `node ${CLAUDE_PLUGIN_ROOT}/scripts/start.mjs …`,
+  except Step 9's two `packs.mjs` lines, which draft and answer this card's
+  own decision pack.
 
 Install: the user installs it as a plugin; do not run these yourself:
 `claude plugin marketplace add <owner>/keiron-sequencer`, then
@@ -108,6 +110,16 @@ Show, in this order:
     still completes, but a blocker it could not read stays unverified and the
     base becomes an ask, never the default branch.
   - `dirty-checkout` (`blocking: false`): uncommitted or untracked files.
+  - `no-project` (`blocking: false`): the card has no Linear project, so the
+    plan runs in no-project mode. It reads no project map, spike record or
+    decision pack and computes no staleness, and `card.project` is null. What
+    applies to any card still runs: the base from the repo's default branch,
+    the branch name from Linear, the resume of a started branch, the
+    typecheck baseline, and the route from the card text. With no map, only
+    the `--blocker` flags give the card blockers (the plan warns so): if the
+    card text or its Linear relations name one, plan again with
+    `--blocker <CARD>`. `wrong-repo` still stops it: start it from that repo's
+    checkout.
 - The blockers: each with its Linear state, its PRs, its `status`, and
   every blocker `warning` (for example a blocker merged on GitHub whose card
   is still open in Linear). List `skippedBlockers`.
@@ -128,9 +140,10 @@ Show, in this order:
   `people-decisions:<n>`, `pack-answered:<n>` (shown when above 0),
   `new-paths:<n>`, `files:<n>`, `fixups-received:<n>`, `tier:<T>` and
   `unblocks:<n>`. The verdict
-  "unknown" (an old record) and "no record" are named as such, never shown
-  as No SDD. With "no record" `route.route` is null: decide from the card
-  text with the same rule (Step 10), and say that is what you did.
+  "unknown" (an old record), "no record" and "no project" are named as
+  such, never shown as No SDD. With "no record" or "no project"
+  `route.route` is null: decide from the card text with the same rule
+  (Step 11), and say that is what you did.
 - The staleness: by group (`self`, `sibling`, `unrelated`, each with its
   `more` count), the base commit status, the reason when it was not computed,
   and `staleness.unchecked` (other repos of the card, not checked here).
@@ -147,8 +160,8 @@ Show, in this order:
 - The decision pack, `brief.pack` (null when none was drafted): its answered
   questions with their outcomes, the questions still open, and `stale` with
   its reason when the card text, the record or the base moved since it was
-  drafted. Say a stale pack is stale; offer `/keiron-sequencer:next` to draft it again
-  before relying on it, and ask the open questions before routing.
+  drafted. Say a stale pack is stale: Step 9 drafts it again after the
+  fetch, and asks its open questions before routing.
 - The patches, with `brief.patchesNote`: they are reference only, chained on
   the earlier cards of the spike, and never applied to the tree.
 - The typecheck commands, and every entry of `warnings`.
@@ -207,10 +220,10 @@ Stop and ask only when there is a real choice or a risk:
   branch as a resume, because it neither equals `branch.name` nor carries the
   card id.
 
-Then two questions, asked once, after the branch and the baseline exist, in
-one message:
+Then two questions, asked once, after the branch and the baseline exist and
+Step 9 has saved the pack's answers, in one message:
 
-- (a) Accept or override the route (Step 10).
+- (a) Accept or override the route (Step 11).
 - (b) Move <CARD> to In Progress in Linear? Default: no. The PR automation
   moves the card when its PR opens.
 
@@ -272,7 +285,46 @@ not block on them. `configured: false` means the repo has no typecheck
 baseline. There is no test baseline. On Exit 5, plan again and show the new
 plan, and go on as Step 6 says.
 
-## Step 9: Move, only on an explicit yes
+## Step 9: Decision pack
+
+Skip this step in no-project mode (`card.project` null) and when
+`brief.record` is null: there is no pack to draft. Otherwise draft the card's
+own pack after the baseline, or after `branch --resume` on a resume, on every
+start:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/scripts/packs.mjs draft <card.project.slug> --card <CARD>
+```
+
+It runs after Step 7's fetch on purpose: the pack is stamped with the
+default tip, and a pack drafted before the fetch moved the default tip goes
+stale at once. A fresh pack is kept (`fresh`); a stale one, or none, is
+drafted (`drafted`), keeping an answer only for a question asked in the same
+words. `skipped` (no record, or no people-owned open decision) and a pack
+with no open question ask nothing. Exit 3 is no key: tell the user. On any
+other failure, say so and go on without the pack: the route counts the
+decisions as open.
+
+`pack.questions` lists every question with its `evidence` (what the spike
+already ruled out) and its `answer` (null while open). Ask every open
+question in one message, with its evidence and the options still standing,
+which you add from the brief and the code. Never answer a question for the
+user. Save each answer the user gives, stated as outcomes, not mechanisms
+("no patient data reaches an internal user without a grant", not "return
+403"):
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/scripts/packs.mjs answer <card.project.slug> <CARD> <question id> --outcome "<the outcome>"
+```
+
+Saved answers survive across sessions: a later start of the same card reads
+them from the pack and asks only what is still open. A question the user
+leaves open stays open; save nothing for it. Then plan again with the same
+blocker flags (`start.mjs plan`, read only): its route counts the answered
+decisions as settled (`pack-answered:<n>`), and its approve hash does not
+move with the pack. Say the new route in Step 11.
+
+## Step 10: Move, only on an explicit yes
 
 Only on an explicit yes to (b):
 
@@ -286,7 +338,7 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/start.mjs move <CARD> --confirm <CARD>
   card's team, a completed or canceled card, or a `--confirm` that does not
   repeat the card).
 
-## Step 10: Route
+## Step 11: Route
 
 The route is a recommendation, said out loud with its reasons before any
 hand-off:
@@ -306,7 +358,7 @@ a fresh decision pack no longer counts as open: `people-decisions:<n>` counts
 only the unanswered ones, and `pack-answered:<n>` says how many the pack
 settled, so say that when the route drops because of it. Answers match
 decisions by their text; a stale pack answers nothing. When `route.said` is "unknown" (an
-old record), the route is `sdd` and you say why. When it is "no record",
+old record), the route is `sdd` and you say why. When it is "no project", decide from the card text with the same rule. When it is "no record",
 decide from the card text with the same rule. If the user picks another
 workflow, follow it without arguing or blocking.
 

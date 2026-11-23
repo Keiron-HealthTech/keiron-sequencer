@@ -2,7 +2,7 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fail, isEntry, ok, parseArgs, redacted } from './lib/cli.mjs';
-import { analyzeProject } from './lib/graph.mjs';
+import { analyzeProject, isExecutionCard } from './lib/graph.mjs';
 import { fetchDescriptions, fetchProjectMap, parseProjectRef, readLinearKey } from './lib/linear-fetch.mjs';
 import { draftPack, packStale, readPack, writePack } from './lib/packs.mjs';
 import { dataInRepoWarning, isLive, readRecords, REPO_DATA_DIR } from './lib/records.mjs';
@@ -12,11 +12,12 @@ import { dataDirFor, displayData } from './lib/spike/home.mjs';
 import { mapRepo } from './lib/start/checkout.mjs';
 
 const USAGE = [
-  'usage: node scripts/packs.mjs draft <project ref>',
+  'usage: node scripts/packs.mjs draft <project ref> [--card <CARD>]',
   'usage: node scripts/packs.mjs status <project ref>',
   'usage: node scripts/packs.mjs answer <slug> <CARD> <question id> --outcome <text>',
 ];
 const SLUG = /^[0-9a-f]{12}$/;
+const CARD_KEY = /^[A-Z]+-\d+$/;
 const byNumber = (a, b) => Number(a.match(/\d+$/)?.[0] ?? 0) - Number(b.match(/\d+$/)?.[0] ?? 0) || (a < b ? -1 : a > b ? 1 : 0);
 
 // The commits the card would start from, by config repo dir: the default tip of each of its repos the config can read.
@@ -53,30 +54,46 @@ async function readProject(ref, key, { fetchImpl, dataDir, repoDataDir }) {
   return { raw, slug, records, issueOf, warnings: moved ? [{ kind: moved.kind, message: moved.message }] : [] };
 }
 
-// Packs only for the startable frontier: cards whose blockers are all done. A descendant's questions change when its
-// parent lands, so it gets none. A fresh pack is kept; a stale one is drafted again, keeping the answers to the questions
-// still asked in the same words.
+// A fresh pack is kept; a stale one is drafted again, keeping the answers to the questions still asked in the same words.
+function draftOne(card, { slug, records, issueOf, config, git, dataDir }, out) {
+  const record = records.get(card);
+  if (!record) return out.skipped.push({ card, reason: 'no record' });
+  const bases = basesFor(git, config, record);
+  const old = readPack(dataDir, slug, card);
+  if (old && !packStale(old, { issue: issueOf(card), record, bases })) return out.fresh.push(card);
+  const pack = draftPack(record, issueOf(card), bases);
+  if (!pack.questions.length) return out.skipped.push({ card, reason: 'no people-owned open decision' });
+  const kept = new Map((old?.questions ?? []).filter(q => q.answer).map(q => [q.text, q.answer]));
+  for (const q of pack.questions) q.answer = kept.get(q.text) ?? null;
+  writePack(dataDir, slug, pack);
+  return out.drafted.push(card);
+}
+
+const counts = pack => {
+  const answered = pack.questions.filter(q => q.answer).length;
+  return { answered, open: pack.questions.length - answered };
+};
+
+// With no --card: packs only for the startable frontier, cards whose blockers are all done; a descendant's questions
+// change when its parent lands, so it gets none. With --card: that card alone, frontier or not, since start drafts the
+// pack of the card it is starting, and prints the pack so start can ask its open questions.
 async function draft(args, { key, fetchImpl, dataDir, home, git, repoDataDir }) {
-  const ref = parseProjectRef(args[0] ?? '');
-  if (args.length !== 1 || !ref) return fail(2, ...USAGE);
+  const a = parseArgs(args, ['--card']);
+  const ref = parseProjectRef(a?.positional[0] ?? '');
+  if (a?.positional.length !== 1 || !ref || (a.flags.card !== undefined && !CARD_KEY.test(a.flags.card))) return fail(2, ...USAGE);
   const { raw, slug, records, issueOf, warnings } = await readProject(ref.ref, key, { fetchImpl, dataDir, repoDataDir });
-  const frontier = analyzeProject(raw).free;
-  const config = configOf(home);
+  const ctx = { slug, records, issueOf, config: configOf(home), git, dataDir };
   const out = { action: 'draft', slug, drafted: [], fresh: [], skipped: [], warnings };
-  for (const card of [...frontier].sort(byNumber)) {
-    const record = records.get(card);
-    if (!record) { out.skipped.push({ card, reason: 'no record' }); continue; }
-    const bases = basesFor(git, config, record);
-    const old = readPack(dataDir, slug, card);
-    if (old && !packStale(old, { issue: issueOf(card), record, bases })) { out.fresh.push(card); continue; }
-    const pack = draftPack(record, issueOf(card), bases);
-    if (!pack.questions.length) { out.skipped.push({ card, reason: 'no people-owned open decision' }); continue; }
-    const kept = new Map((old?.questions ?? []).filter(q => q.answer).map(q => [q.text, q.answer]));
-    for (const q of pack.questions) q.answer = kept.get(q.text) ?? null;
-    writePack(dataDir, slug, pack);
-    out.drafted.push(card);
+  const { card } = a.flags;
+  if (card === undefined) {
+    for (const c of [...analyzeProject(raw).free].sort(byNumber)) draftOne(c, ctx, out);
+    return ok(out);
   }
-  return ok(out);
+  if (!raw.issues.some(i => i.identifier === card && isExecutionCard(i))) return fail(2, `${card} is not an execution card of ${slug}`);
+  draftOne(card, ctx, out);
+  const pack = out.skipped.length ? null : readPack(dataDir, slug, card);
+  const { answered, open } = pack ? counts(pack) : {};
+  return ok({ ...out, pack: pack && { card, state: open ? 'unanswered' : 'fresh', answered, open, questions: pack.questions } });
 }
 
 async function status(args, { key, fetchImpl, dataDir, home, git, repoDataDir }) {
@@ -90,8 +107,7 @@ async function status(args, { key, fetchImpl, dataDir, home, git, repoDataDir })
     const pack = readPack(dataDir, slug, card);
     const record = records.get(card) ?? null;
     const reason = record ? packStale(pack, { issue: issueOf(card), record, bases: basesFor(git, config, record) }) : 'record';
-    const answered = pack.questions.filter(q => q.answer).length;
-    const open = pack.questions.length - answered;
+    const { answered, open } = counts(pack);
     return { card, state: reason ? 'stale' : open ? 'unanswered' : 'fresh', reason, answered, open };
   });
   return ok({ action: 'status', slug, packs, warnings });

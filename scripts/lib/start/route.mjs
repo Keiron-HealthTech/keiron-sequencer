@@ -38,10 +38,11 @@ export function routeFacts({ verdict, record, siblings, pack = null }) {
 
 // A recommendation, said with its reasons: sdd for cross-repo work, an open design decision the people own or an XL
 // card; light for an L card, new paths or two fixups received; tdd otherwise. With no record the skill decides from the
-// card text by the same rule; an old record missing the verdict inputs stays sdd and says unknown.
+// card text by the same rule, and so does a card with no project; an old record missing the verdict inputs stays sdd and
+// says unknown.
 export function routeFor({ verdict, record, siblings, pack = null }, gitBranchName) {
   const changeName = changeNameOf(gitBranchName);
-  if (!record) return { route: null, said: 'no record', reasons: [], changeName };
+  if (!record) return { route: null, said: verdict.value === 'no project' ? 'no project' : 'no record', reasons: [], changeName };
   const f = routeFacts({ verdict, record, siblings, pack });
   const reasons = [
     ...(f.repos > 1 ? ['repos>1'] : []), `design-decisions:${f.designDecisions}`, `people-decisions:${f.peopleDecisions}`,

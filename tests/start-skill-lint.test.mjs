@@ -16,7 +16,9 @@ const fences = [...skill.matchAll(/^```(\w*)\n([\s\S]*?)^```$/gm)].map(m => ({ l
 const outsideFences = skill.replace(/^```\w*\n[\s\S]*?^```$/gm, '');
 const inlineCode = [...outsideFences.matchAll(/`([^`\n]+)`/g)].map(m => m[1]);
 const bashLines = fences.filter(f => f.lang === 'bash').flatMap(f => f.body.split('\n')).filter(l => l.trim());
-const commandLines = [...bashLines, ...inlineCode.filter(c => c.includes('start.mjs'))];
+const PACKS = 'node ${CLAUDE_PLUGIN_ROOT}/scripts/packs.mjs ';
+const isPacks = line => line.includes('scripts/packs.mjs');
+const commandLines = [...bashLines, ...inlineCode.filter(c => c.includes('start.mjs'))].filter(l => !isPacks(l));
 
 const CLI = 'node ${CLAUDE_PLUGIN_ROOT}/scripts/start.mjs ';
 const FLAG = /(?<![\w-])--[a-z][a-z-]*/g;
@@ -43,11 +45,11 @@ test('the skill holds no old name, in its front matter or its text', () => {
   assert.doesNotMatch(skill, new RegExp('mi' + 'kado', 'i'));
 });
 
-test('the steps run preflight, plan, recall, show, act, ask, fetch and branch, baseline, move, route, in that order', () => {
+test('the steps run preflight, plan, recall, show, act, ask, fetch and branch, baseline, pack, move, route, in that order', () => {
   const headings = [
     '## Step 1: Preflight', '## Step 2: Plan', '## Step 3: Recall', '## Step 4: Show the plan', '## Step 5: Act on the action',
     '## Step 6: Go on, or stop on a real choice', '## Step 7: Fetch, then branch', '## Step 8: Typecheck baseline',
-    '## Step 9: Move, only on an explicit yes', '## Step 10: Route',
+    '## Step 9: Decision pack', '## Step 10: Move, only on an explicit yes', '## Step 11: Route',
   ];
   const at = headings.map(h => skill.indexOf(`\n${h}\n`));
   headings.forEach((h, i) => assert.ok(at[i] > 0, `missing heading ${JSON.stringify(h)}`));
@@ -67,13 +69,34 @@ test('every usage flag is documented, and every flag the skill passes is a usage
   const fromUsage = new Set(usage.match(FLAG));
   assert.ok(fromUsage.has('--blocker-branch') && fromUsage.has('--confirm'), [...fromUsage].join(', '));
   for (const flag of fromUsage) assert.ok(hasToken(skill, flag), `SKILL.md does not document ${flag}`);
-  const passed = new Set([...commandLines, ...inlineCode].flatMap(l => l.match(FLAG) ?? []));
+  const passed = new Set([...commandLines, ...inlineCode.filter(c => !isPacks(c))].flatMap(l => l.match(FLAG) ?? []));
   assert.deepEqual([...passed].filter(f => !fromUsage.has(f)), []);
 });
 
-test('every bash fence runs only the start CLI', () => {
+test('every bash fence runs only the start CLI, or the packs CLI to draft and answer the card\'s own pack', () => {
   assert.ok(bashLines.length >= 6, `only ${bashLines.length} bash lines`);
-  for (const line of bashLines) assert.ok(line.startsWith(CLI), `bash line runs something else: ${line}`);
+  for (const line of bashLines) assert.ok(line.startsWith(CLI) || line.startsWith(PACKS), `bash line runs something else: ${line}`);
+  const packs = bashLines.filter(isPacks);
+  assert.deepEqual(packs, [
+    `${PACKS}draft <card.project.slug> --card <CARD>`,
+    `${PACKS}answer <card.project.slug> <CARD> <question id> --outcome "<the outcome>"`,
+  ]);
+});
+
+test('Step 9 drafts the card\'s own pack after the fetch, asks its open questions and saves every answer', () => {
+  const step = skill.slice(skill.indexOf('## Step 9: Decision pack'), skill.indexOf('## Step 10:'));
+  const flatStep = step.replace(/\s+/g, ' ');
+  for (const text of [
+    'after the baseline', 'the fetch moved the default tip', 'resume', 'no-project mode', '`pack.questions`',
+    'stated as outcomes, not mechanisms', 'Never answer a question for the user', 'plan again', 'survive',
+  ]) assert.ok(flatStep.includes(text), `Step 9 does not say ${JSON.stringify(text)}`);
+  assert.doesNotMatch(skill, /offer `\/keiron-sequencer:next` to draft it again/);
+});
+
+test('no-project mode: the plan goes on without the map, the record, the pack and the staleness', () => {
+  says('`no-project` (`blocking: false`)');
+  says('only the `--blocker` flags');
+  says('When it is "no project", decide from the card text');
 });
 
 test('a text fence documents the branch command with the plan base on the configured remote', () => {
@@ -127,7 +150,7 @@ test('the move carries no unverified-API warning', () => {
 test('the show step renders every plan reason, the non-blocking ones included', () => {
   const codes = [
     'not-execution-card', 'card-closed', 'repo-unconfigured', 'wrong-repo', 'no-branch-name', 'unstarted-blocker', 'unverified-blocker',
-    'wait-blocker', 'push-reviews', 'pr-merged', 'pr-closed', 'gh-unavailable', 'dirty-checkout',
+    'wait-blocker', 'push-reviews', 'pr-merged', 'pr-closed', 'gh-unavailable', 'dirty-checkout', 'no-project',
   ];
   const plan = read('scripts/lib/start/plan.mjs');
   const emitted = [...plan.matchAll(/reason\('([a-z-]+)'/g)].map(m => m[1]);
@@ -245,8 +268,8 @@ test('the pack: answers are binding outcomes, code-settled decisions are hypothe
   ]) says(anchor);
 });
 
-test('Step 10 lists every route before the pack rules, so no route bullet reads as a pack rule', () => {
-  const step = skill.slice(skill.indexOf('## Step 10: Route'), skill.indexOf('## Exit codes'));
+test('Step 11 lists every route before the pack rules, so no route bullet reads as a pack rule', () => {
+  const step = skill.slice(skill.indexOf('## Step 11: Route'), skill.indexOf('## Exit codes'));
   const pack = step.indexOf('With a pack');
   for (const route of ['- `sdd`:', '- `light`:', '- `tdd`:']) {
     assert.ok(step.indexOf(route) > 0 && step.indexOf(route) < pack, `${route} must come before the pack rules`);

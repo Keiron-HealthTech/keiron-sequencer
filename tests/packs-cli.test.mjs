@@ -75,3 +75,35 @@ test('status reports a pack stale after the card text changes, and an answer is 
   assert.equal(bad.code, 2);
   assert.match(bad.stderr, /q9/);
 });
+
+test('draft --card drafts only that card, even a descendant start is starting, and prints its questions', async t => {
+  const dir = home();
+  const r = await run(['draft', SLUG, '--card', 'CRM-3'], deps(dir, fakeLinearStore({ issues: issues() })));
+  assert.equal(r.code, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.deepEqual([out.drafted, out.fresh, out.skipped], [['CRM-3'], [], []]);
+  assert.equal(existsSync(packPath(dir, SLUG, 'CRM-2')), false, 'no other card is drafted');
+  assert.deepEqual(out.pack, {
+    card: 'CRM-3', state: 'unanswered', answered: 0, open: 1,
+    questions: [{ id: 'q1', text: 'Which retention.', evidence: [], options: [], owner: 'people', answer: null }],
+  });
+
+  await run(['answer', SLUG, 'CRM-3', 'q1', '--outcome', 'Records are kept as long as the law requires.'], deps(dir, fakeLinearStore({ issues: issues() })));
+  const again = JSON.parse((await run(['draft', SLUG, '--card', 'CRM-3'], deps(dir, fakeLinearStore({ issues: issues() })))).stdout);
+  assert.deepEqual([again.drafted, again.fresh, again.pack.state, again.pack.open], [[], ['CRM-3'], 'fresh', 0]);
+  assert.equal(again.pack.questions[0].answer.outcome, 'Records are kept as long as the law requires.');
+});
+
+test('draft --card skips a card with no record or nothing to ask, and refuses a card off the map', async t => {
+  const dir = home();
+  const store = () => fakeLinearStore({ issues: [...issues(), issue('CRM-5')] });
+  const none = JSON.parse((await run(['draft', SLUG, '--card', 'CRM-4'], deps(dir, store()))).stdout);
+  assert.deepEqual([none.skipped, none.pack], [[{ card: 'CRM-4', reason: 'no people-owned open decision' }], null]);
+  const unrecorded = JSON.parse((await run(['draft', SLUG, '--card', 'CRM-5'], deps(dir, store()))).stdout);
+  assert.deepEqual([unrecorded.skipped, unrecorded.pack], [[{ card: 'CRM-5', reason: 'no record' }], null]);
+  const off = await run(['draft', SLUG, '--card', 'CRM-9'], deps(dir, store()));
+  assert.equal(off.code, 2);
+  assert.match(off.stderr, /CRM-9 is not an execution card/);
+  const bad = await run(['draft', SLUG, '--card', 'nope'], deps(dir, store()));
+  assert.equal(bad.code, 2);
+});

@@ -64,11 +64,13 @@ export function fakeLinearStore({
   }
 
   const find = ref => store.issues.find(i => i.id === ref || i.identifier === ref) ?? null;
-  const projectOf = i => i.projectId ?? store.project.id;
+  // projectId: null is a card with no Linear project; a card that names no projectId is in the store's project.
+  const projectOf = i => (i.projectId === undefined ? store.project.id : i.projectId);
   const inProject = () => store.issues.filter(i => projectOf(i) === store.project.id);
   const teamOf = i => store.teams.find(t => t.id === i.team?.id) ?? i.team ?? store.teams[0] ?? null;
   const teamRef = i => { const t = teamOf(i); return t && { id: t.id, key: t.key }; };
   const projectRef = i => {
+    if (projectOf(i) === null) return null;
     const p = projectOf(i) === store.project.id ? store.project : { id: projectOf(i) };
     return { id: p.id, slugId: p.slugId ?? null, name: p.name ?? null, url: p.url ?? null };
   };
@@ -109,7 +111,7 @@ export function fakeLinearStore({
       const i = find(id);
       return { issue: i && {
         id: i.id, identifier: i.identifier, title: i.title, description: i.description, archivedAt: i.archivedAt,
-        project: { id: projectOf(i) },
+        project: projectOf(i) === null ? null : { id: projectOf(i) },
         relations: { nodes: store.relations.filter(r => r.from === i.identifier)
           .map(r => ({ id: r.id, type: r.type, relatedIssue: { identifier: r.to } })) },
       } };
@@ -244,6 +246,10 @@ export function fakeLinearStore({
     if (isMutationText(body.query)) mutations.push({ name: operationName(body.query), variables: body.variables });
     const failed = failure(operationName(body.query), init);
     if (failed) return failed;
+    // Linear refuses a project read without its required variable, as it did for a card with no project.
+    if (body.query.includes('project(id: $ref)') && body.variables?.ref == null) {
+      return { ok: false, status: 400, statusText: 'Bad Request', json: async () => ({}) };
+    }
     let data;
     try {
       data = answer(body);

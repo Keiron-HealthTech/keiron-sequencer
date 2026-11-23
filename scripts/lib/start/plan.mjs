@@ -48,13 +48,17 @@ function checkoutView(checkout, settings) {
   };
 }
 
+// onMap null: the card has no project, so there is no map to be on.
 export function cardReasons(issue, onMap) {
   if (issue.archivedAt || CLOSED.has(issue.state?.type)) {
     return [reason('card-closed', `${issue.key} is ${issue.archivedAt ? 'archived' : issue.state.name} in Linear`)];
   }
-  if (!onMap.has(issue.key)) return [reason('not-execution-card', `${issue.key} is not an execution card of the project map`)];
+  if (onMap && !onMap.has(issue.key)) return [reason('not-execution-card', `${issue.key} is not an execution card of the project map`)];
   return [];
 }
+
+const NO_MAP = { cards: [], edges: [] };
+const NO_PROJECT = 'no project';
 
 function repoReasons(issue, checkout, config, found, warnings) {
   if (checkout.unconfigured) {
@@ -201,24 +205,30 @@ export async function buildPlan(cardKey, { key, fetchImpl, git, gh, home, dataDi
   }
   const issue = await fetchStartIssue(cardKey, key, { fetchImpl });
   if (!issue) throw exitError(1, `${cardKey} was not found in Linear`);
-  const raw = await fetchProjectMap(issue.project?.id, key, { fetchImpl });
+  // A card with no project has no map, records, pack or staleness; what applies to any card still runs.
+  const noProject = !issue.project?.id;
+  const raw = noProject ? null : await fetchProjectMap(issue.project.id, key, { fetchImpl });
+  const slug = raw?.project.slug ?? null;
   const checkout = currentCheckout(git, config, cwd);
   const started = checkout.unconfigured ? {} : startSettings(config, checkout.repoDir);
   if (started.errors) throw exitError(2, started.errors.join('; '));
   const { settings } = started;
-  const analyzed = analyzeProject(raw);
+  const analyzed = raw ? analyzeProject(raw) : NO_MAP;
   const onMap = new Set(analyzed.cards.map(c => c.key));
-  const { records } = readRecords(join(dataDir, raw.project.slug));
+  const { records } = raw ? readRecords(join(dataDir, slug)) : { records: [] };
   const live = records.filter(r => isLive(r) && onMap.has(r.card));
   const record = live.find(r => r.card === cardKey) ?? null;
   const warnings = [];
-  const moved = dataInRepoWarning({ dataDir, repoDataDir, slug: raw.project.slug, display: displayData(dataDir, raw.project.slug) });
+  const moved = raw && dataInRepoWarning({ dataDir, repoDataDir, slug, display: displayData(dataDir, slug) });
   if (moved) warnings.push(moved.message);
-  const patches = resolvePatches(record, { home, slug: raw.project.slug });
+  const patches = resolvePatches(record, { home, slug });
   for (const p of patches.filter(x => !x.location)) warnings.push(`patches unavailable: ${p.ref} is in neither the run dir nor the trial dir`);
   const repoCheck = repoReasons(issue, checkout, config, cardRepos(issue, record, record?.refs.patches ?? [], config), warnings);
-  const reasons = [...cardReasons(issue, onMap), ...repoCheck.reasons];
+  const reasons = [...cardReasons(issue, noProject ? null : onMap), ...repoCheck.reasons];
   const cardStopped = reasons.length > 0;
+  if (noProject) {
+    reasons.push(reason('no-project', `${issue.key} has no Linear project: the plan skips the project map, the spike record, the decision pack and the staleness`, false));
+  }
   const branch = branchNameFor(settings?.branchNaming ?? null, issue.gitBranchName, issue.key);
   let blockers = [];
   let skippedBlockers = [];
@@ -227,12 +237,13 @@ export async function buildPlan(cardKey, { key, fetchImpl, git, gh, home, dataDi
   const otherRepos = repoCheck.repos.filter(r => !r.dir || r.dir !== checkout.repoDir);
   let stale = staleNotComputed('the plan stops at the card');
   if (!cardStopped) {
+    if (noProject) warnings.push(`${issue.key} has no project map, so no Linear blocks relation was read: only the --blocker flags give it blockers`);
     const gathered = await gatherBlockers(cardKey, analyzed, flags, { key, fetchImpl }, warnings);
     skippedBlockers = gathered.skippedBlockers;
     const heads = remoteHeads(git, { cwd, remote: settings.remote });
     const ctx = { currentRepoDir: checkout.repoDir, defaultBranchOf: dir => config.repos[dir]?.defaultBranch ?? null };
     const local = checkout.branches.local;
-    blockers = lookUpBlockers(gathered.blockers, flags, { git, gh, cwd, settings, config, slug: raw.project.slug, heads, local, cardKey }, warnings)
+    blockers = lookUpBlockers(gathered.blockers, flags, { git, gh, cwd, settings, config, slug, heads, local, cardKey }, warnings)
       .map(b => {
         const { status, pr, warning, branch: base } = classifyBlocker(b, ctx);
         return { ...b, status, warning, pr, branch: base };
@@ -243,25 +254,25 @@ export async function buildPlan(cardKey, { key, fetchImpl, git, gh, home, dataDi
     for (const code of resume.ask) reasons.push(reason(code, OWN_PR[code]));
     const contains = refContains(git, { cwd, remote: settings.remote, tracking: checkout.tracking, heads, local });
     base = decideBase(blockers, { ...settings, chainOf: prs => chainTop(prs, contains) });
-    stale = record ? planStaleness(git, { cwd, settings, config, checkout, base, record, patches, home, slug: raw.project.slug, onMap, blockers, cardKey, otherRepos })
-      : staleNotComputed('no record');
+    stale = record ? planStaleness(git, { cwd, settings, config, checkout, base, record, patches, home, slug, onMap, blockers, cardKey, otherRepos })
+      : staleNotComputed(noProject ? NO_PROJECT : 'no record');
     const code = BASE_REASON[base.kind]?.(base);
     if (code) reasons.push(reason(code, base.note));
     if (!branch.name) reasons.push(reason('no-branch-name', `${issue.key} has no branch name to start from`));
     const failed = [...blockers.filter(b => b.lookupFailed).map(b => `${b.key}: ${b.lookupFailed}`), ...(resume.unavailable ? [`${cardKey}: ${resume.unavailable}`] : [])];
     if (failed.length) reasons.push(reason('gh-unavailable', failed.join('; '), false));
   }
-  const verdict = verdictFor(live, cardKey);
+  const verdict = noProject ? { value: NO_PROJECT, tier: null, label: null } : verdictFor(live, cardKey);
   const siblings = siblingsOf(cardKey, analyzed, issue.milestone);
   const bases = settings && checkout.repoDir ? { [checkout.repoDir]: checkout.tracking?.[settings.defaultBranch] ?? null } : {};
-  const pack = packOf(dataDir, raw.project.slug, { issue, record, bases });
+  const pack = noProject ? null : packOf(dataDir, slug, { issue, record, bases });
   if (checkout.dirty > 0) reasons.push(reason('dirty-checkout', `${checkout.dirty} uncommitted or untracked file(s) in the checkout`, false));
   const plan = {
     action: decideAction(cardStopped, resume, base, branch),
     reasons,
     card: {
       key: issue.key, id: issue.id, title: issue.title, url: issue.url, state: issue.state, gitBranchName: issue.gitBranchName,
-      project: { slug: raw.project.slug, name: raw.project.name, url: raw.project.url }, milestone: issue.milestone, repos: repoCheck.repos,
+      project: raw && { slug, name: raw.project.name, url: raw.project.url }, milestone: issue.milestone, repos: repoCheck.repos,
       description: issue.description, comments: issue.comments, commentsTruncated: issue.commentsTruncated,
     },
     checkout: checkoutView(checkout, settings),
@@ -276,7 +287,9 @@ export async function buildPlan(cardKey, { key, fetchImpl, git, gh, home, dataDi
     route: routeFor({ verdict, record, siblings, pack }, issue.gitBranchName),
     brief: buildBrief({
       record, size: verdict, patches,
-      recordNote: record ? null : (onMap.has(cardKey) ? recordNote(records, cardKey) : 'no record: the card is not on the execution map'),
+      recordNote: record ? null
+        : noProject ? 'no record: the card has no Linear project'
+        : onMap.has(cardKey) ? recordNote(records, cardKey) : 'no record: the card is not on the execution map',
       otherRepos,
       pack,
     }),

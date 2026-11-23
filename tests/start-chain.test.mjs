@@ -4,7 +4,8 @@ import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { sandboxGit, tempDir } from './helpers/git-sandbox.mjs';
 import { guardNetwork } from './helpers/no-network.mjs';
-import { CARD, GIT_BRANCH_NAME, startFixture, startIssue } from './helpers/start-fixture.mjs';
+import { run as packs } from '../scripts/packs.mjs';
+import { CARD, GIT_BRANCH_NAME, SLUG, startFixture, startIssue } from './helpers/start-fixture.mjs';
 
 guardNetwork();
 
@@ -45,6 +46,60 @@ test('plan, fetch, branch and baseline chained by nextApprove create the branch 
   assert.deepEqual(f.linear.mutations, []);
   assert.ok(f.git.calls.every(c => c.cwd === f.repo.dir), 'every git call ran in the checkout');
   assert.equal((await step(f, ['plan', CARD])).action, 'resume');
+});
+
+test('a card with no Linear project runs the same chain in no-project mode, and the next plan resumes it', async t => {
+  const f = fixture(t, { issues: [startIssue(CARD, { gitBranchName: GIT_BRANCH_NAME, projectId: null })], repoOver: { typecheck: [CHECK] } });
+  const planned = await step(f, ['plan', CARD]);
+  assert.deepEqual([planned.action, planned.base.ref, planned.reasons.map(r => r.code)], ['create', 'origin/main', ['no-project']]);
+  const fetched = await step(f, ['fetch', CARD, '--approve', planned.approve]);
+  const branched = await step(f, ['branch', CARD, '--approve', fetched.nextApprove]);
+  assert.deepEqual([branched.action, branched.branch, branched.base], ['created', GIT_BRANCH_NAME, 'origin/main']);
+  const baselined = await step(f, ['baseline', CARD, '--approve', branched.nextApprove]);
+  assert.deepEqual([baselined.configured, baselined.commands], [true, [{ argv: CHECK, status: 0 }]]);
+  assert.equal(f.repo.git(['rev-parse', '--abbrev-ref', 'HEAD']).trim(), GIT_BRANCH_NAME);
+  assert.ok(f.linear.sent.every(s => !s.body.query.includes('project(id:')), 'no project read was sent');
+  assert.equal((await step(f, ['plan', CARD])).action, 'resume');
+});
+
+// Another clone pushes one commit to main; this checkout has not fetched it.
+function pushToMain(t, f) {
+  const other = join(tempDir('keiron-sequencer-start-main-'), 'clone');
+  t.after(() => rmSync(join(other, '..'), { recursive: true, force: true }));
+  sandboxGit(['clone', '-q', f.origin.dir, other]);
+  writeFileSync(join(other, 'moved.txt'), 'moved\n');
+  sandboxGit(['add', '-A'], { cwd: other });
+  sandboxGit(['commit', '-q', '-m', 'main moved'], { cwd: other });
+  sandboxGit(['push', '-q', 'origin', 'HEAD'], { cwd: other });
+}
+
+test('the pack start drafts after the fetch is fresh in the next plan, and an answer survives a re-draft after the default moves', async t => {
+  const f = fixture(t);
+  const pk = async argv => {
+    const r = await packs(argv, { env: {}, keyFile: f.keyFile, fetchImpl: f.linear.fetchImpl, dataDir: f.dataDir, home: f.home, git: f.git.run });
+    assert.equal(r.code, 0, `${argv.join(' ')}: ${r.stderr}`);
+    return JSON.parse(r.stdout);
+  };
+  const planned = await step(f, ['plan', CARD]);
+  const fetched = await step(f, ['fetch', CARD, '--approve', planned.approve]);
+  const branched = await step(f, ['branch', CARD, '--approve', fetched.nextApprove]);
+  await step(f, ['baseline', CARD, '--approve', branched.nextApprove]);
+
+  const drafted = await pk(['draft', SLUG, '--card', CARD]);
+  assert.deepEqual([drafted.drafted, drafted.pack.open, drafted.pack.questions[0].text], [[CARD], 1, 'Which state counts as started.']);
+  const outcome = 'A card counts as started once its branch exists.';
+  await pk(['answer', SLUG, CARD, 'q1', '--outcome', outcome]);
+  const after = await step(f, ['plan', CARD]);
+  assert.deepEqual([after.brief.pack.fresh, after.brief.pack.answered], [true, [{ text: 'Which state counts as started.', outcome }]]);
+  assert.ok(after.route.reasons.includes('pack-answered:1'), after.route.reasons.join(', '));
+
+  pushToMain(t, f);
+  await step(f, ['fetch', CARD, '--approve', after.approve]);
+  assert.equal((await step(f, ['plan', CARD])).brief.pack.stale, 'base');
+  const redrafted = await pk(['draft', SLUG, '--card', CARD]);
+  assert.deepEqual([redrafted.drafted, redrafted.pack.state, redrafted.pack.questions[0].answer.outcome], [[CARD], 'fresh', outcome]);
+  const again = await step(f, ['plan', CARD]);
+  assert.deepEqual([again.brief.pack.fresh, again.brief.pack.answered.length], [true, 1]);
 });
 
 const blocks = to => ({ relations: { nodes: [{ type: 'blocks', relatedIssue: { identifier: to } }] } });

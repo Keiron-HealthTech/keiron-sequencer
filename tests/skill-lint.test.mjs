@@ -300,12 +300,13 @@ test('spike: end type-checks the changed files with no config, refuses with Exit
   spikeSays('only when the failure is not this card');
 });
 
-test('next: decision packs are drafted for the startable frontier only, answered in one sitting as outcomes', () => {
-  for (const cmd of ['draft <project-ref>', 'status <project-ref>', 'answer <slug> <CARD> <question id> --outcome']) has('node ${CLAUDE_PLUGIN_ROOT}/scripts/packs.mjs ' + cmd);
-  says('startable frontier');
-  says('never for a descendant');
-  says('stated as outcomes, not mechanisms');
-  says('binding requirements');
+test('next only reports the packs of startable cards that are unanswered or stale; it never drafts, asks or answers', () => {
+  has('node ${CLAUDE_PLUGIN_ROOT}/scripts/packs.mjs status <project-ref>');
+  assert.doesNotMatch(skill, /packs\.mjs (draft|answer)/);
+  says('in `free[]`');
+  says('`unanswered` or `stale`');
+  says('Never ask a pack question here');
+  says('/keiron-sequencer:start drafts the pack');
 });
 
 test('spike: next and end run with the longest shell timeout or in the background, since a typecheck can take minutes', () => {
