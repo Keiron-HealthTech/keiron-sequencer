@@ -5,6 +5,7 @@ import { run as runRespike } from '../scripts/respike.mjs';
 import { run as runSpike } from '../scripts/spike.mjs';
 import { tempDir } from './helpers/git-sandbox.mjs';
 import { guardNetwork } from './helpers/no-network.mjs';
+import { COMBINE_ROUNDS } from '../scripts/lib/spike/combined.mjs';
 
 guardNetwork();
 
@@ -166,9 +167,9 @@ test('the trial rename runs only on the user\'s explicit yes, and only the dry r
   for (const f of fences) assert.ok(!f.body.includes('rename-trial-dirs.mjs'), 'a fence runs the rename');
 });
 
-test('the card loop is the /keiron-sequencer:spike loop: inline in the main session, no subagent, notes and cases, caps between cards, a warn-only box', () => {
+test('the card loop is the /keiron-sequencer:spike loop: one worker per track at most, notes and cases, caps between cards, a warn-only box', () => {
   for (const anchor of [
-    'The main session does the card work inline', 'no subagent per card', 'exactly as /keiron-sequencer:spike', 'between 3 and 6 given/when/then cases',
+    'With one worker, the main session does the card work inline', 'never a subagent per card', 'the /keiron-sequencer:spike card loop', 'between 3 and 6 given/when/then cases',
     '`openDecisions`', '`piiInLogs`', 'checked only between cards', 'warn-only', '`replayed`', '`replayConflict`', '`replaySecret`',
     'spiked like any other card', 'context only', '`previous`', '`priorFindings`', '`holds`, `resolved` or `wrong`', 'premise check',
     'implication check', '`impact`', '`owner`',
@@ -369,12 +370,150 @@ test('a base behind default is brought up to date on the user\'s yes: --with-def
   assert.doesNotMatch(skill, /rebase/i);
 });
 
-test('the respike loop runs next and end with the longest shell timeout or in the background', () => {
-  says('Run `next` and `end` with the shell tool\'s longest timeout (600000 ms) or in the background');
-});
+
 
 test('no-milestone cards are shown in the plan with the advice to assign them before begin', () => {
   says('`no-milestone`');
   says('assign them a milestone in Linear before `begin`');
   says('a milestone question (which card moves)');
+});
+
+const WORKER_PATH = new URL('../skills/respike/worker.md', import.meta.url);
+const worker = existsSync(WORKER_PATH) ? readFileSync(WORKER_PATH, 'utf8') : '';
+const workerFlat = worker.replace(/\s+/g, ' ');
+const workerSays = text => assert.ok(workerFlat.includes(text), `worker.md does not say ${JSON.stringify(text)}`);
+const workerFences = [...worker.matchAll(/^```(\w*)\n([\s\S]*?)^```$/gm)].map(m => ({ lang: m[1], body: m[2] }));
+const workerBash = workerFences.filter(f => f.lang === 'bash').flatMap(f => f.body.split('\n')).filter(l => l.trim());
+const workerInline = [...worker.replace(/^```\w*\n[\s\S]*?^```$/gm, '').matchAll(/`([^`\n]+)`/g)].map(m => m[1]);
+const workerCommands = [...workerBash, ...workerInline].filter(l => l.includes('scripts/spike.mjs'));
+const CARD_LOOP = ['next', 'tree', 'candidates', 'fixup', 'notes-template', 'end', 'rebuild', 'check', 'cross'];
+const step6 = sectionOf('Step 6: The card loop');
+const step6Says = text => stepSays(step6, text);
+
+test('the respike skill sends heavy commands through check', () => {
+  const CHECK = `${SPIKE}check --track <id> [--cwd <repoDir>] [--project <project ref>] -- <argv>...`;
+  assert.ok([...bashLines, ...inlineCode].includes(CHECK), 'SKILL.md does not show the check command');
+  stepSays(sectionOf('Safety rules'), 'only through `check`');
+  says('take a check slot');
+  workerSays('Run every heavy command (install, build, type-check, lint, tests) only through `check`');
+  assert.ok(workerCommands.some(l => l.startsWith(`${SPIKE}check --track <id>`)), 'worker.md does not show the check command');
+  workerSays('never run them directly');
+});
+
+test('the worker brief names --track on every card-loop command', () => {
+  const named = new Set(workerCommands.map(l => l.match(/scripts\/spike\.mjs ([a-z-]+)/)[1]));
+  for (const c of CARD_LOOP) assert.ok(named.has(c), `worker.md does not run spike.mjs ${c}`);
+  for (const line of workerCommands) {
+    const command = line.match(/scripts\/spike\.mjs ([a-z-]+)/)[1];
+    assert.ok(CARD_LOOP.includes(command), `worker.md runs a command that is not the card loop's: ${line}`);
+    assert.ok(line.includes(' --track <id>') && !line.includes('[--track <id>]'), `a card-loop command without --track <id>: ${line}`);
+  }
+  assert.ok(!workerFlat.includes('--combined'), 'worker.md records a combined fixup, which is the coordinator\'s');
+});
+
+test('the respike skill says the cap of 3 combine rounds', () => {
+  assert.equal(COMBINE_ROUNDS, 3);
+  step6Says(`After ${COMBINE_ROUNDS} failed rounds the run pauses with \`reason: 'combine'\``);
+  stepSays(sectionOf('Step 7: Pause and resume'), 'a resume starts the rounds again');
+});
+
+test('the worker brief is self-contained: spike CLI commands and flags only, through the plugin root, with the card loop rules and the safety rules', async () => {
+  assert.ok(worker.length > 0, 'skills/respike/worker.md is missing');
+  const usage = await spikeUsage();
+  const commands = new Set([...usage.matchAll(/^usage: node scripts\/spike\.mjs ([a-z-]+)/gm)].map(m => m[1]));
+  const flags = new Set(usage.match(FLAG));
+  for (const line of workerCommands) {
+    assert.ok(line.startsWith(SPIKE), `a command not through the plugin root: ${line}`);
+    assert.ok(commands.has(line.slice(SPIKE.length).split(' ')[0]), `not a spike command: ${line}`);
+    for (const flag of line.match(FLAG) ?? []) assert.ok(flags.has(flag), `not a spike flag: ${flag} in ${line}`);
+  }
+  for (const line of workerBash) assert.ok(line.startsWith(SPIKE), `a worker bash line runs something else: ${line}`);
+  for (const anchor of [
+    'Premise check, before building', '`priorFindings`', '`holds`, `resolved` or `wrong`', '`notes-template`', 'between 3 and 6 given/when/then cases',
+    'implication check', '`impact`', '`owner`', '`openDecisions`', '`piiInLogs`', 'No diff text in the notes', 'Record a fixup before the current card touches the same file',
+    'Never commit, push or open a PR', 'Never read, print, cat or copy the Linear key', 'No production DB writes', 'No patient data in logs',
+    'Proceed on trivial decisions', '**Exit 4**', '**Exit 6**', '**Exit 7**', '**Exit 8**', '`--skip-typecheck "<reason>"`', '`replayConflict`',
+    '`action: \'card\'`', '`action: \'track-done\'`', '`action: \'waiting\'`', '`action: \'pause\'`', '`action: \'setup-failed\'`', 'the run is paused',
+  ]) workerSays(anchor);
+  assert.doesNotMatch(worker, /as in \/keiron-sequencer:spike|\/keiron-sequencer:spike Step/);
+  assert.doesNotMatch(worker, /\bgit (commit|push|tag)\b|gh pr create/);
+  for (const re of [/linear\.key/i, /LINEAR_API_KEY/, /lin_api_/i, /Bearer/i, /[A-Za-z0-9_]{32,}/, /\b(RP|RB|RR|RM|RK|RX)-\d/, /\bT\d+\.\d+\b/, /(?<![\w-])#\d+/, new RegExp('mi' + 'kado', 'i')]) {
+    assert.doesNotMatch(worker, re);
+  }
+});
+
+test('a worker reruns the same command on stale and on busy exit 75, and stops when its track or card moved', () => {
+  workerSays('`action: \'stale\'`');
+  workerSays('exit code 75');
+  workerSays('run the same command again');
+  workerSays('was merged into');
+  workerSays('never switch tracks yourself');
+  step6Says('reruns the same command');
+});
+
+test('heavy CLI calls run with the longest shell timeout or in the background, combine always in the background', () => {
+  says('Run `next`, `end`, `tree`, `check`, `cross` and `combine` with the shell tool\'s longest timeout (600000 ms) or in the background');
+  step6Says('Run `combine` in the background');
+  workerSays('Run `next`, `end`, `tree`, `check` and `cross` with the shell tool\'s longest timeout (600000 ms) or in the background');
+});
+
+test('a wip patch goes back into the card\'s tree with git apply, never through an include pattern', () => {
+  workerSays('`wip`');
+  workerSays('`git apply -p2 <wip>`');
+  workerSays('`git apply -p1 <wip>`');
+  workerSays('the folder that holds the track\'s trees');
+  workerSays('`--include \'<repoDir>/*\'` with `-p2` matches nothing');
+  workerSays('`wip/<CARD>.patch`');
+  says('a card\'s own `wip` patch');
+});
+
+test('deferred is not an error: cross runs again after the target track\'s card ends; a parked card\'s crossing runs again once next restarts it', () => {
+  step6Says('`deferred` (exit 1) is not an error');
+  step6Says('run the same `cross` again once that track\'s worker returns from its `end`');
+  step6Says('only after that card restarts through `next`');
+  workerSays('when `next` hands it to you again');
+});
+
+test('cross answers merged, applied, deferred, parked, stale, busy with merging or replaying, a cycle and an unapplied wip', () => {
+  for (const anchor of ['`merged`', '`applied`', '`deferred`', '`parked`', '`stale`', '`merging`', '`replaying`', 'Exit 75', '`wip/<CARD>.patch`']) step6Says(anchor);
+  step6Says('**Exit 5** at `cross`');
+  workerSays('a crossing, not a fixup');
+  workerSays('`otherTrack`');
+});
+
+test('the combined check diagnoses first, sends a patch that does not apply to cross, fixes a composing type error with fixup --combined, and never re-spikes everything', () => {
+  const COMBINED = `${SPIKE}fixup --combined --fixes <CARD>[,<CARD>] --note "<English>" --repo <repoDir> [--allow <kind>:<path>]... [--project <project ref>] -- <path>...`;
+  assert.ok(bashLines.includes(COMBINED), 'SKILL.md does not show the combined fixup');
+  for (const anchor of [
+    'Diagnose before fixing', 'does not apply on the combined tree', 'never to `fixup --combined`', 'a missed crossing', 'whose cards\' intent composes',
+    'never means re-spiking everything', '`combined-ok`', '`combined-failed`', '`trees/combined/<repoDir>`', 'only the cards that crossing re-spikes',
+  ]) step6Says(anchor);
+});
+
+test('with one worker the main session works the cards itself, and a one-track run reads like today', () => {
+  step6Says('With one worker, the main session does the card work inline');
+  step6Says('no worker subagents');
+  step6Says('A run with one track needs no `--track`');
+  step6Says('completes at `next`');
+});
+
+test('the coordinator dispatches at most workers workers, continues each with SendMessage, and stops dispatching on pause', () => {
+  for (const anchor of [
+    'at most `workers` workers', '`SendMessage`', 'skills/respike/worker.md', 'replaced by the plugin root', 'stop dispatching', 'in-flight cards finish',
+    '`crossingSuspects`', 'names a card in another track',
+  ]) step6Says(anchor);
+  for (const anchor of ['stops dispatching', 'the workers are new subagents', 'its track\'s records and the previous card\'s notes']) stepSays(sectionOf('Step 7: Pause and resume'), anchor);
+});
+
+test('a pending crossing survives a pause: on resume the coordinator reads it from the report and runs it again before that track gets a worker', () => {
+  const step7 = sectionOf('Step 7: Pause and resume');
+  for (const anchor of [
+    'every crossing whose `status` is `pending`', 'before you start a worker for its track', 'the card is pending again', 'once `next` hands it the card',
+  ]) stepSays(step7, anchor);
+  workerSays('pass `--cwd` whenever more than one tree is open');
+});
+
+test('the report step shows the tracks, the crossings and the combined check', () => {
+  const step8 = sectionOf('Step 8: Report');
+  for (const anchor of ['`## Tracks`', '`## Crossings`', '`## Combined check`', '`tracks`', '`crossings`', '`combined`', '`respiked`', '`failures`']) stepSays(step8, anchor);
 });

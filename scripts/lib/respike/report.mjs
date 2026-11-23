@@ -1,8 +1,9 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { caseSource } from '../harvest.mjs';
-import { PRIOR_FINDING_OUTCOMES } from '../record.mjs';
+import { COMBINE_FIXUP, PRIOR_FINDING_OUTCOMES } from '../record.mjs';
 import { isLive, tiers, verdict } from '../records.mjs';
+import { upgradeState } from '../spike/state.mjs';
 
 const compare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const cardNumber = key => Number(String(key).match(/(\d+)$/)?.[1] ?? 0);
@@ -152,9 +153,42 @@ function projectLists(state, live, cards, replayed) {
   };
 }
 
+const trackList = state => Object.entries(state.tracks).map(([id, t]) => ({ id, status: t.status, mergedInto: t.mergedInto ?? null, cards: t.cards }));
+
+function crossingList(state) {
+  const { order } = state.plan;
+  return state.crossings.map((c, i) => ({
+    crossing: i, at: c.at, kind: c.kind, from: c.from, to: c.to, fromTrack: c.fromTrack, toTrack: c.toTrack,
+    status: c.pending ? 'pending' : c.merging ? 'merging' : 'applied',
+    note: c.note,
+    respiked: c.respiked ?? [],
+    replayed: order.filter(k => state.cards[k].mergedFrom?.crossing === i),
+    droppedFixups: (state.fixups ?? []).filter(f => f.droppedBy?.crossing === i).map(f => f.patch),
+  }));
+}
+
+// A failure's fixes are the combined fixups and crossings recorded after it and before the next round: round numbers start
+// again at a resume, so they cannot tie a fix to its failure.
+function combinedCheck(state) {
+  const results = state.combine?.results ?? [];
+  const within = (at, i) => at > results[i].at && (i + 1 === results.length || at <= results[i + 1].at);
+  const fixups = (state.fixups ?? []).filter(f => f.from === COMBINE_FIXUP);
+  return {
+    passed: results.find(r => r.ok)?.at ?? null,
+    failures: results.flatMap((r, i) => (r.ok ? [] : [{
+      at: r.at,
+      round: r.round,
+      errors: r.errors,
+      fixups: fixups.filter(f => within(f.at, i)).map(f => ({ patch: f.patch, fixed: f.fixed, note: f.note, dropped: Boolean(f.droppedBy) })),
+      crossings: state.crossings.flatMap((c, k) => (within(c.at, i) ? [k] : [])),
+    }])),
+  };
+}
+
 const baseOf = b => ({ kind: b.kind, heads: b.heads ? b.heads.map(h => h.card) : null, behind: b.behind ?? null, ownCommits: b.ownCommits ?? null, warning: b.warning ?? null });
 
-export function buildReport({ state, records, previous }) {
+export function buildReport({ state: read, records, previous }) {
+  const state = upgradeState(read);
   const { order, cards: planned, respike } = state.plan;
   const onMap = respike.map ? new Set([...respike.map.open, ...respike.map.completed]) : null;
   const live = records.filter(isLive);
@@ -174,5 +208,8 @@ export function buildReport({ state, records, previous }) {
     cards,
     replayed,
     bases,
+    tracks: trackList(state),
+    crossings: crossingList(state),
+    combined: combinedCheck(state),
   };
 }

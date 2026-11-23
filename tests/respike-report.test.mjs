@@ -280,7 +280,7 @@ test('each repo base is listed with its kind, the cards of a combine and how far
     api: { kind: 'combine', heads: ['CRM-20', 'CRM-22'], behind: 2, ownCommits: null, warning: 'base 2 commits behind default' },
     web: { kind: 'default', heads: null, behind: null, ownCommits: null, warning: null },
   });
-  assert.deepEqual(Object.keys(report), ['schemaVersion', 'runId', 'project', 'complete', 'cards', 'replayed', 'bases']);
+  assert.deepEqual(Object.keys(report), ['schemaVersion', 'runId', 'project', 'complete', 'cards', 'replayed', 'bases', 'tracks', 'crossings', 'combined']);
   assert.deepEqual(report.project.pending, []);
 });
 
@@ -443,4 +443,70 @@ test('replayToSpike lists an ancestor spiked because a blocker was spiked, and a
     { card: 'CRM-2', reason: 'ancestor-spiked', repo: null, patch: null, sharedWith: [], spikedAncestors: ['CRM-1'] },
     { card: 'CRM-3', reason: 'typecheck', repo: 'api', patch: null, sharedWith: [] },
   ]);
+});
+
+test('the report lists tracks, each crossing with its re-spiked cards, and each combine failure with its fix', () => {
+  const state = runState([['CRM-1', 'spike'], ['CRM-2', 'spike'], ['CRM-3', 'spike'], ['CRM-4', 'spike']]);
+  state.cards['CRM-2'].mergedFrom = { track: 't2', crossing: 0 };
+  state.cards['CRM-3'].respikedBy = { crossing: 0 };
+  state.tracks = {
+    t1: { cards: ['CRM-1', 'CRM-3', 'CRM-2'], status: 'done', mergedInto: null, current: null, generation: 2, repos: {} },
+    t2: { cards: ['CRM-2'], status: 'merged', mergedInto: 't1', current: null, generation: 1, repos: {} },
+    t3: { cards: ['CRM-4'], status: 'done', mergedInto: null, current: null, generation: 0, repos: {} },
+  };
+  state.crossings = [
+    { at: '2026-11-10T10:10:00.000Z', kind: 'changes', from: 'CRM-2', to: 'CRM-1', fromTrack: 't2', toTrack: 't1', note: 'CRM-2 renames the helper CRM-1 adds', respiked: ['CRM-3'] },
+    { at: '2026-11-10T11:30:00.000Z', kind: 'depends', from: 'CRM-4', to: 'CRM-1', fromTrack: 't3', toTrack: 't1', note: 'CRM-4 reads the column CRM-1 adds', respiked: [], pending: true },
+  ];
+  const error = (message, cards) => ({ repo: 'api', file: 'src/a.ts', line: 3, message, cards });
+  state.combine = {
+    rounds: 2,
+    results: [
+      { at: '2026-11-10T11:00:00.000Z', ok: false, round: 1, errors: [error('TS2304: Cannot find name helper.', ['CRM-1', 'CRM-4'])] },
+      { at: '2026-11-10T12:00:00.000Z', ok: false, round: 2, errors: [error('api/00004-new.patch does not apply on the combined tree (conflict)', ['CRM-4'])] },
+      { at: '2026-11-10T13:00:00.000Z', ok: true },
+    ],
+  };
+  state.fixups = [
+    { patch: 'api/fixup-1-from-3-x.patch', from: 'CRM-3', fixed: ['CRM-1'], note: 'in-track', at: '2026-11-10T10:20:00.000Z' },
+    { patch: 'api/fixup-1-4-from-combine-1.patch', from: 'combine', fixed: ['CRM-1', 'CRM-4'], note: 'CRM-4 used the old helper name; import the renamed one', at: '2026-11-10T11:10:00.000Z', round: 1 },
+    { patch: 'api/fixup-4-from-combine-2.patch', from: 'combine', fixed: ['CRM-4'], note: 'left behind', at: '2026-11-10T11:20:00.000Z', round: 1, droppedBy: { crossing: 1 } },
+  ];
+  const report = buildReport({ state, records: [], previous: new Map() });
+  assert.deepEqual(report.tracks, [
+    { id: 't1', status: 'done', mergedInto: null, cards: ['CRM-1', 'CRM-3', 'CRM-2'] },
+    { id: 't2', status: 'merged', mergedInto: 't1', cards: ['CRM-2'] },
+    { id: 't3', status: 'done', mergedInto: null, cards: ['CRM-4'] },
+  ]);
+  assert.deepEqual(report.crossings, [
+    {
+      crossing: 0, at: '2026-11-10T10:10:00.000Z', kind: 'changes', from: 'CRM-2', to: 'CRM-1', fromTrack: 't2', toTrack: 't1', status: 'applied',
+      note: 'CRM-2 renames the helper CRM-1 adds', respiked: ['CRM-3'], replayed: ['CRM-2'], droppedFixups: [],
+    },
+    {
+      crossing: 1, at: '2026-11-10T11:30:00.000Z', kind: 'depends', from: 'CRM-4', to: 'CRM-1', fromTrack: 't3', toTrack: 't1', status: 'pending',
+      note: 'CRM-4 reads the column CRM-1 adds', respiked: [], replayed: [], droppedFixups: ['api/fixup-4-from-combine-2.patch'],
+    },
+  ]);
+  assert.deepEqual(report.combined, {
+    passed: '2026-11-10T13:00:00.000Z',
+    failures: [
+      {
+        at: '2026-11-10T11:00:00.000Z', round: 1, errors: [error('TS2304: Cannot find name helper.', ['CRM-1', 'CRM-4'])],
+        fixups: [
+          { patch: 'api/fixup-1-4-from-combine-1.patch', fixed: ['CRM-1', 'CRM-4'], note: 'CRM-4 used the old helper name; import the renamed one', dropped: false },
+          { patch: 'api/fixup-4-from-combine-2.patch', fixed: ['CRM-4'], note: 'left behind', dropped: true },
+        ],
+        crossings: [1],
+      },
+      { at: '2026-11-10T12:00:00.000Z', round: 2, errors: [error('api/00004-new.patch does not apply on the combined tree (conflict)', ['CRM-4'])], fixups: [], crossings: [] },
+    ],
+  });
+});
+
+test('a run read without tracks reports one track t1, no crossings and no combined check', () => {
+  const report = buildReport({ state: runState([['CRM-1', 'spike'], ['CRM-2', 'spike']]), records: [], previous: new Map() });
+  assert.deepEqual(report.tracks, [{ id: 't1', status: 'active', mergedInto: null, cards: ['CRM-1', 'CRM-2'] }]);
+  assert.deepEqual(report.crossings, []);
+  assert.deepEqual(report.combined, { passed: null, failures: [] });
 });

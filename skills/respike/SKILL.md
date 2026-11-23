@@ -22,8 +22,9 @@ run only with the hash of the plan the user approved; `config` drafts the
 missing config entries and writes the spike config only with the hash of the
 draft the user approved; `report` is offline. The walk itself is the spike's
 card loop, `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs`, with the rules of
-/keiron-sequencer:spike. The main session does the card work inline: no subagent per
-card, no headless runs.
+/keiron-sequencer:spike, worked track by track (Step 6). With one worker the
+main session does the card work itself; with more, it coordinates one worker
+subagent per track. Never a subagent per card, no headless runs.
 
 ## Safety rules
 
@@ -54,10 +55,15 @@ card, no headless runs.
   `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs begin <project ref>` with no hash only resumes an already-begun paused respike run and never creates a run
   (Step 7); its plan was approved when that run began.
 - The old patches are reference only: the CLI replays them in the throwaway
-  trees, and the skill never applies a patch itself.
+  trees, and the skill never applies a patch itself. The one exception is a
+  card's own `wip` patch, which its worker puts back in the card's tree.
 - No production DB writes. No patient data in logs, not even masked.
-- Run heavy commands (install, build, type-check, tests) one at a time, with
-  the target repo's own limits.
+- Run heavy commands (install, build, type-check, lint, tests) one at a time,
+  with the target repo's own limits, and only through `check`:
+  `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs check --track <id> [--cwd <repoDir>] [--project <project ref>] -- <argv>...`
+  runs the argv in the track's first open tree (`--cwd` picks a repo) once a
+  check slot is free, and exits with the command's exit code. Workers share
+  the machine: never run a heavy command directly.
 - Every bash fence below runs only `node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs …`
   or `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs …`.
 
@@ -344,22 +350,40 @@ counts (`selected`, `replay`, `spike`, `built`). The caps work as in
 /keiron-sequencer:spike: both optional, checked only between cards, a fresh budget at
 every begin, and replays count toward no cap. `--box` is warn-only and fixed
 at the card's first window. `--workers` (default 3) is how many tracks run at once and `--checks` (default 1) how many
-typechecks, test runs and setup commands may run at once; both are stored on the run and `status` and `tracks` print them. Exit 5 means nothing was created: the plan moved
+typechecks, test runs and setup commands may run at once; both are stored on the run and `status` and `tracks` print them.
+The plan's tracks hold whatever `--workers` is: with `--workers 1` the main session works them one after another. Exit 5 means nothing was created: the plan moved
 (a PR head or a branch moved), it is not `ready`, or a run is open. On exit 5, show the new plan and ask again,
 after a preflight with the same flags.
 
 ## Step 6: The card loop
 
-The loop is exactly as /keiron-sequencer:spike Step 2, with its rules:
+The loop is the /keiron-sequencer:spike card loop, worked per track. The card
+work is written out in full in `${CLAUDE_PLUGIN_ROOT}/skills/respike/worker.md`,
+the worker brief: read it before the first card. `tracks` lists each track
+with its `status`, `current` card, `done`/`total` and `mergedInto`, and the
+run's `workers` and `checks`.
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs next [--project <project ref>]
-node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs tree <repoDir> [--project <project ref>]
-node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs candidates [--repo <repoDir>] [--project <project ref>]
-node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs fixup --fixes <CARD>[,<CARD>] --slug <kebab-slug> --note "<English>" --repo <repoDir> [--allow <kind>:<path>]... [--project <project ref>] -- <path>...
-node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs end <CARD> [--notes <notes.json>] [--allow <kind>:<path>]... [--skip-typecheck <reason>] [--project <project ref>]
+node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs tracks [--project <project ref>]
+node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs next [--track <id>] [--project <project ref>]
+node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs tree <repoDir> [--track <id>] [--project <project ref>]
+node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs candidates [--track <id>] [--repo <repoDir>] [--project <project ref>]
+node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs fixup [--track <id>] --fixes <CARD>[,<CARD>] --slug <kebab-slug> --note "<English>" --repo <repoDir> [--allow <kind>:<path>]... [--project <project ref>] -- <path>...
+node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs notes-template <CARD> [--track <id>] [--project <project ref>]
+node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs end <CARD> [--track <id>] [--notes <notes.json>] [--allow <kind>:<path>]... [--skip-typecheck <reason>] [--project <project ref>]
+node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs cross --track <id> --card <CARD> --needs <CARD> --kind depends|changes --note "<English>" [--project <project ref>]
 ```
 
+- Run `next`, `end`, `tree`, `check`, `cross` and `combine` with the shell
+  tool's longest timeout (600000 ms) or in the background: they take a check
+  slot, and replays, merges and type-checks can take minutes. Run `combine`
+  in the background: it builds and checks every repo and can take longer
+  than that timeout. `next`, `end`, `tree`, `cross` and `combine` take a
+  check slot themselves.
+- `action: 'stale'` (a merge or a pause moved the track while the command
+  ran) and Exit 75 with `action: 'busy'` (no check slot freed in time, or a
+  track is `merging` or `replaying`): nothing was kept, and whoever ran the
+  command, the coordinator or a worker, reruns the same command.
 - `next` processes the ready replay entries first, inline: no window, no box,
   no question. Each output lists them in `replayed` (`card`, `status`,
   `patches`): `replayed` (applied cleanly; the record keeps its findings,
@@ -376,24 +400,149 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs end <CARD> [--notes <notes.json>] [
   spiked like any other card; the conflict is context only. The pending
   replays are re-planned: a fixup from or for that card is dropped, and the
   report lists it.
-- Run `next` and `end` with the shell tool's longest timeout (600000 ms) or in
-  the background: replays and `end` type-check, which can take minutes.
-- `action: 'card'`: The main session does the card work inline, in the trees
-  the CLI opens, with no subagent per card. Edit only under a tree's `path`.
-  Use `candidates` and `fixup` when the card changes code an earlier card
-  wrote. Run the premise check first, as in /keiron-sequencer:spike. The brief's
-  `previous` holds the card's old record: give each of its findings an
-  outcome in `priorFindings` (`holds`, `resolved` or `wrong`) instead of
-  rewriting it. Write the notes as in /keiron-sequencer:spike, from `notes-template`:
-  between 3 and 6 given/when/then cases in English (about 4), each open
-  guess in `openDecisions` after its implication check, tagged with
-  `impact` and `owner`, the attested `piiInLogs` paths (`[]` when none), no
-  diff text. A `reorder` finding that would run backward across milestones is
-  a milestone question (which card moves), not a plain order. Then `end`. Proceed on trivial decisions; ask mid-card only on real
-  conflicts. The box is warn-only; never mark the scope incomplete for a box
-  overrun.
-- `action: 'setup-failed'` (Exit 1), at a replay or at `tree`: fix the cause or
-  report it; the next call retries.
+- Caps are checked only between cards and count every worker's cards; the
+  box is warn-only. A card's spend is measured on the transcript of whoever
+  worked it.
+
+### One worker
+
+With one worker, the main session does the card work inline, in the trees
+the CLI opens, following the worker brief itself, track after track in
+`tracks` order: no worker subagents, and never a subagent per card. Edit only
+under a tree's `path`. Use `candidates` and `fixup` when the card changes
+code an earlier card wrote. Run the premise check first, as in
+/keiron-sequencer:spike. The brief's `previous` holds the card's old record:
+give each of its findings an outcome in `priorFindings` (`holds`, `resolved`
+or `wrong`) instead of rewriting it. Write the notes from `notes-template`:
+between 3 and 6 given/when/then cases in English (about 4), each open guess
+in `openDecisions` after its implication check, tagged with `impact` and
+`owner`, the attested `piiInLogs` paths (`[]` when none), no diff text. A
+`reorder` finding that would run backward across milestones is a milestone
+question (which card moves), not a plain order. Then `end`. Proceed on
+trivial decisions; ask mid-card only on real conflicts. Never mark the scope
+incomplete for a box overrun.
+
+A run with one track needs no `--track`, whatever `workers` is: the main
+session works it as above, it reads like today, and it completes at `next`.
+A run with several tracks and one worker passes `--track <id>` on every
+card-loop command, handles crossings as below (none is ever deferred, since
+only one card is in progress), and ends with the combined check.
+
+### Several workers: the coordinator
+
+With more than one worker and more than one track, the main session is the
+coordinator: it does no card work itself.
+
+1. **Dispatch.** Start at most `workers` workers, one per track that is not
+   `done` or `merged`, in track order. A worker is a general-purpose
+   subagent started with the Agent tool. Its prompt is the text of
+   `${CLAUDE_PLUGIN_ROOT}/skills/respike/worker.md`, with the plugin-root
+   variable in its commands replaced by the plugin root this skill's
+   commands run from (the folder before `/scripts/` in them), then its track
+   id, the project ref and the run id. The workers run at once, and you are
+   told as each one returns. Keep each worker's agent id with its track.
+2. **After `end`.** First run again every `cross` that was deferred while
+   this track's card was in progress. Then read the worker's report, its
+   `crossingSuspects`, and every finding that names a card in another track
+   (a dependency the map missed; the plan lists each track's cards, and a
+   merged track's cards live on in the track it merged into). When one is a
+   crossing, run `cross` for it with the card that just ended as C (a done
+   C is re-spiked), and handle the answer as below. Otherwise continue the
+   same worker with `SendMessage`: "next card".
+3. **After `cross`.** Handle the answer (Crossings).
+4. **`track-done`.** The worker is finished: its slot goes to the next track
+   not yet started. With `combine: true` every track is done: run the
+   combined check.
+5. **`waiting`** with `waitingOn`: continue that worker once the
+   `waitingOn` card has ended.
+6. **`pause`**, or "the run is paused": stop dispatching. Send no more "next
+   card"; in-flight cards finish, and each worker returns after its `end`.
+   Then Step 7. A cap reached in any worker pauses the whole run.
+7. **A question** on a real conflict: ask the user, then answer the worker
+   with `SendMessage`.
+
+### Crossings
+
+`cross --track <R> --card <C> --needs <B>` records that C (track R) needs
+(`depends`) or must change (`changes`) B (track G), and merges the two
+tracks into G. A merge runs only at card boundaries: the CLI defers it while
+G has a card in progress. A rerun after another merge passes the track C
+lives in now (`tracks` shows `mergedInto`). The answers:
+
+- `merged`: R joined G under G's id. `replayed` lists R's done cards
+  replayed onto G's trees (their records keep their content and get
+  `mergedFrom`), `respiked` the cards to re-spike (for `changes`, B's done
+  dependents; C too when it was done; and any card of R whose replay did not
+  fit), and `wip` C's saved work. R's worker
+  is finished: send it nothing more. G's worker carries on: continue it
+  with "next card", or start one for G when it has none. When `parked`
+  names a card of G, its work was set aside to its `wip` too: tell G's
+  worker that card was parked with a pending crossing, which it runs again
+  once `next` hands it the card.
+- `applied`: by now the crossing is inside one track (its tracks merged
+  since it was recorded): the edge and the re-spikes are applied. Continue
+  that track's worker. A `parked` card other than C reads as above; when it
+  is C itself, its crossing was just applied: it only restarts with its
+  `wip`, and there is nothing to run again.
+- `deferred` (exit 1) is not an error: G has a card in progress, and the
+  crossing is recorded as pending. Leave R's worker stopped (its slot stays
+  taken), and run the same `cross` again once that track's worker returns
+  from its `end`, before you send it "next card". A parked card's own crossing
+  runs again only after that card restarts through `next`.
+- `stale`, or Exit 75 with `merging` or `replaying`: run the same `cross`
+  again.
+- Exit 1 naming `wip/<CARD>.patch`: that card's saved work is not back in
+  its tree. Ask its worker to put it back or delete it, then run `cross`
+  again.
+- **Exit 5** at `cross`: B → C closes a cycle among the cards. Nothing was
+  merged. Report both cards to the user and ask which way the need goes.
+
+### The combined check
+
+A run that had more than one track completes only through it; a run with
+one track completes at `next` and never runs it.
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs combine [--project <project ref>]
+node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs fixup --combined --fixes <CARD>[,<CARD>] --note "<English>" --repo <repoDir> [--allow <kind>:<path>]... [--project <project ref>] -- <path>...
+```
+
+`combine` builds one tree per repo, `trees/combined/<repoDir>`, from the
+respike base with every track's patches and fixups, and type-checks it.
+Never type-check the combined tree by hand: `combine` checks it.
+
+- `combined-ok`: the run is complete; report it as `complete` below, then
+  Step 8.
+- `combined-failed` with `round` and `errors`, each `{ repo, file, line,
+  message, cards }`. Diagnose before fixing, in the main session: read each
+  error, the cards it names, their records and patches, and say which cards
+  clash and why (a renamed symbol, a changed signature, two edits to one
+  file that do not compose, a missing import, a dependency between tracks
+  nobody saw). A failure never means re-spiking everything. Then fix it at
+  the smallest scope that fixes it:
+  - An error saying a patch `does not apply on the combined tree` is a
+    missed crossing: send it to `cross` (the later card is C, with
+    `--kind changes` when it must change the earlier card's code), never to
+    `fixup --combined`.
+  - A type error whose cards' intent composes, where the code just does not
+    fit together: edit `trees/combined/<repoDir>` and record it with
+    `fixup --combined`, its `--fixes` the clashing cards and its `--note`
+    why it failed and what the fix does. It is credited to those cards with
+    `from: 'combine'`.
+  - A type error that shows a missed crossing, one that changes what a card
+    must do: record it with `cross` after the fact; only the cards that
+    crossing re-spikes are re-spiked, on their merged track, by a worker you
+    continue or start for that track.
+  Then run `combine` again once every track is done. After 3 failed rounds
+  the run pauses with `reason: 'combine'`: report the remaining errors, the
+  diagnosis and what you tried, and stop (Step 7).
+- **Exit 6** at `combine`: a combined tree holds work no `fixup --combined`
+  recorded: record it or drop it, then run `combine` again.
+
+### Errors and the end
+
+- `action: 'setup-failed'` (Exit 1), at a replay, at `tree` or at `combine`:
+  fix the cause or report it; the next call retries.
 - A tree that refuses (Exit 1) because its pinned base is gone or its
   combined base differs from the plan: report it; abandon only when the user
   asks, then preflight again. A repo with only a `url` is refused too: the
@@ -401,13 +550,14 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs end <CARD> [--notes <notes.json>] [
 - **Exit 4** at `end`: secret-like content; remove it, or for a false positive
   run `end` again with `--allow <kind>:<path>`. **Exit 6**: a tree guard failed;
   for a missing last tree run
-  `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs rebuild <repoDir> [--project <project ref>]`.
+  `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs rebuild <repoDir> [--track <id>] [--project <project ref>]`.
   **Exit 7**: usage unmeasured while a token cap is set; run `next` again once
   the output is in the transcript. **Exit 8** at `end`: the typecheck failed,
   as in /keiron-sequencer:spike; fix it, or run `end` again with `--skip-typecheck` and
   a reason only when the failure is not this card's.
-- `action: 'pause'`: Step 7. `action: 'complete'` with `respike: true`: report
-  `removed`, `pruned`, `touchedCheckouts` and `warnings`, then Step 8.
+- `action: 'pause'`: Step 7. `action: 'complete'` (one track) or
+  `combined-ok` with `respike: true`: report `removed`, `pruned`,
+  `touchedCheckouts` and `warnings`, then Step 8.
 
 ## Step 7: Pause and resume
 
@@ -416,7 +566,29 @@ stops on purpose and keeps the trees. A cap pauses the same way, and a paused re
 `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs begin <project ref>`: it needs no hash, since the plan was approved when the run began, and it never reads Linear again.
 Running this skill again works too: preflight refuses with Exit 5 and names
 the resume. `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs status [--project <project ref>]`
-is read-only and shows each entry's mode and the replay outcomes.
+is read-only and shows each entry's mode, the replay outcomes and the tracks.
+
+A pause stops dispatching: in-flight cards finish, and no worker gets another
+card. The resume keeps the run's `workers`, `checks` and tracks. On resume
+the workers are new subagents: each one's first message carries, besides the
+brief, its track's records and the previous card's notes: the records of the
+track's done cards (`~/.keiron-sequencer/<slug>/<CARD>.json`) and the notes of
+its last done card (`~/.keiron-sequencer/<slug>/runs/<runId>/notes/<CARD>.json`).
+A card that was in progress is reopened with `resumed: true`. A run paused with
+`reason: 'combine'` resumes with every track done: a resume starts the rounds
+again, and the coordinator runs `combine` again after its diagnosis.
+
+Deferred crossings live in the run, not in the coordinator's memory: a pause
+or a new session loses the coordinator's list, and `cross` refuses on a paused
+run. On resume, run the report (Step 8) and take every crossing whose `status`
+is `pending`. Run its `cross` again (its `from`, `to`, `kind` and `note`, with
+the track its card lives in now) before you start a worker for its track: a
+worker started first would reopen the stopped card and work it without the
+merge. A crossing whose card was parked (the card is pending again) is the
+exception: `cross` refuses it until the card restarts, so tell that track's
+worker to run it again once `next` hands it the card. A rerun that answers
+`deferred` waits for the other track's worker to return from its `end`, as in
+Step 6.
 
 ## Step 8: Report
 
@@ -450,6 +622,16 @@ blocks nothing and changes no record. Show:
   `spikedAncestors`), `project.replanned` (each fixup dropped from a
   pending replay after a turn, with its card, patch, reason and cause),
   `project.unselected`, and `project.pending` when `complete` is false.
+- Under `## Tracks`, each entry of `tracks`: its id, status, `mergedInto` and
+  cards. A one-track run shows its one track, and no `## Crossings` or
+  `## Combined check`.
+- Under `## Crossings`, each entry of `crossings`: the two cards and tracks,
+  its kind, note and status, the cards it `respiked`, the cards it
+  `replayed` onto the merged track, and its `droppedFixups`.
+- Under `## Combined check`, `combined`: `passed` (when the check passed)
+  and each of the `failures` with its errors, the `fixups` recorded for it
+  (the note is the diagnosis; a dropped one is shown as dropped) and the
+  crossings recorded for it.
 
 Name the saved file for the user to review, with the records in
 `~/.keiron-sequencer/<slug>/`. Exit 1 means a record field holds diff text and nothing was
@@ -481,6 +663,9 @@ the user asks.
 - **Exit 5**: refused, nothing ran: an open run, a hash that does not match,
   `begin` on a plan that is not `ready`, `fetch` with no `bases-unknown`
   ask, or a config draft or config.json changed since its hash was shown.
+  At `cross`: the need closes a cycle.
 - **Exit 6**: a tree guard failed; nothing written.
 - **Exit 7**: usage unmeasured while a token cap is set.
 - **Exit 8**: the typecheck failed at `end`; nothing written.
+- **Exit 75**: busy (no check slot freed in time, or a track is `merging` or
+  `replaying`); nothing changed: run the same command again.
