@@ -491,3 +491,99 @@ test('in a respike run a merge keeps a replayed card\'s record as replayed and a
   assert.equal((await f.spike(['end', R.B, '--track', 't2'])).code, 0);
   assert.equal(json(await f.spike(['next', '--track', 't2'])).action, 'complete');
 });
+
+// t1 = CRM-1 -> CRM-2 and t2 = CRM-3 -> CRM-4, CRM-5; CRM-2 (changing CRM-3's code) and CRM-5 are mid-card, and CRM-2's
+// crossing into t2 is deferred, so CRM-5's cross merges t2 into t1 and parks CRM-2.
+async function mutualCrossing() {
+  const typecheck = config => ({ ...config, repos: { backend: { ...config.repos.backend, spikeTypecheck: ['tc', '{changed}'] } } });
+  const run_ = await tracksRun(
+    [issue('CRM-1', { relations: blocks('CRM-2') }), issue('CRM-2'), issue('CRM-3', { relations: blocks('CRM-4') }), issue('CRM-4'), issue('CRM-5')],
+    { t1: ['CRM-1', 'CRM-2'], t2: ['CRM-3', 'CRM-4', 'CRM-5'] }, { config: typecheck },
+  );
+  const { open, end, cross } = run_;
+  await open('CRM-1', 't1');
+  await end('CRM-1', 't1');
+  for (const card of ['CRM-3', 'CRM-4']) {
+    await open(card, 't2');
+    await end(card, 't2');
+  }
+  await open('CRM-2', 't1', { 'CRM-2.txt': 'CRM-2\n', 'CRM-3.txt': 'CRM-3 changed by CRM-2\n' });
+  await open('CRM-5', 't2');
+  assert.equal(json(await cross('t1', 'CRM-2', 'CRM-3', 'changes')).action, 'deferred');
+  const crossT2 = extra => run(['cross', '--track', 't2', '--card', 'CRM-5', '--needs', 'CRM-1', '--kind', 'depends', '--note', 'Needs CRM-1.'], { ...run_.f.deps, ...extra });
+  return { ...run_, crossT2 };
+}
+
+// CRM-2's work is in t1's tree again and no wip holds it; its own crossing, rerun, carries that work into its wip.
+async function assertUnparked({ dir, cross }) {
+  const tree = treeOf(dir, 't1');
+  assert.equal(readFileSync(join(tree, 'CRM-3.txt'), 'utf8'), 'CRM-3 changed by CRM-2\n');
+  assert.equal(readFileSync(join(tree, 'CRM-2.txt'), 'utf8'), 'CRM-2\n');
+  assert.equal(existsSync(join(dir, 'wip', 'CRM-2.patch')), false);
+  assert.equal(readState(dir).cards['CRM-2'].status, 'in-progress');
+  const again = await cross('t1', 'CRM-2', 'CRM-3', 'changes');
+  assert.equal(again.code, 0, again.stderr);
+  assert.deepEqual([json(again).track, json(again).merged, json(again).parked], ['t2', 't1', 'CRM-5']);
+  const wip = readFileSync(json(again).wip, 'utf8');
+  assert.match(wip, /\+CRM-3 changed by CRM-2/);
+  assert.match(wip, /b\/backend\/CRM-2\.txt/);
+}
+
+test('a merge that parked a card and then went stale puts the card\'s work back in its tree', async () => {
+  const m = await mutualCrossing();
+  const { f, dir, spike } = m;
+  let paused = null;
+  const pausing = (argv, { cwd } = {}) => {
+    if (!paused && argv[0] === 'tc' && cwd === treeOf(dir, 't1')) {
+      paused = spawnSync(process.execPath, [SPIKE, 'pause'], {
+        env: { ...SANDBOX_ENV, HOME: f.scratch, KEIRON_SEQUENCER_HOME: f.home, KEIRON_SEQUENCER_TRANSCRIPTS: f.scratch }, encoding: 'utf8',
+      });
+    }
+    return { status: 0, stdout: '', stderr: '' };
+  };
+  const r = await m.crossT2({ runSetup: pausing });
+  assert.equal(paused?.status, 0, paused?.stderr);
+  assert.deepEqual(json(r), { action: 'stale', track: 't2' });
+  assert.equal((await spike(['begin', PROJECT_URL])).code, 0);
+  await assertUnparked(m);
+});
+
+test('a merge that parked a card and then failed puts the card\'s work back in its tree', async () => {
+  const m = await mutualCrossing();
+  const { f, dir } = m;
+  const git = (args, opts = {}) => {
+    if (opts.env?.GIT_INDEX_FILE?.includes('merge-')) throw new Error('forced merge failure');
+    return f.deps.git(args, opts);
+  };
+  const r = await m.crossT2({ git });
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /forced merge failure/);
+  assert.equal(readState(dir).tracks.t1.current.card, 'CRM-2');
+  assert.equal(readState(dir).crossings[1].pending, true);
+  await assertUnparked(m);
+});
+
+test('an existing wip is never replaced while its work is not in the card\'s tree', async () => {
+  const { dir, open, end, cross } = await tracksRun([issue('CRM-1'), issue('CRM-2')], { t1: ['CRM-1'], t2: ['CRM-2'] });
+  await open('CRM-2', 't2');
+  await end('CRM-2', 't2');
+  const c = await open('CRM-1', 't1', { 'CRM-1.txt': 'CRM-1\n' });
+  const earlier = join(dir, 'wip', 'CRM-1.patch');
+  const text = ['diff --git a/backend/earlier.txt b/backend/earlier.txt', 'new file mode 100644', '--- /dev/null', '+++ b/backend/earlier.txt', '@@ -0,0 +1 @@', '+earlier work', ''].join('\n');
+  mkdirSync(join(dir, 'wip'), { recursive: true });
+  writeFileSync(earlier, text);
+  const before = readFileSync(join(dir, 'run.json'), 'utf8');
+
+  const refused = await cross('t1', 'CRM-1', 'CRM-2', 'depends');
+  assert.equal(refused.code, 1);
+  assert.match(refused.stderr, /wip\/CRM-1\.patch holds work that is not in CRM-1's tree/);
+  assert.equal(readFileSync(earlier, 'utf8'), text);
+  assert.equal(readFileSync(join(dir, 'run.json'), 'utf8'), before);
+
+  sandboxGit(['apply', '-p2', earlier], { cwd: c.tree });
+  const r = await cross('t1', 'CRM-1', 'CRM-2', 'depends');
+  assert.equal(r.code, 0, r.stderr);
+  const wip = readFileSync(earlier, 'utf8');
+  assert.match(wip, /\+earlier work/);
+  assert.match(wip, /\+CRM-1/);
+});
