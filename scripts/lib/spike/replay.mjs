@@ -32,7 +32,7 @@ export function readRecord(dataDir, slug, card) {
   }
 }
 
-function assertSnapshotted(git, repoDir, repo) {
+export function assertSnapshotted(git, repoDir, repo) {
   checkTree(git, repoDir, repo);
   clearGenerated(repo.path);
   git(['add', '-A'], { cwd: repo.path });
@@ -44,7 +44,7 @@ function assertSnapshotted(git, repoDir, repo) {
 const unmergedPaths = out => [...new Set(out.split('\n').filter(Boolean).map(l => l.slice(l.indexOf('\t') + 1)))].sort(compare);
 
 // The 3-way apply runs in a temporary index, so a patch that does not apply leaves the tree's index and files as they were.
-function mergedTree(git, repoDir, repo, patches, { index, pathOf }) {
+export function mergedTree(git, repoDir, repo, patches, { index, pathOf }) {
   const env = { GIT_INDEX_FILE: index };
   try {
     git(['read-tree', repo.last], { cwd: repo.path, env });

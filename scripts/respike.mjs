@@ -7,6 +7,7 @@ import { exitError, fail, isEntry, lines, ok, parseArgs, redacted } from './lib/
 import { parseProjectRef, readLinearKey } from './lib/linear-fetch.mjs';
 import { readRecords, REPO_DATA_DIR } from './lib/records.mjs';
 import { buildRespikePlan } from './lib/respike/plan.mjs';
+import { contractedEdges } from './lib/respike/selection.mjs';
 import { parseWorktrees } from './lib/start/checkout.mjs';
 import { gapLine } from './lib/respike/coverage.mjs';
 import { buildReport, previousRecords } from './lib/respike/report.mjs';
@@ -121,6 +122,7 @@ function runPlan(built, at) {
   return {
     fetchedAt: at.toISOString(),
     order: plan.order.map(e => e.key),
+    edges: contractedEdges(analysis.edges, new Set(plan.order.map(e => e.key))),
     tracks: plan.tracks,
     skipped: [],
     cards,

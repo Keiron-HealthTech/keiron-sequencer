@@ -110,7 +110,7 @@ export function overlapCandidates(workingPatch, earlier) {
 }
 
 // Staged into a copy of the tree's index (read-tree -m keeps its stat data), so the real index stays as the agent left it.
-export function workingDiff(git, repo, { index }) {
+function workingTree(git, repo, { index }) {
   const cwd = repo.path;
   const env = { GIT_INDEX_FILE: index };
   const real = git(['rev-parse', '--git-path', 'index'], { cwd }).trim();
@@ -119,9 +119,16 @@ export function workingDiff(git, repo, { index }) {
     if (existsSync(realPath)) copyFileSync(realPath, index);
     git(['read-tree', '-m', repo.last], { cwd, env });
     git(['add', '-A'], { cwd, env });
-    const tree = git(['write-tree'], { cwd, env }).trim();
-    return git([...DIFF, '-U0', repo.last, tree], { cwd, env });
+    return git(['write-tree'], { cwd, env }).trim();
   } finally {
     rmSync(index, { force: true });
   }
+}
+
+export const workingDiff = (git, repo, { index }) => git([...DIFF, '-U0', repo.last, workingTree(git, repo, { index })], { cwd: repo.path });
+
+// A card's work since it first touched the repo, its fixups included, with its paths under <repoDir>/ so one file holds every repo.
+export function wipDiff(git, repoDir, repo, { index, from }) {
+  clearGenerated(repo.path);
+  return git([...DIFF, `--src-prefix=a/${repoDir}/`, `--dst-prefix=b/${repoDir}/`, from, workingTree(git, repo, { index })], { cwd: repo.path });
 }

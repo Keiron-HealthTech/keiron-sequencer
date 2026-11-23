@@ -1,7 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { RUN_ID, writeJsonAtomic } from './home.mjs';
+import { exitError } from '../cli.mjs';
+import { holderAlive, RUN_ID, writeJsonAtomic } from './home.mjs';
 
 const STATE_FILE = 'run.json';
 
@@ -54,9 +55,23 @@ export function upgradeState(state) {
 
 const liveTracks = state => Object.entries(state.tracks).filter(([, t]) => !t.mergedInto);
 
+const liveTarget = (state, id) => (state.tracks[id].mergedInto ? liveTarget(state, state.tracks[id].mergedInto) : id);
+
+// A merge whose process is gone holds nothing: a rerun of its cross takes it over.
+export const mergingCrossing = (state, trackId, isAlive = p => process.kill(p, 0)) => state.crossings
+  .find(c => c.merging && [c.fromTrack, c.toTrack].includes(trackId) && holderAlive(String(c.merging.pid), isAlive)) ?? null;
+
+// Exit 75 answers busy like a full check slot: the command changed nothing and is run again.
+export const mergingRefusal = c => Object.assign(exitError(75, `${c.fromTrack} is merging into ${c.toTrack}: run the command again once that cross ends`), {
+  output: { action: 'busy', merging: { from: c.fromTrack, into: c.toTrack } },
+});
+
 export function trackIdOf(state, id) {
   if (id !== undefined) {
     if (!Object.hasOwn(state.tracks, id)) throw new Error(`${id} is not a track of run ${state.runId}`);
+    if (state.tracks[id].mergedInto) throw new Error(`${id} was merged into ${liveTarget(state, id)}: pass --track ${liveTarget(state, id)}`);
+    const merging = mergingCrossing(state, id);
+    if (merging) throw mergingRefusal(merging);
     return id;
   }
   const live = liveTracks(state);
@@ -66,10 +81,12 @@ export function trackIdOf(state, id) {
 
 export const trackOf = (state, id) => state.tracks[trackIdOf(state, id)];
 
-export const trackOfCard = (state, card) => Object.entries(state.tracks).find(([, t]) => t.cards.includes(card))?.[0] ?? null;
+// A merged track keeps its cards list; they live on in the track it merged into.
+export const trackOfCard = (state, card) => liveTracks(state).find(([, t]) => t.cards.includes(card))?.[0] ?? null;
 
-// A card that a crossing says needs another card waits until that card is done.
-export const waitingOn = (state, card) => state.crossings.find(c => c.from === card && state.cards[c.to]?.status !== 'done')?.to ?? null;
+// A card that an applied crossing says needs another card waits until that card is done; a deferred one gates nothing yet.
+export const waitingOn = (state, card) => state.crossings
+  .find(c => !c.pending && !c.merging && c.from === card && state.cards[c.to]?.status !== 'done')?.to ?? null;
 
 // Every tree of the run, whichever track holds it.
 export const allRepos = state => Object.values(state.tracks).flatMap(t => Object.entries(t.repos));

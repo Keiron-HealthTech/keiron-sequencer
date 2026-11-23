@@ -207,6 +207,17 @@ function validateReplayed(replayed, refs, c) {
   }
 }
 
+const TRACK_ID = /^t\d+$/;
+
+// A crossing is named by its index in the run's crossings.
+function validateCrossingRefs(r, c) {
+  if ('mergedFrom' in r && c.object(r.mergedFrom, '$.mergedFrom')) {
+    if (c.has(r.mergedFrom, 'track', '$.mergedFrom')) c.check(typeof r.mergedFrom.track === 'string' && TRACK_ID.test(r.mergedFrom.track), '$.mergedFrom.track', 'expected a track id like t2');
+    if (c.has(r.mergedFrom, 'crossing', '$.mergedFrom')) c.count(r.mergedFrom.crossing, '$.mergedFrom.crossing');
+  }
+  if ('respikedBy' in r && c.object(r.respikedBy, '$.respikedBy') && c.has(r.respikedBy, 'crossing', '$.respikedBy')) c.count(r.respikedBy.crossing, '$.respikedBy.crossing');
+}
+
 // A replayed record keeps the effort of the run that spiked it while its refs move to the run that replayed it.
 function validateRefs(refs, effort, replayed, c) {
   if (!c.object(refs, '$.refs')) return;
@@ -255,6 +266,7 @@ export function validateRecord(value) {
   if ('novelty' in r) validateNovelty(r.novelty, c);
   if ('timeBox' in r) validateTimeBox(r.timeBox, c);
   if ('replayed' in r) validateReplayed(r.replayed, r.refs, c);
+  validateCrossingRefs(r, c);
   if (c.has(r, 'refs', '$')) validateRefs(r.refs, r.effort, r.replayed, c);
   if (r.origin === 'existing-pr' && isSet(r.effort)) c.fail('$.effort', 'expected null for an existing-pr record');
   if (r.origin === 'existing-pr' && 'timeBox' in r) c.fail('$.timeBox', 'an existing-pr record never carries a timeBox');
@@ -285,7 +297,7 @@ export function validateNoteFields(notes) {
 
 const ORDER = {
   record: ['schemaVersion', 'card', 'title', 'project', 'origin', 'spikedAt', 'archived', 'supersededBy', 'alias', 'scope',
-    'size', 'effort', 'fixups', 'cases', 'decisions', 'findings', 'priorFindings', 'openDecisions', 'riskAreas', 'novelty', 'timeBox', 'replayed', 'refs'],
+    'size', 'effort', 'fixups', 'cases', 'decisions', 'findings', 'priorFindings', 'openDecisions', 'riskAreas', 'novelty', 'timeBox', 'replayed', 'mergedFrom', 'respikedBy', 'refs'],
   project: ['slug', 'name'],
   archived: ['at', 'reason'],
   supersededBy: ['card', 'spikedAt'],
@@ -308,6 +320,7 @@ const ORDER = {
   novelty: ['newPaths'],
   timeBox: ['budget', 'spent', 'over'],
   replayed: ['at', 'runId', 'fromRunId', 'folded'],
+  mergedFrom: ['track', 'crossing'],
   refs: ['engram', 'patches', 'linear', 'runId'],
 };
 
@@ -357,6 +370,7 @@ export function canonicalRecord(record) {
     novelty: v => ordered(v, ORDER.novelty),
     timeBox: v => ordered(v, ORDER.timeBox),
     replayed: v => ordered(v, ORDER.replayed, { folded: x => list(x, undefined, compare) }),
+    mergedFrom: v => ordered(v, ORDER.mergedFrom),
     refs: v => ordered(v, ORDER.refs, {
       engram: x => list(x, undefined, (a, b) => engramId(a) - engramId(b) || compare(a, b)),
       patches: x => list(x, undefined, compare),

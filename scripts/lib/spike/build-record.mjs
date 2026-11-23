@@ -121,6 +121,9 @@ function derivedFields(cardState, notes, origin) {
   return out;
 }
 
+// Kept on the card's state so a record rebuilt later (a fixup, a settle) still says which crossing moved it.
+const crossingFields = ({ mergedFrom, respikedBy }) => ({ ...(mergedFrom ? { mergedFrom } : {}), ...(respikedBy ? { respikedBy } : {}) });
+
 function assemble(state, card, notes, readPatch) {
   const noteErrors = checkNotes(notes);
   if (noteErrors.length) throw new Error(`the notes for ${card} are invalid: ${noteErrors.join('; ')}`);
@@ -143,6 +146,7 @@ function assemble(state, card, notes, readPatch) {
     ...(notes.priorFindings !== undefined ? { priorFindings: notes.priorFindings } : {}),
     openDecisions: notes.openDecisions,
     ...derivedFields(state.cards[card], notes, planned.origin),
+    ...crossingFields(state.cards[card]),
     refs: { engram: notes.engram ?? [], patches: [...patches].sort(compare), linear: planned.url, runId: state.runId },
   };
   const errors = validateRecord(record);
@@ -218,6 +222,18 @@ export function rewriteUsage(state, card, dataDir) {
   if (errors.length) throw new Error(`the record for ${card} is invalid: ${errors.join('; ')}`);
   writeAtomic(path, serializeRecord(record));
   return `${displayData(dataDir, state.project.slug)}/${card}.json`;
+}
+
+// A record this run wrote gets the card's crossing fields; one from an earlier run is history and stays as it is.
+export function crossedRecordFile(state, card, dataDir) {
+  const path = join(dataDir, state.project.slug, `${card}.json`);
+  if (!existsSync(path)) return null;
+  const old = readExisting(path);
+  if (old.refs?.runId !== state.runId) return null;
+  const record = { ...old, ...crossingFields(state.cards[card]) };
+  const errors = validateRecord(record);
+  if (errors.length) throw new Error(`the record for ${card} is invalid: ${errors.join('; ')}`);
+  return { path, text: serializeRecord(record) };
 }
 
 export const notesPath = (state, card) => join(runDir(state.home, state.project.slug, state.runId), 'notes', `${card}.json`);

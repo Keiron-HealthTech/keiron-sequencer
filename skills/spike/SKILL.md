@@ -272,10 +272,15 @@ them. Ask the user mid-card only on real conflicts.
   read-only: each track's status, current card and done/total. A run with more
   than one track needs `--track <id>` on next, tree, notes-template, candidates,
   fixup, end and rebuild.
+- `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs cross --track <id> --card <CARD> --needs <CARD> --kind depends|changes --note <text> [--project <project ref>]`
+  records that a card of one track needs (`depends`) or must change (`changes`)
+  a card of another, and merges the two tracks. While the other track has a
+  card in progress it answers `action: 'deferred'` (exit 1): run it again once
+  that card has ended. Exit 5 when the need closes a cycle.
 - `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs prune [<slug>] [--dry-run]` applies
   the retention by hand.
 - `--project <project ref>` on next, tree, check, candidates, fixup, end, rebuild,
-  pause, abandon, status and tracks is needed only when more than one project has an
+  cross, pause, abandon, status and tracks is needed only when more than one project has an
   active run.
 
 ## Exit codes

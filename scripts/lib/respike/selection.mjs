@@ -102,7 +102,7 @@ export function ancestorsOf(analysis, selected, { isBuilt = () => false } = {}) 
 }
 
 // One edge X -> Y for every path from entry X to entry Y whose inner cards are all outside the run (built or merged).
-function contractedEdges(edges, wanted) {
+export function contractedEdges(edges, wanted) {
   const next = new Map();
   for (const e of edges) next.set(e.from, [...(next.get(e.from) ?? []), e.to]);
   const out = [];
