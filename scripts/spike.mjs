@@ -19,6 +19,8 @@ import { closesCycle, mergeTracks } from './lib/spike/merge.mjs';
 import { isSlug, prunableSlugs, pruneRuns } from './lib/spike/prune.mjs';
 import { previousOf, replanAfterTurn, replayContext, replayEntry } from './lib/spike/replay.mjs';
 import { changedSinceLast, clearGenerated, repoTypecheck, typecheckLog } from './lib/spike/typecheck.mjs';
+import { buildCombined, COMBINE_ROUNDS, combinedFixupName } from './lib/spike/combined.mjs';
+import { COMBINE_FIXUP } from './lib/record.mjs';
 import { cardPatchName, fixupPatchName, oldSideRanges, overlapCandidates, rangesOverlap, snapshot, wipDiff, workingDiff } from './lib/spike/snapshot.mjs';
 import { scanPatch, SECRET_KINDS } from './lib/spike/secrets.mjs';
 import {
@@ -37,8 +39,10 @@ const USAGE = [
   'usage: node scripts/spike.mjs check [--track <id>] [--cwd <repoDir>] [--project <project ref>] -- <argv>...',
   'usage: node scripts/spike.mjs candidates [--track <id>] [--repo <repoDir>] [--project <project ref>]',
   'usage: node scripts/spike.mjs fixup [--track <id>] --fixes <CARD>[,<CARD>] --slug <kebab-slug> --note <text> --repo <repoDir> [--allow <kind>:<path>]... [--project <project ref>] -- <path>...',
+  'usage: node scripts/spike.mjs fixup --combined --fixes <CARD>[,<CARD>] --note <text> --repo <repoDir> [--allow <kind>:<path>]... [--project <project ref>] -- <path>...',
   'usage: node scripts/spike.mjs rebuild <repoDir> [--track <id>] [--project <project ref>]',
   'usage: node scripts/spike.mjs cross --track <id> --card <CARD> --needs <CARD> --kind depends|changes --note <text> [--project <project ref>]',
+  'usage: node scripts/spike.mjs combine [--project <project ref>]',
   'usage: node scripts/spike.mjs pause [--project <project ref>]',
   'usage: node scripts/spike.mjs abandon [--discard] [--project <project ref>]',
   'usage: node scripts/spike.mjs prune [<slug>] [--dry-run]',
@@ -50,7 +54,7 @@ const USAGE = [
 
 const cardNumber = key => Number(String(key).match(/(\d+)$/)?.[1] ?? 0);
 
-const COMMANDS = { begin, next, tree, check, candidates, 'notes-template': notesTemplateFor, end, fixup, rebuild, cross, pause, abandon, prune, status, tracks, config };
+const COMMANDS = { begin, next, tree, check, candidates, 'notes-template': notesTemplateFor, end, fixup, rebuild, cross, combine, pause, abandon, prune, status, tracks, config };
 
 // transcripts: null means no session discovery, so only an explicit --session-file is ever read.
 export async function run(argv, {
@@ -439,9 +443,10 @@ async function nextCard(dir, state, trackId, { now, ...deps }, replayed = []) {
   const card = pendingCard(state, trackId);
   if (!card) {
     track.status = 'done';
-    if (Object.values(state.tracks).every(t => t.status === 'done' || t.status === 'merged')) return completeRun(dir, state, settled, { now, ...deps }, respike);
+    const finished = Object.values(state.tracks).every(t => t.status === 'done' || t.status === 'merged');
+    if (finished && Object.keys(state.tracks).length === 1) return completeRun(dir, state, settled, { now, ...deps }, respike);
     saveState(dir, state, now());
-    return ok({ action: 'track-done', track: trackId, ...respike });
+    return ok({ action: 'track-done', track: trackId, ...respike, ...(finished ? { combine: true } : {}) });
   }
   const needed = waitingOn(state, card);
   if (needed) {
@@ -504,7 +509,7 @@ function replayNext(dir, state, trackId, { now, git, dataDir, runSetup, config }
   return entry;
 }
 
-async function completeRun(dir, state, settled, { home, now, git, dataDir, sleep, transcripts }, respike = {}) {
+async function completeRun(dir, state, settled, { home, now, git, dataDir, sleep, transcripts }, respike = {}, action = 'complete') {
   for (let i = 0; i < SETTLE_POLLS && settled.unsettled.length; i++) {
     await sleep(SETTLE_POLL_MS);
     settled = await settleWindows(state, { dataDir, transcripts, now });
@@ -530,7 +535,7 @@ async function completeRun(dir, state, settled, { home, now, git, dataDir, sleep
     ...(pruned.unreadable ?? []).map(f => `no run was pruned: the record ${f} cannot be read`),
   ];
   return ok({
-    mark, action: 'complete', runId: state.runId, ...(state.plan.respike ? { respike: true, ...respike } : {}), removed, pruned: pruned.removed, touchedCheckouts: touchedCheckouts(state),
+    mark, action, runId: state.runId, ...(state.plan.respike ? { respike: true, ...respike } : {}), removed, pruned: pruned.removed, touchedCheckouts: touchedCheckouts(state),
     ...(warnings.length ? { warnings } : {}),
   });
 }
@@ -630,13 +635,17 @@ const CARD_KEY = /^[A-Z]+-\d+$/;
 async function fixup(args, { home, dataDir, now, git, lock }) {
   const split = args.indexOf('--');
   const paths = split === -1 ? [] : args.slice(split + 1);
-  const a = parseArgs(split === -1 ? args : args.slice(0, split), ['--fixes', '--slug', '--note', '--repo', '--project', '--track'], ['--allow']);
+  const head = split === -1 ? args : args.slice(0, split);
+  const combined = head.includes('--combined');
+  const a = parseArgs(head.filter(x => x !== '--combined'), ['--fixes', '--slug', '--note', '--repo', '--project', '--track'], ['--allow']);
   const allow = a && parseAllow(a.flags.allow);
   const fixes = [...new Set(a?.flags.fixes?.split(',') ?? [])].sort((x, y) => cardNumber(x) - cardNumber(y));
+  const named = combined ? a?.flags.slug === undefined && a?.flags.track === undefined : KEBAB.test(a?.flags.slug ?? '');
   const usable = a && !a.positional.length && allow && paths.length && fixes.length && fixes.every(k => CARD_KEY.test(k))
-    && KEBAB.test(a.flags.slug ?? '') && a.flags.repo && typeof a.flags.note === 'string';
+    && named && a.flags.repo && typeof a.flags.note === 'string';
   if (!usable) return fail(2, ...USAGE);
-  return onActiveRun(home, a.flags.project, (dir, state) => fixupCard(dir, state, { ...a.flags, fixes, paths, allow }, { dataDir, now, git }), lock);
+  const record = combined ? fixupCombined : fixupCard;
+  return onActiveRun(home, a.flags.project, (dir, state) => record(dir, state, { ...a.flags, fixes, paths, allow }, { dataDir, now, git }), lock);
 }
 
 function fixupCard(dir, state, { fixes, paths, allow, slug, note, repo: repoDir, track: wanted }, { dataDir, now, git }) {
@@ -671,6 +680,33 @@ function fixupCard(dir, state, { fixes, paths, allow, slug, note, repo: repoDir,
   const records = finishFixup(after, fixes, { pending, dataDir });
   saveState(dir, after, at);
   return ok({ action: 'fixup', patch: pending.name, fixed: fixes, from, records });
+}
+
+// A fix made on the combined tree is no card's work: it is credited to the cards that clashed, and rides on top of every
+// track in each later combine.
+function fixupCombined(dir, state, { fixes, paths, allow, note, repo: repoDir }, { dataDir, now, git }) {
+  if (!note.trim()) return fail(1, 'a fixup needs a non-empty English --note saying what it fixes');
+  if (liveMark(state.combine.running)) return combining();
+  for (const k of fixes) if (state.cards[k]?.status !== 'done') return fail(1, `${k} is not done in this run: only a done card can receive a fixup`);
+  const after = structuredClone(state);
+  const repo = after.combine.repos?.[repoDir];
+  if (repo?.status !== 'open') return fail(1, `${repoDir} has no combined tree: run combine first`);
+  checkTree(git, repoDir, repo);
+  const snap = snapshot(git, repo, { paths });
+  if (!snap) return fail(1, `no change in ${paths.join(', ')} since the last snapshot of ${repoDir}`);
+  const fixups = after.fixups ?? [];
+  const pending = { name: `${repoDir}/${combinedFixupName(fixes, fixups.filter(f => f.from === COMBINE_FIXUP).length + 1)}`, text: snap.patch };
+  const { hits, allowed } = scanPending([pending], allow);
+  if (hits.length) return refusedForSecrets(hits);
+
+  const at = now();
+  repo.last = snap.tree;
+  after.fixups = [...fixups, {
+    patch: pending.name, from: COMBINE_FIXUP, fixed: fixes, note, at: at.toISOString(), round: after.combine.rounds, ...(allowed.length ? { allowedSecrets: allowed } : {}),
+  }];
+  const records = finishFixup(after, fixes, { pending, dataDir });
+  saveState(dir, after, at);
+  return ok({ action: 'fixup', patch: pending.name, fixed: fixes, from: COMBINE_FIXUP, records });
 }
 
 async function rebuild(args, { home, git, lock }) {
@@ -899,6 +935,77 @@ async function adoptMerge(dir, fresh, before, work, { from, into, index, card, o
   const extra = { ...(wip ? { wip: wip.path } : {}), ...(parked ? { parked } : {}) };
   if (from === into) return ok({ action: 'applied', crossing: index, track: into, kind, respiked, ...extra });
   return ok({ action: 'merged', crossing: index, track: into, merged: from, kind, replayed, respiked, ...extra });
+}
+
+const combining = () => ({ ...busy({ combining: true }), stderr: lines(['a combine is running: run the command again once it ends']) });
+
+function refusedCombine(state) {
+  if (Object.keys(state.tracks).length === 1) return fail(1, 'this run has one track: it completes at next, with no combine');
+  const execution = state.executions.at(-1);
+  if (execution.endedAt) return fail(1, `the run is paused (${execution.endReason}): run begin to resume it`);
+  const open = Object.entries(state.tracks).filter(([, t]) => t.status !== 'done' && t.status !== 'merged');
+  if (open.length) return fail(1, `combine runs once every track is done: ${open.map(([id, t]) => `${id} is ${t.status}`).join(', ')}`);
+  const merging = state.crossings.find(c => liveMark(c.merging));
+  if (merging) throw mergingRefusal(merging);
+  const pending = state.crossings.findIndex(c => c.pending);
+  if (pending !== -1) return fail(1, `crossing ${pending} is pending: run cross again for it before combine`);
+  return liveMark(state.combine.running) ? combining() : null;
+}
+
+// Before the run completes, every track's patches go into one tree per repo and are type-checked together, so a crossing
+// nobody noticed cannot pass. Like cross: a locked section marks the run, the build and the check run outside the lock under a
+// check slot, and a second locked section keeps the round, unless a track or the run moved meanwhile.
+async function combine(args, { home, now, git, lock, slot, runSetup, transcripts, dataDir, sleep }) {
+  const a = parseArgs(args, ['--project']);
+  if (!a || a.positional.length) return fail(2, ...USAGE);
+  const config = loadConfig(home);
+  const first = await onActiveRun(home, a.flags.project, (dir, state) => {
+    const refused = refusedCombine(state);
+    if (refused) return { result: refused };
+    state.combine.running = { pid: process.pid };
+    saveState(dir, state, now());
+    return { dir, state };
+  }, lock);
+  if (first.result) return first.result;
+  const { dir, state } = first;
+  const repos = structuredClone(state.combine.repos ?? {});
+  let errors = null;
+  let failure = null;
+  const slotted = await withCheckSlot(dir, { slots: state.checks ?? 1, command: 'combine', ...slot }, () => {
+    try {
+      errors = buildCombined(git, state, repos, { config, dir, runSetup });
+    } catch (e) {
+      failure = e;
+    }
+  });
+  return withLock(dir, async () => {
+    const fresh = readState(dir);
+    if (fresh.combine.running?.pid === process.pid) delete fresh.combine.running;
+    if (fresh.status === 'active' || fresh.status === 'paused') fresh.combine.repos = repos;
+    else for (const [repoDir, repo] of Object.entries(repos)) if (!state.combine.repos?.[repoDir]) discardTree(git, repo);
+    saveState(dir, fresh, now());
+    if (slotted.busy) return busy();
+    if (failure?.setup) return { ...ok({ action: 'setup-failed', ...failure.setup }), code: 1, stderr: lines([failure.message]) };
+    if (failure) throw failure;
+    const moved = fresh.status !== state.status || JSON.stringify([fresh.tracks, fresh.crossings, fresh.fixups]) !== JSON.stringify([state.tracks, state.crossings, state.fixups]);
+    if (moved) return ok({ action: 'stale' });
+    return keepRound(dir, fresh, errors, { home, now, git, transcripts, dataDir, sleep });
+  }, lock);
+}
+
+async function keepRound(dir, state, errors, deps) {
+  const at = deps.now().toISOString();
+  if (!errors.length) {
+    state.combine.results.push({ at, ok: true });
+    await bindExecution(state.executions.at(-1), deps);
+    return completeRun(dir, state, await settleWindows(state, deps), deps, {}, 'combined-ok');
+  }
+  const round = state.combine.rounds + 1;
+  state.combine.rounds = round;
+  state.combine.results.push({ at, ok: false, round, errors });
+  if (round >= COMBINE_ROUNDS) return pauseRun(dir, state, state.executions.at(-1), 'combine', { now: deps.now, out: { errors } });
+  saveState(dir, state, deps.now());
+  return ok({ action: 'combined-failed', round, errors });
 }
 
 function readNotes(path) {

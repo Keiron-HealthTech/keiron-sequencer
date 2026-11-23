@@ -105,7 +105,8 @@ test('a depends crossing merges R into G, replays R\'s done cards with mergedFro
   await end('CRM-2', 't2');
   const done = await spike(['next', '--track', 't2']);
   assert.equal(done.code, 0, done.stderr);
-  assert.equal(json(done).action, 'complete');
+  assert.deepEqual(json(done), { action: 'track-done', track: 't2', combine: true });
+  assert.equal(json(await spike(['combine'])).action, 'combined-ok');
 });
 
 test('a changes crossing puts C right after B and re-spikes only B\'s done dependents before C', async () => {
@@ -243,7 +244,8 @@ test('C\'s work in progress is saved as wip and offered in its next brief', asyn
   assert.equal(readFileSync(join(c.tree, 'src', 'index.js'), 'utf8'), 'export const one = 1\nexport const two = 2\n');
   await end('CRM-1', 't2');
   assert.equal(existsSync(wip), false);
-  assert.equal(json(await spike(['next', '--track', 't2'])).action, 'complete');
+  assert.equal(json(await spike(['next', '--track', 't2'])).combine, true);
+  assert.equal(json(await spike(['combine'])).action, 'combined-ok');
 });
 
 test('a crossing recorded after C ended re-spikes C too', async () => {
@@ -489,7 +491,10 @@ test('in a respike run a merge keeps a replayed card\'s record as replayed and a
   assert.equal(brief.wip, join(dir, 'wip', `${R.B}.patch`));
   f.at(at(7));
   assert.equal((await f.spike(['end', R.B, '--track', 't2'])).code, 0);
-  assert.equal(json(await f.spike(['next', '--track', 't2'])).action, 'complete');
+  assert.equal(json(await f.spike(['next', '--track', 't2'])).combine, true);
+  const combined = await f.spike(['combine']);
+  assert.equal(json(combined).action, 'combined-ok', combined.stderr);
+  assert.equal(json(combined).respike, true);
 });
 
 // t1 = CRM-1 -> CRM-2 and t2 = CRM-3 -> CRM-4, CRM-5; CRM-2 (changing CRM-3's code) and CRM-5 are mid-card, and CRM-2's

@@ -85,13 +85,16 @@ function validateEffort(effort, card, c) {
   });
 }
 
+// A fixup made on the combined tree of every track comes from no card.
+export const COMBINE_FIXUP = 'combine';
+
 function validateFixups(fixups, c) {
   if (!c.object(fixups, '$.fixups')) return;
   for (const [list, other] of [['received', 'from'], ['caused', 'to']]) {
     if (!c.has(fixups, list, '$.fixups')) continue;
     c.items(fixups[list], `$.fixups.${list}`, (item, path) => {
       if (!c.object(item, path)) return;
-      if (c.has(item, other, path)) c.card(item[other], `${path}.${other}`);
+      if (c.has(item, other, path) && !(other === 'from' && item.from === COMBINE_FIXUP)) c.card(item[other], `${path}.${other}`);
       if (c.has(item, 'patch', path)) c.check(typeof item.patch === 'string' && PATCH_PATH.test(item.patch), `${path}.patch`, 'expected <dir>/<file>.patch');
       if (c.has(item, 'note', path)) c.note(item.note, `${path}.note`);
     });

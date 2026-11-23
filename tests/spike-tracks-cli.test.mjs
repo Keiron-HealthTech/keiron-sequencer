@@ -76,7 +76,7 @@ test('two tracks are worked independently: each card in its own track tree, scra
   assert.equal((await spike(['next', '--track', 't1'])).code, 0);
 });
 
-test('a track with no cards left answers track-done; the run completes only once every track is done', async () => {
+test('a track with no cards left answers track-done; the run completes through combine once every track is done', async () => {
   const { dir, spike, open, end } = await twoTracks();
   await open('CRM-1', 't1', '2026-11-10T10:01:00.000Z');
   await end('CRM-1', 't1', '2026-11-10T10:02:00.000Z');
@@ -90,10 +90,14 @@ test('a track with no cards left answers track-done; the run completes only once
 
   await open('CRM-3', 't2', '2026-11-10T10:05:00.000Z');
   await end('CRM-3', 't2', '2026-11-10T10:06:00.000Z');
-  const complete = await spike(['next', '--track', 't2']);
+  const last = await spike(['next', '--track', 't2']);
+  assert.equal(last.code, 0, last.stderr);
+  assert.deepEqual(json(last), { action: 'track-done', track: 't2', combine: true });
+  assert.deepEqual([readState(dir).status, readState(dir).tracks.t2.status], ['active', 'done']);
+  const complete = await spike(['combine']);
   assert.equal(complete.code, 0, complete.stderr);
-  assert.equal(json(complete).action, 'complete');
-  assert.deepEqual([readState(dir).status, readState(dir).tracks.t2.status], ['complete', 'done']);
+  assert.equal(json(complete).action, 'combined-ok');
+  assert.equal(readState(dir).status, 'complete');
 });
 
 test('tracks and status list each track with done/total', async () => {

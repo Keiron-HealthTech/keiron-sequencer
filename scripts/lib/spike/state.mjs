@@ -90,8 +90,11 @@ export const trackOfCard = (state, card) => liveTracks(state).find(([, t]) => t.
 export const waitingOn = (state, card) => state.crossings
   .find(c => !c.pending && !c.merging && c.from === card && state.cards[c.to]?.status !== 'done')?.to ?? null;
 
-// Every tree of the run, whichever track holds it.
-export const allRepos = state => Object.values(state.tracks).flatMap(t => Object.entries(t.repos));
+// The track key of the trees combine builds: every track's patches together, kept apart from the tracks themselves.
+export const COMBINED = 'combined';
+
+// Every tree of the run, whichever track holds it, the combined trees included.
+export const allRepos = state => [...Object.values(state.tracks).flatMap(t => Object.entries(t.repos)), ...Object.entries(state.combine?.repos ?? {})];
 
 export function openExecution(state, { now, sessions, caps = { tokens: null, cards: null }, box = null }) {
   const execution = {

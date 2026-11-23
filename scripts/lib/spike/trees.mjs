@@ -2,7 +2,7 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, rmSync, writeFileSync
 import { dirname, join, resolve } from 'node:path';
 import { exitError } from '../cli.mjs';
 import { combineTree } from './combine.mjs';
-import { allRepos } from './state.mjs';
+import { allRepos, COMBINED } from './state.mjs';
 
 export const NO_PUSH_URL = 'keiron-sequencer-no-push:///blocked';
 const PRE_PUSH = '#!/bin/sh\necho "keiron-sequencer: a spike tree never pushes" >&2\nexit 1\n';
@@ -119,7 +119,8 @@ function runSetupCommands(runSetup, repoDir, repo, path, log) {
 }
 
 // A tree whose setup failed stays recorded with status "setup": it is spike-made, and the next open retries its setup.
-export function openTree(git, state, { trackId, repoDir, repo, dir, runSetup }) {
+// `base` pins the tree where the run's respike base would otherwise put it.
+export function openTree(git, state, { trackId, repoDir, repo, dir, runSetup, base: pinned }) {
   const { repos } = state.tracks[trackId];
   const known = repos[repoDir];
   if (known && known.status !== 'setup') return known;
@@ -128,7 +129,7 @@ export function openTree(git, state, { trackId, repoDir, repo, dir, runSetup }) 
     if (state.plan?.respike && !repo.checkout) {
       throw exitError(1, `${repoDir} has no local checkout; a respike run opens trees only in checkouts. Configure \`checkout\` instead of \`url\` for it, then run tree again`);
     }
-    const base = state.plan?.respike?.bases?.[repoDir];
+    const base = pinned ?? state.plan?.respike?.bases?.[repoDir];
     const made = repo.checkout ? createWorktree(git, repoDir, repo, path, dir, base) : createClone(git, repo, path, dir);
     repos[repoDir] = {
       name: repo.name, kind: made.kind, source: made.source, path, createdBySpike: true, worktreeConfigSet: made.worktreeConfigSet,
@@ -219,7 +220,8 @@ function refuseUnsnapshotted(git, repoDir, repo, advice) {
 // Every tree is checked before any is removed, so a refusal removes nothing. discard drops unsnapshotted work;
 // the other refusals still hold.
 export function teardownTrees(git, state, { dir, discard = false, advice = 'end the card that made it, or keep the run' }) {
-  const live = Object.entries(state.tracks).flatMap(([trackId, t]) => Object.entries(t.repos).map(([repoDir, repo]) => [trackId, repoDir, repo]))
+  const live = [...Object.entries(state.tracks), [COMBINED, { repos: state.combine?.repos ?? {} }]]
+    .flatMap(([trackId, t]) => Object.entries(t.repos).map(([repoDir, repo]) => [trackId, repoDir, repo]))
     .filter(([, , r]) => r.status !== 'removed');
   for (const [trackId, repoDir, repo] of live) {
     refuseForeign(trackId, repoDir, repo, dir);

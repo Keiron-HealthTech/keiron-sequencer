@@ -281,10 +281,19 @@ them. Ask the user mid-card only on real conflicts.
   a card of another, and merges the two tracks. While the other track has a
   card in progress it answers `action: 'deferred'` (exit 1): run it again once
   that card has ended. Exit 5 when the need closes a cycle.
+- `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs combine [--project <project ref>]` runs
+  once `next` answers `track-done` with `combine: true`: a run that had more than one
+  track completes only through it. It applies every track's patches in one tree per
+  repo (`trees/combined/<repoDir>`) and type-checks it: `combined-ok` completes the
+  run; `combined-failed` lists each error with the cards whose patches touched it.
+  The third failed round pauses the run with `reason: 'combine'`.
+- `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs fixup --combined --fixes <CARD>[,<CARD>] --note <text> --repo <repoDir> [--allow <kind>:<path>]... [--project <project ref>] -- <path>...`
+  records a fix made in the combined tree, credited to the clashing cards with
+  `from: 'combine'`; the next `combine` applies it on top of every track.
 - `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs prune [<slug>] [--dry-run]` applies
   the retention by hand.
 - `--project <project ref>` on next, tree, check, candidates, fixup, end, rebuild,
-  cross, pause, abandon, status and tracks is needed only when more than one project has an
+  cross, combine, pause, abandon, status and tracks is needed only when more than one project has an
   active run.
 
 ## Exit codes
