@@ -17,7 +17,7 @@ import { LIMIT_FLAGS, limitsFrom, sessionsFrom } from './lib/spike/limits.mjs';
 import { isSlug, prunableSlugs, pruneRuns } from './lib/spike/prune.mjs';
 import { previousOf, replanAfterTurn, replayContext, replayEntry } from './lib/spike/replay.mjs';
 import { changedSinceLast, repoTypecheck, typecheckLog } from './lib/spike/typecheck.mjs';
-import { cardPatchName, fixupPatchName, overlapCandidates, snapshot, workingDiff } from './lib/spike/snapshot.mjs';
+import { cardPatchName, fixupPatchName, oldSideRanges, overlapCandidates, rangesOverlap, snapshot, workingDiff } from './lib/spike/snapshot.mjs';
 import { scanPatch, SECRET_KINDS } from './lib/spike/secrets.mjs';
 import {
   activeRunFor, activeRuns, allRepos, capReached, closeOpenExecutions, createRun, executionSpend, issueMark, latestRun, noteStartTrees, openCardWindow,
@@ -534,6 +534,13 @@ async function check(args, { home, runSetup, slot }) {
   return { code: status ?? 1, stdout: stdout ?? '', stderr: stderr ?? '' };
 }
 
+// Done cards' patches in the other live tracks: their trees are separate, so these are hints, never blockers.
+function otherTrackPatches(dir, state, trackId) {
+  return Object.entries(state.tracks).filter(([id, t]) => id !== trackId && !t.mergedInto).flatMap(([track, t]) => t.cards
+    .filter(k => state.cards[k].status === 'done')
+    .flatMap(card => state.cards[card].patches.map(p => ({ card, track, repo: p.split('/')[0], patch: readFileSync(join(dir, 'patches', p), 'utf8') }))));
+}
+
 async function candidates(args, { home, git, lock }) {
   const a = parseArgs(args, ['--repo', '--project', '--track']);
   if (!a || a.positional.length) return fail(2, ...USAGE);
@@ -549,6 +556,13 @@ async function candidates(args, { home, git, lock }) {
         .filter(k => state.cards[k].status === 'done')
         .flatMap(card => state.cards[card].patches.filter(p => p.startsWith(`${repoDir}/`)).map(p => ({ card, patch: readFileSync(join(dir, 'patches', p), 'utf8') })));
       for (const c of overlapCandidates(working, earlier)) found.push({ card: c.card, repo: repoDir, path: c.path, ranges: c.ranges });
+      const ours = oldSideRanges(working);
+      for (const o of otherTrackPatches(dir, state, trackId).filter(x => x.repo === repoDir)) {
+        for (const [path, theirs] of oldSideRanges(o.patch)) {
+          const ranges = rangesOverlap(ours.get(path) ?? [], theirs);
+          if (ranges.length) found.push({ card: o.card, repo: repoDir, path, ranges, otherTrack: o.track });
+        }
+      }
     }
     return ok({ action: 'candidates', candidates: found });
   }, lock);
@@ -741,6 +755,7 @@ async function endCard(dir, state, trackId, card, { notesFile, notes }, flags, {
   track.current = null;
   const mark = issueMark(after, execution, at);
   saveState(dir, after, at);
+  const crossingSuspects = crossingSuspectsOf(dir, after, trackId, pending);
   const cases = notes.cases?.length ?? 0;
   const box = timeBoxFor(cardState);
   const warnings = [
@@ -750,8 +765,20 @@ async function endCard(dir, state, trackId, card, { notesFile, notes }, flags, {
   return ok({
     mark, card, record: path, patches: cardState.patches, noChange,
     usage: usage ? { messages: usage.messages, w: window.w } : 'unmeasured',
+    ...(crossingSuspects.length ? { crossingSuspects } : {}),
     ...(warnings.length ? { warnings } : {}),
   });
+}
+
+function crossingSuspectsOf(dir, state, trackId, pending) {
+  const changed = pending.flatMap(p => [...oldSideRanges(p.text).keys()].map(path => ({ repo: p.name.split('/')[0], path })));
+  const found = new Map();
+  for (const o of otherTrackPatches(dir, state, trackId)) {
+    for (const path of oldSideRanges(o.patch).keys()) {
+      if (changed.some(c => c.repo === o.repo && c.path === path)) found.set(`${o.card}\0${o.repo}\0${path}`, { card: o.card, track: o.track, repo: o.repo, path });
+    }
+  }
+  return [...found.values()];
 }
 
 // The card stays in progress: a later execution reopens it in a new window.

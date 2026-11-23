@@ -134,7 +134,7 @@ test('a fixup from one track into a done card of another is refused: that is a c
   const tree = await open('CRM-3', 't2', '2026-11-10T10:03:00.000Z');
   writeFileSync(join(tree, 'CRM-1.txt'), 'adapted\n');
   const candidates = await spike(['candidates', '--track', 't2']);
-  assert.deepEqual(json(candidates).candidates, []);
+  assert.deepEqual(json(candidates).candidates.map(c => [c.card, c.path, c.otherTrack]), [['CRM-1', 'CRM-1.txt', 't1']]);
   const before = readFileSync(join(dir, 'run.json'), 'utf8');
   const r = await spike(['fixup', '--track', 't2', '--fixes', 'CRM-1', '--slug', 'adapt', '--note', 'Adapts CRM-1.', '--repo', 'backend', '--', 'CRM-1.txt']);
   assert.equal(r.code, 1);
@@ -211,4 +211,33 @@ test('a replan after a turned entry touches only the pending entries of the turn
   assert.deepEqual(dropped, [{ card: 'CRM-2', patch: fix(2), reason: 'from-absent' }]);
   assert.deepEqual(state.plan.respike.replay['CRM-2'].units, { backend: ['backend/00002-new.patch'] });
   assert.deepEqual(state.plan.respike.replay['CRM-4'], entry(4));
+});
+
+const edit = (tree, text) => writeFileSync(join(tree, 'src', 'index.js'), text)
+
+test('candidates marks an overlap with another track\'s patch as otherTrack', async () => {
+  const { spike, open, end } = await twoTracks();
+  const t1 = await open('CRM-1', 't1', '2026-11-10T10:01:00.000Z');
+  edit(t1, 'export const one = 11\n');
+  await end('CRM-1', 't1', '2026-11-10T10:02:00.000Z');
+  const t2 = await open('CRM-3', 't2', '2026-11-10T10:03:00.000Z');
+  edit(t2, 'export const one = 33\n');
+  const r = await spike(['candidates', '--track', 't2']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(json(r).candidates, [{ card: 'CRM-1', repo: 'backend', path: 'src/index.js', ranges: [[1, 1]], otherTrack: 't1' }]);
+  edit(t2, 'export const one = 1\n');
+  writeFileSync(join(t2, 'README.md'), '# other\n');
+  assert.deepEqual(json(await spike(['candidates', '--track', 't2'])).candidates, []);
+});
+
+test('end lists another track\'s card that changed the same path as a crossing suspect and still ends the card', async () => {
+  const { dir, open, end } = await twoTracks();
+  const t1 = await open('CRM-1', 't1', '2026-11-10T10:01:00.000Z');
+  edit(t1, 'export const one = 11\n');
+  assert.equal((await end('CRM-1', 't1', '2026-11-10T10:02:00.000Z')).crossingSuspects, undefined);
+  const t2 = await open('CRM-3', 't2', '2026-11-10T10:03:00.000Z');
+  edit(t2, 'export const one = 22\n');
+  const ended = await end('CRM-3', 't2', '2026-11-10T10:04:00.000Z');
+  assert.deepEqual(ended.crossingSuspects, [{ card: 'CRM-1', track: 't1', repo: 'backend', path: 'src/index.js' }]);
+  assert.equal(readState(dir).cards['CRM-3'].status, 'done');
 });
