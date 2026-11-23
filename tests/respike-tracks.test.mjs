@@ -32,6 +32,17 @@ test('the plan lists one track per disconnected part of the selection', async ()
   assert.deepEqual(plan.tracks, [{ id: 't1', cards: [A, B] }, { id: 't2', cards: [C] }]);
 });
 
+test('a chain through a card outside the run keeps its two ends in one track, as the run order does', async () => {
+  const [X, Y] = ['CRM-8', 'CRM-9'];
+  const blocks = key => ({ nodes: [{ type: 'blocks', relatedIssue: { identifier: key } }] });
+  const f = respikeFixture({
+    issues: defaults => [...defaults, issue(C, { relations: blocks(X) }), issue(X, { state: { name: 'Done', type: 'completed' }, relations: blocks(Y) }), issue(Y)],
+  });
+  const plan = await planOf(f, [A, B, C, Y]);
+  assert.deepEqual(plan.order.map(e => e.key).filter(k => [C, Y].includes(k)), [C, Y]);
+  assert.deepEqual(plan.tracks, [{ id: 't1', cards: [A, B] }, { id: 't2', cards: [C, Y] }]);
+});
+
 test('a previous fixup from CRM-3 into CRM-1 puts them in one track', async () => {
   const f = fixture();
   recordWithFixup(f, A, C);

@@ -14,7 +14,7 @@ import { cardRepos } from '../start/checkout.mjs';
 import { classifyBuilt, decideBases, neededCandidates, pinBranch, readPrLists, readRefs, resolvePending } from './built.mjs';
 import { coverage, touchedRepos } from './coverage.mjs';
 import { replayPlans } from './replay-plan.mjs';
-import { ancestorsOf, cardStaleness, entryOrder, selectCards } from './selection.mjs';
+import { ancestorsOf, cardStaleness, contractedEdges, entryOrder, selectCards } from './selection.mjs';
 
 const compare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const cardNumber = key => Number(String(key).match(/(\d+)$/)?.[1] ?? 0);
@@ -115,7 +115,7 @@ export async function buildRespikePlan(ref, key, {
   const modes = new Map([...ancestors.map(a => [a.key, a.mode]), ...selected.map(k => [k, 'spike'])]);
   const ordered = orderOf(modes);
   const links = [...records.values()].flatMap(r => (r.fixups?.received ?? []).map(f => [f.from, r.card]));
-  const tracks = tracksOf({ order: ordered.order, edges: analysis.edges, links });
+  const tracks = tracksOf({ order: ordered.order, edges: contractedEdges(analysis.edges, new Set(ordered.order)), links });
   const stops = ordered.cycles.map(members => ({ code: 'cycle', members, message: `cycle among the run's cards: ${members.join(', ')}` }));
 
   const spikeEntries = [...modes].filter(([, m]) => m === 'spike').map(([k]) => ({ card: cardOf(k), record: records.get(k) ?? null }));
