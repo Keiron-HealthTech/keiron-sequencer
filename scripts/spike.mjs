@@ -24,7 +24,7 @@ import {
   openExecution, readState, saveState, timeBoxFor, trackIdOf, trackOfCard, unsettledWindows, waitingOn,
 } from './lib/spike/state.mjs';
 import { applyPrDiff, assertLastTree, checkTree, discardTree, guardTree, openTree, rebuildTree, teardownTrees, touchedCheckouts } from './lib/spike/trees.mjs';
-import { bindSession, lastEntryAt, sessionFiles, transcriptsRoot, weighted, windowUsage } from './lib/spike/usage-window.mjs';
+import { bindSession, lastEntryAt, withoutMarked, sessionFiles, transcriptsRoot, weighted, windowUsage } from './lib/spike/usage-window.mjs';
 
 const USAGE = [
   'usage: node scripts/spike.mjs begin <project ref> [--max-tokens <n>] [--max-cards <n>] [--box <n>] [--session-file <transcript.jsonl>]',
@@ -146,11 +146,13 @@ const usageFiles = execution => execution.sessions.flatMap(s => (s.subagent ? [s
 
 // A card whose mark landed in a worker's transcript is measured on that file alone: tracks overlap in time, so every
 // other file of the execution holds someone else's spend. Any other card is measured on the whole execution.
-async function windowFiles(window, execution, { transcripts, now, keep = true }) {
+async function windowFiles(state, window, execution, { transcripts, now, keep = true }) {
   if (window.worker) return [window.worker];
-  if (!window.mark || execution.sessions.some(s => s.given)) return usageFiles(execution);
+  const others = Object.values(state.cards).flatMap(c => c.windows).filter(w => w !== window && w.mark).map(w => w.mark.nonce);
+  const shared = () => withoutMarked(usageFiles(execution), others);
+  if (!window.mark || execution.sessions.some(s => s.given)) return shared();
   const found = await bindSession({ root: transcripts, nonce: window.mark.nonce, issuedAt: window.mark.issuedAt, bound: execution.sessions.map(s => s.file) });
-  if (!found?.subagent) return usageFiles(execution);
+  if (!found?.subagent) return shared();
   if (keep) window.worker = found.file;
   return [found.file];
 }
@@ -175,7 +177,7 @@ async function settleWindows(state, { dataDir, transcripts, now }) {
   const unsettled = new Set();
   for (const { card, window, execution } of unsettledWindows(state)) {
     const before = { messages: window.messages, tokens: window.tokens };
-    const usage = await measure(window, await windowFiles(window, execution, { transcripts, now }));
+    const usage = await measure(window, await windowFiles(state, window, execution, { transcripts, now }));
     if (!usage) continue;
     if (!sameUsage(before, usage)) moved.add(card);
     if (!usage.settled) unsettled.add(card);
@@ -267,7 +269,7 @@ async function closeInterruptedCard(state, track, at, { transcripts, now }) {
   const window = cardState.windows.at(-1);
   if (window.end) return;
   const execution = state.executions.find(e => e.id === current.execution);
-  const files = await windowFiles(window, execution, { transcripts, now });
+  const files = await windowFiles(state, window, execution, { transcripts, now });
   if (!files.length) {
     Object.assign(window, { end: execution.mark?.issuedAt ?? window.start, endReason: 'interrupted' });
     return;
@@ -735,7 +737,7 @@ async function endCard(dir, state, trackId, card, { notesFile, notes }, flags, {
   const window = cardState.windows.at(-1);
   window.end = at.toISOString();
   await bindExecution(execution, { transcripts, now });
-  const usage = await measure(window, await windowFiles(window, execution, { transcripts, now }));
+  const usage = await measure(window, await windowFiles(after, window, execution, { transcripts, now }));
 
   const open = openRepos(after, trackId);
   const skip = flags['skip-typecheck'];
@@ -803,7 +805,7 @@ async function closeCurrentWindow(state, endReason, { now, transcripts }) {
     const execution = state.executions.find(e => e.id === current.execution);
     await bindExecution(execution, { transcripts, now });
     Object.assign(window, { end: now().toISOString(), endReason });
-    await measure(window, await windowFiles(window, execution, { transcripts, now }));
+    await measure(window, await windowFiles(state, window, execution, { transcripts, now }));
   }
 }
 
@@ -853,7 +855,7 @@ async function currentSpend(state, { now, transcripts }) {
     ? await bindSession({ root: transcripts, nonce: execution.mark.nonce, issuedAt: execution.mark.issuedAt, bound })
     : null;
   const unbound = found && !bound.includes(found.file) ? [{ file: found.file, ...(found.subagent ? { subagent: true } : {}) }] : [];
-  const files = await windowFiles(cardState.windows.at(-1), { ...execution, sessions: [...execution.sessions, ...unbound] }, { transcripts, now, keep: false });
+  const files = await windowFiles(state, cardState.windows.at(-1), { ...execution, sessions: [...execution.sessions, ...unbound] }, { transcripts, now, keep: false });
   const closed = cardState.windows.slice(0, -1);
   let spent = 'unmeasured';
   if (files.length && closed.every(w => typeof w.w === 'number')) {

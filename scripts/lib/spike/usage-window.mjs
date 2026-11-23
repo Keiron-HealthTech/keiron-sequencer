@@ -59,6 +59,9 @@ export async function bindSession({ root, nonce, issuedAt, bound = [] }) {
   return file ? { file } : null;
 }
 
+// Subagent files that hold one of the nonces belong to the card windows those marks opened.
+export const withoutMarked = (files, nonces) => files.filter(f => !isSubagent(f) || !nonces.some(n => holds(f, n)));
+
 export function sessionFiles(main) {
   const sub = join(dirname(main), basename(main, '.jsonl'), 'subagents');
   const agents = existsSync(sub) ? readdirSync(sub).filter(f => f.endsWith('.jsonl')).sort() : [];
