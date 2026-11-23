@@ -10,8 +10,9 @@ project ref you were given.
 
 Every command below runs the spike CLI with `node`. If the CLI path in them is
 not a real path on this machine, return at once and say so. Most commands
-print one JSON object on stdout; read its `action`. Two do not: `end` prints
-its fields (`record`, `patches`, …) with no `action`, and `check` passes the
+print one JSON object on stdout; read its `action`. Some print no `action`:
+`end` (`record`, `patches`, …), `tree` (`repo`, `path`, …) and `rebuild`
+(`repo`, `tree`, `rebuilt`) print their fields, and `check` passes the
 command's own output and exit code through.
 
 ## Safety rules

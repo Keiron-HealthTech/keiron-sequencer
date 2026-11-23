@@ -55,6 +55,21 @@ test('pause ends the execution mid-card and keeps the trees; the card resumes in
   assert.equal(ended.code, 0, ended.stderr);
 });
 
+test('an abandon after a pause leaves the window the pause closed as it was', async () => {
+  const fixture = fixtureOf(1);
+  const runId = await begin(fixture);
+  fixture.at('2026-11-10T10:01:00.000Z');
+  await call(fixture, ['next']);
+  await call(fixture, ['tree', 'backend']);
+  fixture.at('2026-11-10T10:03:00.000Z');
+  assert.equal((await call(fixture, ['pause'])).code, 0);
+  fixture.at('2026-11-10T12:00:00.000Z');
+  assert.equal((await call(fixture, ['abandon'])).code, 0);
+  const state = stateIn(runDirOf(fixture, runId));
+  const window = state.cards['CRM-1'].windows.at(-1);
+  assert.deepEqual([window.end, window.endReason, state.tracks.t1.current], ['2026-11-10T10:03:00.000Z', 'paused', null]);
+});
+
 test('abandon tears the trees down, marks the run abandoned and keeps its patches and records; the next begin starts a new run', async () => {
   const fixture = fixtureOf(2);
   const runId = await begin(fixture);

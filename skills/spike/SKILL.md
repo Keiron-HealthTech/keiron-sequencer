@@ -41,8 +41,10 @@ subagent per card, no headless runs.
   it runs the argv in the track's first open tree (`--cwd` picks a repo), takes a
   check slot first, and exits with the command's exit code, or 124 when the command
   ran past `--timeout-ms` (600000 by default) and was stopped. `next`, `tree`, `end` and `check` can
-  answer `action: 'busy'` with exit code 75: no slot freed in time, nothing was
-  changed, so run the same command again.
+  answer `action: 'busy'` with exit code 75: no slot freed in time (`holders` names
+  each slot's pid and command) or the run lock stayed held (`lock` names its pid);
+  nothing was changed, so run the same command again. Never remove a lock or slot
+  file by hand: its holder is alive.
 - Patches and run state live in `~/.keiron-sequencer`, outside every repo: the run's
   folder is `~/.keiron-sequencer/<slug>/runs/<runId>/` (`patches/`, `trees/`, `notes/`,
   `logs/`, `run.json`). Never copy a patch into a repo. The per-card records

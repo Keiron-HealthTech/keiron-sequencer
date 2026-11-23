@@ -384,8 +384,8 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs cross --track <id> --card <CARD> --
   it runs again. `next`, `end`, `tree`, `cross` and `combine` take a check
   slot themselves.
 - `action: 'stale'` (a merge or a pause moved the track while the command
-  ran) and Exit 75 with `action: 'busy'` (no check slot freed in time, or a
-  track is `merging` or `replaying`): nothing was kept, and whoever ran the
+  ran) and Exit 75 with `action: 'busy'` (no check slot freed in time, the
+  run lock stayed held, or a track is `merging` or `replaying`): nothing was kept, and whoever ran the
   command, the coordinator or a worker, reruns the same command. A slot's
   `busy` names its `holders` (each slot's pid and command), a held run lock
   its `lock` pid. After three `busy` or `stale` answers in a row to one
@@ -690,5 +690,7 @@ the user asks.
 - **Exit 6**: a tree guard failed; nothing written.
 - **Exit 7**: usage unmeasured while a token cap is set.
 - **Exit 8**: the typecheck failed at `end`; nothing written.
-- **Exit 75**: busy (no check slot freed in time, or a track is `merging` or
-  `replaying`); nothing changed: run the same command again.
+- **Exit 75**: busy (no check slot freed in time, the run lock stayed held,
+  or a track is `merging` or `replaying`); nothing changed: run the same
+  command again, at most three times in a row. Never remove a lock or slot
+  file by hand: its holder is alive.

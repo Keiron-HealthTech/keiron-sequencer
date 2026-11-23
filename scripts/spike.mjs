@@ -1232,7 +1232,7 @@ async function closeCurrentWindow(state, endReason, deps, { keepCurrent = false 
     const { current } = track;
     if (!current) continue;
     if (!keepCurrent) track.current = null;
-    await closeWindow(state, current, endReason, deps);
+    if (!state.cards[current.card].windows.at(-1).end) await closeWindow(state, current, endReason, deps);
   }
 }
 
