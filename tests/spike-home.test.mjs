@@ -86,15 +86,16 @@ test('an atomic write replaces the file whole and leaves no temporary file, even
   assert.deepEqual(readdirSync(join(DIR, 'atomic')).sort(), ['blocked', 'run.json']);
 });
 
-test('the run lock is exclusive, holds the pid, and is gone once released', () => {
+test('the run lock is exclusive, holds the pid, and is gone once released', async () => {
   const dir = join(DIR, 'lock-run');
-  const release = acquireLock(dir, { pid: 4242 });
+  const alive = { isAlive: () => true, waitMs: 0 };
+  const release = await acquireLock(dir, { pid: 4242, ...alive });
   assert.equal(readFileSync(join(dir, 'run.lock'), 'utf8'), '4242\n');
-  assert.throws(() => acquireLock(dir, { pid: 4343 }), e => e.message.includes('4242') && e.message.includes(join(dir, 'run.lock')));
+  await assert.rejects(acquireLock(dir, { pid: 4343, ...alive }), e => e.message.includes('4242') && e.message.includes(join(dir, 'run.lock')));
   assert.equal(readFileSync(join(dir, 'run.lock'), 'utf8'), '4242\n');
   release();
   assert.equal(existsSync(join(dir, 'run.lock')), false);
-  acquireLock(dir, { pid: 4343 })();
+  (await acquireLock(dir, { pid: 4343, ...alive }))();
   writeFileSync(join(dir, 'other'), '');
   assert.deepEqual(readdirSync(dir), ['other']);
 });
@@ -111,16 +112,16 @@ test('begin with a home inside a git work tree fails naming the problem, before 
   assert.equal(linear.sent.length, 0);
 });
 
-test('a command on a locked run fails naming the lock and changes nothing; every command releases its lock', async () => {
+test('a command on a run locked past its wait fails naming the lock and changes nothing; every command releases its lock', async () => {
   const { home, deps, at } = spikeFixture();
   const { runId } = JSON.parse((await run(['begin', PROJECT_URL], deps)).stdout);
   const dir = join(home, SLUG, 'runs', runId);
   assert.equal(existsSync(join(dir, 'run.lock')), false);
   const before = readFileSync(join(dir, 'run.json'), 'utf8');
-  const release = acquireLock(dir, { pid: 999999 });
+  const release = await acquireLock(dir, { pid: 999999 });
   at('2026-11-10T10:01:00.000Z');
   for (const argv of [['next'], ['tree', 'backend'], ['end', 'CRM-1'], ['begin', PROJECT_URL]]) {
-    const r = await run(argv, deps);
+    const r = await run(argv, { ...deps, lock: { isAlive: () => true, waitMs: 0 } });
     assert.equal(r.code, 1, argv.join(' '));
     assert.match(r.stderr, /locked by pid 999999/, argv.join(' '));
   }

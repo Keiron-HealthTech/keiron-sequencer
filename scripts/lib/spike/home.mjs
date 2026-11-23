@@ -68,27 +68,64 @@ export function writeAtomic(path, text, { rename = renameSync } = {}) {
 
 export const writeJsonAtomic = (path, value) => writeAtomic(path, `${JSON.stringify(value, null, 2)}\n`);
 
-export function acquireLock(dir, { pid = process.pid } = {}) {
-  mkdirSync(dir, { recursive: true });
-  const path = join(dir, LOCK_FILE);
-  let fd;
+const pause = ms => new Promise(r => setTimeout(r, ms));
+
+function readHolder(path) {
   try {
-    fd = openSync(path, 'wx');
+    return readFileSync(path, 'utf8').trim();
   } catch (e) {
-    if (e.code !== 'EEXIST') throw e;
-    const holder = readFileSync(path, 'utf8').trim() || 'unknown';
-    throw new Error(`the run is locked by pid ${holder}: remove ${path} only if that process is gone`);
+    if (e.code === 'ENOENT') return null;
+    throw e;
   }
-  try {
-    writeSync(fd, `${pid}\n`);
-  } finally {
-    closeSync(fd);
-  }
-  return () => rmSync(path, { force: true });
 }
 
-export async function withLock(dir, fn) {
-  const release = acquireLock(dir);
+// An empty or unparsable pid is a holder still writing its lock, so it counts as alive. EPERM is a live process of another user.
+function holderAlive(holder, isAlive) {
+  const pid = Number(holder);
+  if (!Number.isInteger(pid) || pid <= 0) return true;
+  try {
+    return isAlive(pid) !== false;
+  } catch (e) {
+    return e.code !== 'ESRCH';
+  }
+}
+
+// Read again just before removing, so a waiter that lost the race to another taker does not remove the new holder's lock.
+function removeDeadLock(path, holder) {
+  if (readHolder(path) === holder) rmSync(path, { force: true });
+}
+
+export async function acquireLock(dir, { pid = process.pid, waitMs = 30_000, pollMs = 100, isAlive = p => process.kill(p, 0) } = {}) {
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, LOCK_FILE);
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    let fd;
+    try {
+      fd = openSync(path, 'wx');
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      const holder = readHolder(path);
+      if (holder === null) continue;
+      if (!holderAlive(holder, isAlive)) {
+        removeDeadLock(path, holder);
+        continue;
+      }
+      if (Date.now() >= deadline) throw new Error(`the run is locked by pid ${holder || 'unknown'}: remove ${path} only if that process is gone`);
+      await pause(pollMs);
+      continue;
+    }
+    try {
+      writeSync(fd, `${pid}\n`);
+    } finally {
+      closeSync(fd);
+    }
+    return () => rmSync(path, { force: true });
+  }
+}
+
+export async function withLock(dir, fn, options) {
+  const release = await acquireLock(dir, options);
   try {
     return await fn();
   } finally {
