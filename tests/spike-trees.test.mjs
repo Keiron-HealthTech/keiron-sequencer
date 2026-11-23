@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { run } from '../scripts/spike.mjs';
 import { gitRunner } from '../scripts/lib/spike/exec.mjs';
 import { snapshot } from '../scripts/lib/spike/snapshot.mjs';
+import { upgradeState } from '../scripts/lib/spike/state.mjs';
 import { guardTree, openTree, teardownTrees, touchedCheckouts } from '../scripts/lib/spike/trees.mjs';
 import { makeBareOrigin, makeRepo, SANDBOX_ENV, sandboxGit, tempDir } from './helpers/git-sandbox.mjs';
 import { guardNetwork } from './helpers/no-network.mjs';
@@ -50,11 +51,11 @@ const worktrees = cwd => sandboxGit(['worktree', 'list', '--porcelain'], { cwd }
 test('a checkout with a remote gets a detached worktree at the fetched remote tip, not the stale local branch', () => {
   const { checkout, userTip, originTip } = remoteRepo();
   const dir = runDirFor();
-  const state = { repos: {} };
-  const repo = openTree(git, state, { repoDir: 'backend', repo: repoConfig({ checkout }), dir });
+  const state = { tracks: { t1: { repos: {} } } };
+  const repo = openTree(git, state, { trackId: 't1', repoDir: 'backend', repo: repoConfig({ checkout }), dir });
 
-  assert.equal(repo.path, join(dir, 'trees', 'backend'));
-  assert.deepEqual(state.repos.backend, repo);
+  assert.equal(repo.path, join(dir, 'trees', 't1', 'backend'));
+  assert.deepEqual(state.tracks.t1.repos.backend, repo);
   assert.equal(repo.kind, 'worktree');
   assert.equal(repo.source, checkout);
   assert.equal(repo.createdBySpike, true);
@@ -71,14 +72,14 @@ test('a checkout with a remote gets a detached worktree at the fetched remote ti
 
 test('defaultBranch null resolves through the remote HEAD symbolic ref', () => {
   const { checkout, originTip } = remoteRepo({ branch: 'trunk' });
-  const repo = openTree(git, { repos: {} }, { repoDir: 'backend', repo: repoConfig({ checkout, defaultBranch: null }), dir: runDirFor() });
+  const repo = openTree(git, { tracks: { t1: { repos: {} } } }, { trackId: 't1', repoDir: 'backend', repo: repoConfig({ checkout, defaultBranch: null }), dir: runDirFor() });
   assert.equal(repo.baseCommit, originTip);
 });
 
 test('a checkout with remote null is based on its local branch tip, with no fetch', () => {
   const { checkout, userTip } = remoteRepo();
   const before = refs(checkout);
-  const repo = openTree(git, { repos: {} }, { repoDir: 'backend', repo: repoConfig({ checkout, remote: null }), dir: runDirFor() });
+  const repo = openTree(git, { tracks: { t1: { repos: {} } } }, { trackId: 't1', repoDir: 'backend', repo: repoConfig({ checkout, remote: null }), dir: runDirFor() });
   assert.equal(repo.baseCommit, userTip);
   assert.equal(refs(checkout), before);
 });
@@ -87,10 +88,10 @@ test('a url repo gets a scratch clone with a detached HEAD at the default branch
   const { origin, originTip } = remoteRepo();
   const before = refs(origin.dir);
   const dir = runDirFor();
-  const repo = openTree(git, { repos: {} }, { repoDir: 'web', repo: repoConfig({ url: origin.dir }), dir });
+  const repo = openTree(git, { tracks: { t1: { repos: {} } } }, { trackId: 't1', repoDir: 'web', repo: repoConfig({ url: origin.dir }), dir });
   assert.equal(repo.kind, 'clone');
   assert.equal(repo.source, origin.dir);
-  assert.equal(repo.path, join(dir, 'trees', 'web'));
+  assert.equal(repo.path, join(dir, 'trees', 't1', 'web'));
   assert.equal(repo.baseCommit, originTip);
   assert.equal(sandboxGit(['rev-parse', '--symbolic-full-name', 'HEAD'], { cwd: repo.path }).trim(), 'HEAD');
   assert.equal(sandboxGit(['rev-parse', 'HEAD'], { cwd: repo.path }).trim(), originTip);
@@ -99,7 +100,7 @@ test('a url repo gets a scratch clone with a detached HEAD at the default branch
 
 test('a url repo with defaultBranch null is cloned at the remote HEAD branch as origin, whatever remote name the config gives, and that remote gets the blocked pushurl', () => {
   const { origin, originTip } = remoteRepo({ branch: 'trunk' });
-  const repo = openTree(git, { repos: {} }, { repoDir: 'web', repo: repoConfig({ url: origin.dir, defaultBranch: null, remote: 'upstream' }), dir: runDirFor() });
+  const repo = openTree(git, { tracks: { t1: { repos: {} } } }, { trackId: 't1', repoDir: 'web', repo: repoConfig({ url: origin.dir, defaultBranch: null, remote: 'upstream' }), dir: runDirFor() });
   assert.equal(repo.baseCommit, originTip);
   assert.equal(sandboxGit(['rev-parse', '--symbolic-full-name', 'HEAD'], { cwd: repo.path }).trim(), 'HEAD');
   assert.deepEqual(sandboxGit(['remote'], { cwd: repo.path }).split('\n').filter(Boolean), ['origin']);
@@ -109,10 +110,10 @@ test('a url repo with defaultBranch null is cloned at the remote HEAD branch as 
 test('opening a tree twice is idempotent: the second call returns the recorded tree and creates nothing', () => {
   const { checkout } = remoteRepo();
   const dir = runDirFor();
-  const state = { repos: {} };
-  const first = openTree(git, state, { repoDir: 'backend', repo: repoConfig({ checkout }), dir });
+  const state = { tracks: { t1: { repos: {} } } };
+  const first = openTree(git, state, { trackId: 't1', repoDir: 'backend', repo: repoConfig({ checkout }), dir });
   const snapshot = structuredClone(first);
-  const second = openTree(git, state, { repoDir: 'backend', repo: repoConfig({ checkout }), dir });
+  const second = openTree(git, state, { trackId: 't1', repoDir: 'backend', repo: repoConfig({ checkout }), dir });
   assert.equal(second, first);
   assert.deepEqual(second, snapshot);
   assert.equal(worktrees(checkout).length, 2);
@@ -126,8 +127,8 @@ test('tree opens only the repo it names: the other configured repo gets no tree'
   assert.equal(r.code, 0, r.stderr);
   const dir = join(home, SLUG, 'runs', runId);
   const state = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8'));
-  assert.deepEqual(Object.keys(state.repos), ['backend']);
-  assert.equal(existsSync(join(dir, 'trees', 'frontend')), false);
+  assert.deepEqual(Object.keys(state.tracks.t1.repos), ['backend']);
+  assert.equal(existsSync(join(dir, 'trees', 't1', 'frontend')), false);
   assert.equal(worktrees(other.dir).length, 1);
 });
 
@@ -206,8 +207,8 @@ test('a worktree carries its own push guard: a hand push to its remote or to a U
   const { checkout, origin } = remoteRepo();
   const before = localConfig(checkout);
   const dir = runDirFor();
-  const state = { repos: {} };
-  const repo = openTree(git, state, { repoDir: 'backend', repo: repoConfig({ checkout }), dir });
+  const state = { tracks: { t1: { repos: {} } } };
+  const repo = openTree(git, state, { trackId: 't1', repoDir: 'backend', repo: repoConfig({ checkout }), dir });
 
   pushFails(['origin', 'HEAD:refs/heads/spiked'], repo.path);
   pushFails([origin.dir, 'HEAD:refs/heads/spiked'], repo.path);
@@ -229,8 +230,8 @@ test('a checkout that already has extensions.worktreeConfig is not reported as t
   const { checkout } = remoteRepo();
   sandboxGit(['config', 'extensions.worktreeConfig', 'true'], { cwd: checkout });
   const before = localConfig(checkout);
-  const state = { repos: {} };
-  const repo = openTree(git, state, { repoDir: 'backend', repo: repoConfig({ checkout }), dir: runDirFor() });
+  const state = { tracks: { t1: { repos: {} } } };
+  const repo = openTree(git, state, { trackId: 't1', repoDir: 'backend', repo: repoConfig({ checkout }), dir: runDirFor() });
   assert.equal(repo.worktreeConfigSet, false);
   assert.deepEqual(touchedCheckouts(state), []);
   assert.deepEqual(localConfig(checkout), before);
@@ -240,7 +241,7 @@ test('a scratch clone carries the hook and pushurl in its own config, and its so
   const { origin } = remoteRepo();
   const before = localConfig(origin.dir);
   const dir = runDirFor();
-  const repo = openTree(git, { repos: {} }, { repoDir: 'web', repo: repoConfig({ url: origin.dir }), dir });
+  const repo = openTree(git, { tracks: { t1: { repos: {} } } }, { trackId: 't1', repoDir: 'web', repo: repoConfig({ url: origin.dir }), dir });
   pushFails(['origin', 'HEAD:refs/heads/spiked'], repo.path);
   pushFails([origin.dir, 'HEAD:refs/heads/spiked'], repo.path);
   assert.equal(sandboxGit(['config', '--local', '--get', 'remote.origin.pushurl'], { cwd: repo.path }).trim(), 'keiron-sequencer-no-push:///blocked');
@@ -251,7 +252,7 @@ test('a scratch clone carries the hook and pushurl in its own config, and its so
 
 test('the tree guard passes a clean detached tree and refuses a commit or an attached branch with exit 6, naming repo and path', () => {
   const { checkout } = remoteRepo();
-  const repo = openTree(git, { repos: {} }, { repoDir: 'backend', repo: repoConfig({ checkout }), dir: runDirFor() });
+  const repo = openTree(git, { tracks: { t1: { repos: {} } } }, { trackId: 't1', repoDir: 'backend', repo: repoConfig({ checkout }), dir: runDirFor() });
   guardTree(git, 'backend', repo);
   commitIn(repo.path, 'sneaky.txt', 'x\n');
   const refused = e => e.exitCode === 6 && e.message.includes('backend') && e.message.includes(repo.path);
@@ -342,15 +343,15 @@ test('a failing setup command stops the open with exit 1 naming repo, command an
   assert.match(r.stderr, /setup of backend failed: yarn build exited 1/);
   assert.deepEqual(failing.calls.map(c => c.argv.join(' ')), ['yarn install', 'yarn build']);
   const state = JSON.parse(readFileSync(join(home, SLUG, 'runs', runId, 'run.json'), 'utf8'));
-  assert.equal(state.repos.backend.status, 'setup');
-  assert.equal(state.repos.backend.baseTree, null);
-  assert.equal(state.repos.frontend, undefined);
+  assert.equal(state.tracks.t1.repos.backend.status, 'setup');
+  assert.equal(state.tracks.t1.repos.backend.baseTree, null);
+  assert.equal(state.tracks.t1.repos.frontend, undefined);
 
   const passing = recordingSetup();
   const retry = await run(['tree', 'backend'], { ...deps, runSetup: passing.run });
   assert.equal(retry.code, 0, retry.stderr);
   assert.deepEqual(passing.calls.map(c => c.argv.join(' ')), ['yarn install', 'yarn build', 'yarn lint']);
-  const opened = JSON.parse(readFileSync(join(home, SLUG, 'runs', runId, 'run.json'), 'utf8')).repos.backend;
+  const opened = JSON.parse(readFileSync(join(home, SLUG, 'runs', runId, 'run.json'), 'utf8')).tracks.t1.repos.backend;
   assert.equal(opened.status, 'open');
   assert.equal(opened.last, opened.baseTree);
 });
@@ -362,9 +363,9 @@ test('setup output goes to the repo log, not to stdout; a command that cannot ru
     if (argv[0] === 'slow') throw Object.assign(new Error('spawnSync slow ETIMEDOUT'), { code: 'ETIMEDOUT' });
     return { status: 0, stdout: 'installed 3 packages\n', stderr: 'warn: peer dep\n' };
   });
-  const state = { repos: {} };
+  const state = { tracks: { t1: { repos: {} } } };
   assert.throws(
-    () => openTree(git, state, { repoDir: 'backend', repo: repoConfig({ checkout, setup: [['npm', 'ci'], ['slow']] }), dir, runSetup: noisy.run }),
+    () => openTree(git, state, { trackId: 't1', repoDir: 'backend', repo: repoConfig({ checkout, setup: [['npm', 'ci'], ['slow']] }), dir, runSetup: noisy.run }),
     e => e.exitCode === 1 && e.setup.command.join(' ') === 'slow' && e.setup.exitCode === null && /ETIMEDOUT/.test(e.message),
   );
   const log = readFileSync(join(dir, 'logs', 'setup-backend.log'), 'utf8');
@@ -385,7 +386,7 @@ test('files a setup command leaves in the tree are part of the base tree, so no 
   at('2026-11-10T10:01:00.000Z');
   await run(['next'], deps);
   const tree = JSON.parse((await run(['tree', 'backend'], { ...deps, runSetup: generating.run })).stdout);
-  const repo = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')).repos.backend;
+  const repo = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')).tracks.t1.repos.backend;
   assert.notEqual(repo.baseTree, sandboxGit(['rev-parse', `${repo.baseCommit}^{tree}`], { cwd: tree.path }).trim());
   assert.ok(sandboxGit(['ls-tree', '--name-only', repo.baseTree], { cwd: tree.path }).split('\n').includes('generated.txt'));
 
@@ -450,7 +451,7 @@ test('completion removes the worktree and the scratch clone, keeps patches and r
   assert.ok(existsSync(join(fixture.dataDir, SLUG, 'CRM-1.json')));
   const state = stateOf(dir);
   assert.equal(state.status, 'complete');
-  assert.deepEqual(Object.values(state.repos).map(x => x.status), ['removed', 'removed']);
+  assert.deepEqual(Object.values(state.tracks.t1.repos).map(x => x.status), ['removed', 'removed']);
   assert.deepEqual([state.executions.at(-1).endReason, state.executions.at(-1).endedAt], ['complete', '2026-11-10T10:06:00.000Z']);
   assert.match((await run(['next'], fixture.deps)).stderr, /no active spike run/);
 });
@@ -475,11 +476,23 @@ test('teardown refuses a tree path that is a user checkout, lies outside the run
   for (const repo of [
     { ...made, path: user.dir },
     { ...made, path: join(dir, 'elsewhere', 'backend') },
-    { ...made, path: join(dir, 'trees', 'backend'), createdBySpike: false },
+    { ...made, path: join(dir, 'trees', 't1', 'backend'), createdBySpike: false },
   ]) {
-    assert.throws(() => teardownTrees(git, { repos: { backend: repo } }, { dir }), /refusing to delete/);
+    assert.throws(() => teardownTrees(git, { tracks: { t1: { repos: { backend: repo } } } }, { dir }), /refusing to delete/);
   }
   assert.ok(existsSync(join(user.dir, 'README.md')));
+});
+
+test('a tree a schema-1 run made at trees/<repoDir> is still torn down', () => {
+  const { checkout } = remoteRepo();
+  const dir = runDirFor();
+  const opened = openTree(git, { tracks: { t1: { repos: {} } } }, { trackId: 't1', repoDir: 'backend', repo: repoConfig({ checkout }), dir });
+  const legacy = join(dir, 'trees', 'backend');
+  sandboxGit(['worktree', 'move', opened.path, legacy], { cwd: checkout });
+  const state = upgradeState({ schemaVersion: 1, current: null, repos: { backend: { ...opened, path: legacy } } });
+  assert.deepEqual(teardownTrees(git, state, { dir }), [{ repo: 'backend', kind: 'worktree', path: legacy, prunePending: false }]);
+  assert.equal(existsSync(legacy), false);
+  assert.deepEqual(worktrees(checkout), [checkout]);
 });
 
 test('a worktree whose source checkout is gone is deleted and reported as worktree prune pending', async () => {
@@ -510,7 +523,7 @@ async function lastTreeLost(fixture) {
   assert.equal((await run(['end', 'CRM-1'], deps)).code, 0);
   at('2026-11-10T10:06:00.000Z');
   assert.equal(JSON.parse((await run(['next'], deps)).stdout).card, 'CRM-2');
-  const { last } = stateOf(dir).repos.backend;
+  const { last } = stateOf(dir).tracks.t1.repos.backend;
   rmSync(looseObject(fixture.repo.dir, last));
   assert.throws(() => sandboxGit(['cat-file', '-e', `${last}^{tree}`], { cwd: tree }));
   writeFileSync(join(tree, 'src', 'index.js'), 'export const one = 2\n');
@@ -573,7 +586,7 @@ function pullRepo() {
   return { ...r, pinned };
 }
 
-const respikeState = base => ({ repos: {}, plan: { respike: { bases: { backend: base } } } });
+const respikeState = base => ({ tracks: { t1: { repos: {} } }, plan: { respike: { bases: { backend: base } } } });
 const prBase = sha => ({ kind: 'pr', ref: 'refs/pull/7/head', sha, card: 'CRM-7', heads: null, tree: null, behind: null });
 const userView = checkout => [sandboxGit(['rev-parse', 'HEAD'], { cwd: checkout }), sandboxGit(['for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads', 'refs/tags'], { cwd: checkout })];
 
@@ -582,7 +595,7 @@ test('a pinned PR base opens a worktree detached at the pin after fetching the P
   const before = userView(checkout);
   const dir = runDirFor();
   const state = respikeState(prBase(pinned));
-  const repo = openTree(git, state, { repoDir: 'backend', repo: repoConfig({ checkout }), dir });
+  const repo = openTree(git, state, { trackId: 't1', repoDir: 'backend', repo: repoConfig({ checkout }), dir });
   assert.equal(repo.baseCommit, pinned);
   assert.equal(sandboxGit(['rev-parse', 'HEAD'], { cwd: repo.path }).trim(), pinned);
   assert.equal(sandboxGit(['rev-parse', '--symbolic-full-name', 'HEAD'], { cwd: repo.path }).trim(), 'HEAD');
@@ -600,7 +613,7 @@ test('a PR head that moved on after the plan still opens at the pinned commit', 
   const moved = commitIn(seed.dir, 'pr.txt', 'moved on\n');
   sandboxGit(['push', '-q', '-f', origin.dir, 'HEAD:refs/pull/7/head'], { cwd: seed.dir });
   assert.notEqual(moved, pinned);
-  const repo = openTree(git, respikeState(prBase(pinned)), { repoDir: 'backend', repo: repoConfig({ checkout }), dir: runDirFor() });
+  const repo = openTree(git, respikeState(prBase(pinned)), { trackId: 't1', repoDir: 'backend', repo: repoConfig({ checkout }), dir: runDirFor() });
   assert.equal(sandboxGit(['rev-parse', 'HEAD'], { cwd: repo.path }).trim(), pinned);
   assert.equal(readFileSync(join(repo.path, 'pr.txt'), 'utf8'), 'from the pr\n');
 });
@@ -611,12 +624,12 @@ test('a pinned base that is not reachable after the fetch refuses with exit 1 na
   const dir = runDirFor();
   const state = respikeState(prBase(gone));
   const before = worktrees(checkout);
-  assert.throws(() => openTree(git, state, { repoDir: 'backend', repo: repoConfig({ checkout }), dir }), e => {
+  assert.throws(() => openTree(git, state, { trackId: 't1', repoDir: 'backend', repo: repoConfig({ checkout }), dir }), e => {
     assert.equal(e.exitCode, 1);
     assert.match(e.message, new RegExp(`pinned base ${gone} for backend is gone`));
     return true;
   });
-  assert.deepEqual(state.repos, {});
+  assert.deepEqual(state.tracks.t1.repos, {});
   assert.equal(existsSync(join(dir, 'trees')), false);
   assert.deepEqual(worktrees(checkout), before);
   assert.equal(sandboxGit(['config', '--type=bool', '--default=false', '--get', 'extensions.worktreeConfig'], { cwd: checkout }).trim(), 'false');
@@ -632,7 +645,7 @@ test('a local branch base is a worktree detached at its pinned commit, with no f
   const calls = [];
   const recording = (args, opts) => { calls.push(args[0]); return git(args, opts); };
   const state = respikeState({ kind: 'local', ref: 'crm-8-local', sha: pinned, card: 'CRM-8', heads: null, tree: null, behind: null });
-  const repo = openTree(recording, state, { repoDir: 'backend', repo: repoConfig({ checkout }), dir: runDirFor() });
+  const repo = openTree(recording, state, { trackId: 't1', repoDir: 'backend', repo: repoConfig({ checkout }), dir: runDirFor() });
   assert.equal(sandboxGit(['rev-parse', 'HEAD'], { cwd: repo.path }).trim(), pinned);
   assert.equal(existsSync(join(repo.path, 'later.txt')), false);
   assert.equal(calls.includes('fetch'), false);
@@ -643,7 +656,7 @@ test('a local branch base is a worktree detached at its pinned commit, with no f
 test('a default base in a respike plan opens at the fetched default branch tip, as a plain run does', () => {
   const { checkout, originTip } = remoteRepo();
   const state = respikeState({ kind: 'default', ref: 'origin/main', sha: null, card: null, heads: null, tree: null, behind: null });
-  const repo = openTree(git, state, { repoDir: 'backend', repo: repoConfig({ checkout }), dir: runDirFor() });
+  const repo = openTree(git, state, { trackId: 't1', repoDir: 'backend', repo: repoConfig({ checkout }), dir: runDirFor() });
   assert.equal(repo.baseCommit, originTip);
 });
 
@@ -673,7 +686,7 @@ test('a combine base opens detached at the first head with the pinned heads comb
   const { checkout, h1, h2, tree, base } = divergedPulls();
   const before = userRefs(checkout);
   const state = respikeState(base);
-  const repo = openTree(git, state, { repoDir: 'backend', repo: repoConfig({ checkout }), dir: runDirFor() });
+  const repo = openTree(git, state, { trackId: 't1', repoDir: 'backend', repo: repoConfig({ checkout }), dir: runDirFor() });
   assert.equal(repo.baseCommit, h1);
   assert.deepEqual(repo.combine, { heads: [{ card: 'CRM-7', sha: h1 }, { card: 'CRM-8', sha: h2 }], tree });
   assert.equal(repo.baseTree, tree);
@@ -695,14 +708,14 @@ test('a combined tree that differs from the pinned one refuses with exit 1 namin
   const before = worktrees(checkout);
   const dir = runDirFor();
   const state = respikeState({ ...base, tree: seed.git(['rev-parse', `${base.heads[0].sha}^{tree}`]).trim() });
-  assert.throws(() => openTree(git, state, { repoDir: 'backend', repo: repoConfig({ checkout }), dir }), e => {
+  assert.throws(() => openTree(git, state, { trackId: 't1', repoDir: 'backend', repo: repoConfig({ checkout }), dir }), e => {
     assert.equal(e.exitCode, 1);
     assert.match(e.message, /combined base for backend differs from the approved plan/);
     return true;
   });
-  assert.deepEqual(state.repos, {});
+  assert.deepEqual(state.tracks.t1.repos, {});
   assert.deepEqual(worktrees(checkout), before);
-  assert.equal(existsSync(join(dir, 'trees', 'backend')), false);
+  assert.equal(existsSync(join(dir, 'trees', 't1', 'backend')), false);
 });
 
 test('when moving the new worktree onto the combined tree fails, the worktree is removed before the error is rethrown', () => {
@@ -713,9 +726,9 @@ test('when moving the new worktree onto the combined tree fails, the worktree is
     if (args[0] === 'read-tree') throw new Error('git read-tree failed (128): simulated');
     return git(args, opts);
   };
-  assert.throws(() => openTree(failing, respikeState(base), { repoDir: 'backend', repo: repoConfig({ checkout }), dir }), /simulated/);
+  assert.throws(() => openTree(failing, respikeState(base), { trackId: 't1', repoDir: 'backend', repo: repoConfig({ checkout }), dir }), /simulated/);
   assert.deepEqual(worktrees(checkout), before);
-  assert.equal(existsSync(join(dir, 'trees', 'backend')), false);
+  assert.equal(existsSync(join(dir, 'trees', 't1', 'backend')), false);
 });
 
 test('a combine tree whose setup failed is retried with the combined files in place', () => {
@@ -724,11 +737,11 @@ test('a combine tree whose setup failed is retried with the combined files in pl
   const state = respikeState(base);
   const config = repoConfig({ checkout, setup: [['make', 'deps']] });
   const failing = () => ({ status: 1, stdout: '', stderr: '' });
-  assert.throws(() => openTree(git, state, { repoDir: 'backend', repo: config, dir, runSetup: failing }), e => Boolean(e.setup));
-  assert.equal(state.repos.backend.status, 'setup');
+  assert.throws(() => openTree(git, state, { trackId: 't1', repoDir: 'backend', repo: config, dir, runSetup: failing }), e => Boolean(e.setup));
+  assert.equal(state.tracks.t1.repos.backend.status, 'setup');
   const seen = [];
   const passing = (argv, { cwd }) => { seen.push(existsSync(join(cwd, 'eight.txt'))); return { status: 0, stdout: '', stderr: '' }; };
-  const repo = openTree(git, state, { repoDir: 'backend', repo: config, dir, runSetup: passing });
+  const repo = openTree(git, state, { trackId: 't1', repoDir: 'backend', repo: config, dir, runSetup: passing });
   assert.deepEqual(seen, [true]);
   assert.equal(repo.status, 'open');
   assert.equal(repo.baseTree, tree);
@@ -738,12 +751,12 @@ test('a respike run refuses a tree for a url-only repo with exit 1, telling the 
   const { origin } = remoteRepo();
   const dir = runDirFor();
   const state = respikeState({ kind: 'default', ref: 'origin/main', sha: null, card: null, heads: null, tree: null, behind: null });
-  assert.throws(() => openTree(git, state, { repoDir: 'web', repo: repoConfig({ url: origin.dir }), dir }), e => {
+  assert.throws(() => openTree(git, state, { trackId: 't1', repoDir: 'web', repo: repoConfig({ url: origin.dir }), dir }), e => {
     assert.equal(e.exitCode, 1);
     assert.match(e.message, /^web has no local checkout; .*Configure `checkout` instead of `url`/);
     return true;
   });
-  assert.deepEqual(state.repos, {});
+  assert.deepEqual(state.tracks.t1.repos, {});
   assert.equal(existsSync(join(dir, 'trees')), false);
 });
 
@@ -767,6 +780,6 @@ test('tree in a respike run refuses a url-only repo and run.json gains no entry 
   const r = await run(['tree', 'web'], fixture.deps);
   assert.equal(r.code, 1);
   assert.match(r.stderr, /web has no local checkout/);
-  assert.equal(Object.hasOwn(JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')).repos, 'web'), false);
-  assert.equal(existsSync(join(dir, 'trees', 'web')), false);
+  assert.equal(Object.hasOwn(JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')).tracks.t1.repos, 'web'), false);
+  assert.equal(existsSync(join(dir, 'trees', 't1', 'web')), false);
 });

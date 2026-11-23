@@ -40,7 +40,7 @@ test('pause ends the execution mid-card and keeps the trees; the card resumes in
   const state = stateIn(runDirOf(fixture, runId));
   assert.equal(state.status, 'paused');
   assert.deepEqual([state.executions[0].endReason, state.executions[0].endedAt], ['paused', '2026-11-10T10:03:00.000Z']);
-  assert.equal(state.current, null);
+  assert.equal(state.tracks.t1.current, null);
   assert.equal(state.cards['CRM-1'].status, 'in-progress');
   const [window] = state.cards['CRM-1'].windows;
   assert.deepEqual([window.end, window.endReason, window.w], ['2026-11-10T10:03:00.000Z', 'paused', 25]);
@@ -59,7 +59,7 @@ test('abandon tears the trees down, marks the run abandoned and keeps its patche
   const fixture = fixtureOf(2);
   const runId = await begin(fixture);
   const { dir } = await playCard(fixture, 'CRM-1', { start: '2026-11-10T10:01:00.000Z', end: '2026-11-10T10:05:00.000Z' });
-  const tree = stateIn(dir).repos.backend.path;
+  const tree = stateIn(dir).tracks.t1.repos.backend.path;
   fixture.at('2026-11-10T10:06:00.000Z');
   const r = await call(fixture, ['abandon']);
   assert.equal(r.code, 0, r.stderr);
@@ -100,7 +100,7 @@ test('abandon refuses unsnapshotted work unless --discard is given, and then rem
   assert.equal(discarded.code, 0, discarded.stderr);
   assert.equal(existsSync(tree), false);
   const state = stateIn(dir);
-  assert.deepEqual([state.status, state.current, state.cards['CRM-1'].windows[0].endReason], ['abandoned', null, 'abandoned']);
+  assert.deepEqual([state.status, state.tracks.t1.current, state.cards['CRM-1'].windows[0].endReason], ['abandoned', null, 'abandoned']);
 });
 
 test('abandon removes a tree whose setup failed, and never deletes a path the spike did not make', async () => {
@@ -113,23 +113,23 @@ test('abandon removes a tree whose setup failed, and never deletes a path the sp
   const failed = await run(['tree', 'backend'], { ...fixture.deps, runSetup: fakeSetup({ 'make deps': 2 }).run });
   assert.equal(failed.code, 1);
   const dir = runDirOf(fixture, runId);
-  const { path } = stateIn(dir).repos.backend;
-  assert.equal(stateIn(dir).repos.backend.status, 'setup');
+  const { path } = stateIn(dir).tracks.t1.repos.backend;
+  assert.equal(stateIn(dir).tracks.t1.repos.backend.status, 'setup');
 
   const foreign = stateIn(dir);
-  foreign.repos.backend.path = fixture.repo.dir;
+  foreign.tracks.t1.repos.backend.path = fixture.repo.dir;
   writeFileSync(join(dir, 'run.json'), JSON.stringify(foreign));
   const refused = await call(fixture, ['abandon', '--discard']);
   assert.equal(refused.code, 1);
   assert.match(refused.stderr, /refusing to delete/);
   assert.ok(existsSync(join(fixture.repo.dir, 'README.md')));
 
-  foreign.repos.backend.path = path;
+  foreign.tracks.t1.repos.backend.path = path;
   writeFileSync(join(dir, 'run.json'), JSON.stringify(foreign));
   const r = await call(fixture, ['abandon', '--discard']);
   assert.equal(r.code, 0, r.stderr);
   assert.equal(existsSync(path), false);
-  assert.equal(stateIn(dir).repos.backend.status, 'removed');
+  assert.equal(stateIn(dir).tracks.t1.repos.backend.status, 'removed');
   assert.deepEqual(readdirSync(join(fixture.home, SLUG, 'runs')), [runId]);
 });
 
@@ -164,8 +164,8 @@ test('abandon mid-card completes when the session file is gone, leaving the run 
   assert.equal(r.code, 0, r.stderr);
   const state = stateIn(runDirOf(fixture, runId));
   assert.equal(state.status, 'abandoned');
-  assert.equal(state.current, null);
-  assert.ok(Object.values(state.repos).every(x => x.status === 'removed'));
+  assert.equal(state.tracks.t1.current, null);
+  assert.ok(Object.values(state.tracks.t1.repos).every(x => x.status === 'removed'));
   assert.equal(existsSync(tree), false);
 });
 
@@ -181,7 +181,7 @@ test('a run left with its trees deleted and its state open can be abandoned agai
   assert.equal(r.code, 0, r.stderr);
   const state = stateIn(runDirOf(fixture, runId));
   assert.equal(state.status, 'abandoned');
-  assert.ok(Object.values(state.repos).every(x => x.status === 'removed'));
+  assert.ok(Object.values(state.tracks.t1.repos).every(x => x.status === 'removed'));
 });
 
 test('abandoning a respike run after one clean replay keeps its run dir, since the replayed record references it, and prune keeps it', async () => {

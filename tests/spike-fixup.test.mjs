@@ -74,7 +74,7 @@ test('fixup snapshots only its paths, regenerates the fixed card\'s record with 
 
   const state = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8'));
   assert.deepEqual(state.fixups.map(f => [f.patch, f.from, f.fixed, f.note]), [[patch, 'CRM-3', ['CRM-1'], NOTE]]);
-  assert.deepEqual(state.repos.backend.log.map(e => e.name), ['00001-new', '00002-new', 'fixup-1-from-3-readme-wording', '00003-new']);
+  assert.deepEqual(state.tracks.t1.repos.backend.log.map(e => e.name), ['00001-new', '00002-new', 'fixup-1-from-3-readme-wording', '00003-new']);
 });
 
 test('one fixup may fix several done cards: each fixed record gains it', async () => {
@@ -158,7 +158,7 @@ test('a fixup patch is scanned for secrets: a hit exits 4 and writes nothing, an
 
 test('one fixup of a replayed card and a spiked card appends to the first record and rebuilds the second from its notes', async () => {
   const C = 'CRM-5';
-  const f = R.respikeFixture({ issues: ([a, b]) => [a, b, R.issue(C)] });
+  const f = R.respikeFixture({ issues: ([a, b]) => [a, { ...b, relations: { nodes: [{ type: 'blocks', relatedIssue: { identifier: C } }] } }, R.issue(C)] });
   const pick = [R.PROJECT_URL, '--cards', `${R.B},${C}`];
   const plan = JSON.parse((await f.run('preflight', pick)).stdout);
   f.at('2026-11-10T10:01:00.000Z');

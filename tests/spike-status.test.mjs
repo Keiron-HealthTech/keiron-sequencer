@@ -41,7 +41,7 @@ test('status shows the run, the execution, the current card\'s live spend agains
     },
     current: { card: 'CRM-2', startedAt: '2026-11-10T10:06:00.000Z', box: 100, spent: 90, over: false },
     cards: { done: ['CRM-1'], inProgress: ['CRM-2'], pending: [] },
-    trees: [{ repo: 'backend', kind: 'worktree', status: 'open', path: join(dir, 'trees', 'backend') }],
+    trees: [{ repo: 'backend', kind: 'worktree', status: 'open', path: join(dir, 'trees', 't1', 'backend') }],
     unsettled: [],
   });
   assert.deepEqual(everything(fixture), before);
@@ -63,7 +63,7 @@ test('status lists a tree whose setup failed and says unmeasured, never 0, witho
   const out = JSON.parse((await run(['status'], fixture.deps)).stdout);
   assert.deepEqual(out.current, { card: 'CRM-1', startedAt: '2026-11-10T10:01:00.000Z', box: 100, spent: 'unmeasured' });
   assert.deepEqual(out.execution.spent, { cards: 0, tokens: 'unmeasured' });
-  assert.deepEqual(out.trees, [{ repo: 'frontend', kind: 'worktree', status: 'setup', path: join(dir, 'trees', 'frontend') }]);
+  assert.deepEqual(out.trees, [{ repo: 'frontend', kind: 'worktree', status: 'setup', path: join(dir, 'trees', 't1', 'frontend') }]);
   assert.deepEqual(everything(fixture), before);
 });
 

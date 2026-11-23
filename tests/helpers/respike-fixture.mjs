@@ -98,7 +98,7 @@ function writeOldRun(home, dataDir) {
   const plan = { fetchedAt: '2026-11-01T10:00:00.000Z', order: [A, B], skipped: [], cards: { [A]: card(A, 1), [B]: card(B, 2) } };
   const state = createRun({ runId: OLD_RUN, project, plan, home, dataDir, now: new Date('2026-11-01T10:00:00.000Z') });
   state.status = 'complete';
-  state.repos.backend = { name: 'backend-repo', kind: 'worktree', status: 'removed', log: [{ name: '00001-new' }] };
+  state.tracks.t1.repos.backend = { name: 'backend-repo', kind: 'worktree', status: 'removed', log: [{ name: '00001-new' }] };
   state.cards[A] = { ...state.cards[A], status: 'done', patches: [PATCH_A] };
   state.cards[B] = { ...state.cards[B], status: 'done', patches: [] };
   writeJsonAtomic(join(runDir(home, SLUG, OLD_RUN), 'run.json'), state);

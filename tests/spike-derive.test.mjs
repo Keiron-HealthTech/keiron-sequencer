@@ -101,7 +101,7 @@ test('end records risk areas and novelty from the card\'s start tree, so a dir a
   assert.equal(verdict(second, 'S'), 'Light');
 
   const state = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8'));
-  assert.equal(state.cards['CRM-2'].startTrees.backend, state.repos.backend.log[0].tree);
+  assert.equal(state.cards['CRM-2'].startTrees.backend, state.tracks.t1.repos.backend.log[0].tree);
   assert.deepEqual(state.cards['CRM-2'].newPaths, ['backend/db/']);
 });
 

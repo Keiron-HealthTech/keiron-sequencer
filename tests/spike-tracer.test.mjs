@@ -44,7 +44,7 @@ test('begin, next, tree, end on one card in a temp repo write one patch to the h
 
   at('2026-11-10T10:01:30.000Z');
   const tree = await call(['tree', 'backend']);
-  assert.equal(tree.path, join(runDir, 'trees', 'backend'));
+  assert.equal(tree.path, join(runDir, 'trees', 't1', 'backend'));
   assert.equal(sandboxGit(['rev-parse', 'HEAD'], { cwd: tree.path }).trim(), baseCommit);
 
   writeFileSync(join(tree.path, 'README.md'), '# sandbox\nspiked\n');

@@ -69,7 +69,7 @@ test('a respike after a completed run replays the unbuilt ancestor, re-spikes th
 
   const fresh = readFileSync(join(runDir, 'patches', PATCH_A), 'utf8');
   assert.match(fresh, /^\+line5 from A$/m);
-  const treePath = join(runDir, 'trees', 'backend');
+  const treePath = join(runDir, 'trees', 't1', 'backend');
   assert.match(readFileSync(join(treePath, 'src', 'list.js'), 'utf8'), /^line3 from main\n[^]*^line5 from A$/m);
   const oldA = JSON.parse(recordA);
   const textA = readFileSync(join(f.dataDir, SLUG, `${A}.json`), 'utf8');
@@ -234,9 +234,9 @@ test('on a combine of two diverged open PRs, next replays two ancestors and turn
   assert.equal(out.card, K);
   assert.deepEqual(out.replayConflict, { repos: ['backend'], patch: PATCH_K, reason: 'conflict', unmerged: ['src/list.js'] });
   const state = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8'));
-  assert.deepEqual(state.repos.backend.combine, { heads: [{ card: P1, sha: f.heads[0] }, { card: P2, sha: f.heads[1] }], tree: plan.bases.backend.tree });
-  assert.equal(state.repos.backend.baseCommit, f.heads[0]);
-  const treePath = state.repos.backend.path;
+  assert.deepEqual(state.tracks.t1.repos.backend.combine, { heads: [{ card: P1, sha: f.heads[0] }, { card: P2, sha: f.heads[1] }], tree: plan.bases.backend.tree });
+  assert.equal(state.tracks.t1.repos.backend.baseCommit, f.heads[0]);
+  const treePath = state.tracks.t1.repos.backend.path;
   assert.match(readFileSync(join(treePath, 'src', 'list.js'), 'utf8'), /^line3 from main\n[^]*^line5 from A\n[^]*^line8 from P1$/m);
   assert.equal(readFileSync(join(treePath, 'p2.txt'), 'utf8'), 'from P2\n');
 

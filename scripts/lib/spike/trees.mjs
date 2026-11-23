@@ -1,7 +1,8 @@
 import { appendFileSync, chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { exitError } from '../cli.mjs';
 import { combineTree } from './combine.mjs';
+import { allRepos } from './state.mjs';
 
 export const NO_PUSH_URL = 'keiron-sequencer-no-push:///blocked';
 const PRE_PUSH = '#!/bin/sh\necho "keiron-sequencer: a spike tree never pushes" >&2\nexit 1\n';
@@ -91,7 +92,7 @@ function createWorktree(git, repoDir, repo, path, dir, base) {
 }
 
 function createClone(git, repo, path, dir) {
-  mkdirSync(join(dir, 'trees'), { recursive: true });
+  mkdirSync(dirname(path), { recursive: true });
   git(['clone', '-q', ...(repo.defaultBranch ? ['--branch', repo.defaultBranch] : []), repo.url, path], { cwd: dir });
   git(['checkout', '-q', '--detach'], { cwd: path });
   installPushGuard(git, path, dir, ['--local']);
@@ -119,29 +120,30 @@ function runSetupCommands(runSetup, repoDir, repo, path, dir) {
 }
 
 // A tree whose setup failed stays recorded with status "setup": it is spike-made, and the next open retries its setup.
-export function openTree(git, state, { repoDir, repo, dir, runSetup }) {
-  const known = state.repos[repoDir];
+export function openTree(git, state, { trackId, repoDir, repo, dir, runSetup }) {
+  const { repos } = state.tracks[trackId];
+  const known = repos[repoDir];
   if (known && known.status !== 'setup') return known;
-  const path = join(dir, 'trees', repoDir);
+  const path = known?.path ?? join(dir, 'trees', trackId, repoDir);
   if (!known) {
     if (state.plan?.respike && !repo.checkout) {
       throw exitError(1, `${repoDir} has no local checkout; a respike run opens trees only in checkouts. Configure \`checkout\` instead of \`url\` for it, then run tree again`);
     }
     const base = state.plan?.respike?.bases?.[repoDir];
     const made = repo.checkout ? createWorktree(git, repoDir, repo, path, dir, base) : createClone(git, repo, path, dir);
-    state.repos[repoDir] = {
+    repos[repoDir] = {
       name: repo.name, kind: made.kind, source: made.source, path, createdBySpike: true, worktreeConfigSet: made.worktreeConfigSet,
       baseCommit: made.baseCommit, ...(made.combine ? { combine: made.combine } : {}), baseTree: null, last: null, log: [], status: 'setup',
     };
   }
-  const record = state.repos[repoDir];
+  const record = repos[repoDir];
   runSetupCommands(runSetup, repoDir, repo, path, dir);
   git(['add', '-A'], { cwd: path });
   const baseTree = git(['write-tree'], { cwd: path }).trim();
   return Object.assign(record, { baseTree, last: baseTree, status: 'open' });
 }
 
-export const touchedCheckouts = state => Object.entries(state.repos)
+export const touchedCheckouts = state => allRepos(state)
   .filter(([, r]) => r.worktreeConfigSet)
   .map(([repo, r]) => ({ repo, checkout: r.source }));
 
@@ -194,9 +196,10 @@ export function rebuildTree(git, repoDir, repo, { dir, patchRoot }) {
 
 const sourceGone = repo => repo.kind === 'worktree' && !existsSync(repo.source);
 
-function refuseForeign(repoDir, repo, dir) {
-  const expected = join(resolve(dir), 'trees', repoDir);
-  if (repo.createdBySpike !== true || resolve(repo.path) !== expected) {
+// A tree made before tracks sits at trees/<repoDir>.
+function refuseForeign(trackId, repoDir, repo, dir) {
+  const expected = join(resolve(dir), 'trees', trackId, repoDir);
+  if (repo.createdBySpike !== true || ![expected, join(resolve(dir), 'trees', repoDir)].includes(resolve(repo.path))) {
     throw new Error(`refusing to delete ${repo.path} for ${repoDir}: only ${expected}, created by this run, is ever removed`);
   }
 }
@@ -211,15 +214,16 @@ function refuseUnsnapshotted(git, repoDir, repo, advice) {
 // Every tree is checked before any is removed, so a refusal removes nothing. discard drops unsnapshotted work;
 // the other refusals still hold.
 export function teardownTrees(git, state, { dir, discard = false, advice = 'end the card that made it, or keep the run' }) {
-  const live = Object.entries(state.repos).filter(([, r]) => r.status !== 'removed');
-  for (const [repoDir, repo] of live) {
-    refuseForeign(repoDir, repo, dir);
+  const live = Object.entries(state.tracks).flatMap(([trackId, t]) => Object.entries(t.repos).map(([repoDir, repo]) => [trackId, repoDir, repo]))
+    .filter(([, , r]) => r.status !== 'removed');
+  for (const [trackId, repoDir, repo] of live) {
+    refuseForeign(trackId, repoDir, repo, dir);
     if (sourceGone(repo) || !existsSync(repo.path)) continue;
     guardTree(git, repoDir, repo);
     if (!discard) refuseUnsnapshotted(git, repoDir, repo, advice);
   }
   const removed = [];
-  for (const [repoDir, repo] of live) {
+  for (const [, repoDir, repo] of live) {
     const prunePending = sourceGone(repo);
     if (repo.kind === 'worktree' && !prunePending) {
       if (existsSync(repo.path)) git(['worktree', 'remove', '--force', repo.path], { cwd: repo.source });

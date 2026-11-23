@@ -22,7 +22,7 @@ function homeWith(runs, { slug = 'p1', home = tempDir('keiron-sequencer-prune-')
     const plan = { fetchedAt: NOW.toISOString(), order: [], skipped: [], cards: {} };
     const state = createRun({ runId, project: { id: 'x', slug, name: 'P', url: 'u' }, plan, home, dataDir: '/data', now: NOW });
     state.status = status;
-    if (trees) state.repos.backend = { path: join(runDir(home, slug, runId), 'trees', 'backend'), status: 'open' };
+    if (trees) state.tracks.t1.repos.backend = { path: join(runDir(home, slug, runId), 'trees', 't1', 'backend'), status: 'open' };
     saveState(runDir(home, slug, runId), state, NOW);
     mkdirSync(join(runDir(home, slug, runId), 'patches', 'backend'), { recursive: true });
     writeFileSync(join(runDir(home, slug, runId), 'patches', 'backend', '00001-new.patch'), 'x\n');

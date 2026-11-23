@@ -19,8 +19,8 @@ import { changedSinceLast, repoTypecheck, typecheckLog } from './lib/spike/typec
 import { cardPatchName, fixupPatchName, overlapCandidates, snapshot, workingDiff } from './lib/spike/snapshot.mjs';
 import { scanPatch, SECRET_KINDS } from './lib/spike/secrets.mjs';
 import {
-  activeRunFor, activeRuns, capReached, closeOpenExecutions, createRun, executionSpend, issueMark, latestRun, noteStartTrees, openCardWindow,
-  openExecution, readState, saveState, timeBoxFor, unsettledWindows,
+  activeRunFor, activeRuns, allRepos, capReached, closeOpenExecutions, createRun, executionSpend, issueMark, latestRun, noteStartTrees, openCardWindow,
+  openExecution, readState, saveState, timeBoxFor, trackIdOf, trackOf, unsettledWindows,
 } from './lib/spike/state.mjs';
 import { applyPrDiff, assertLastTree, checkTree, guardTree, openTree, rebuildTree, teardownTrees, touchedCheckouts } from './lib/spike/trees.mjs';
 import { bindSession, lastEntryAt, sessionFiles, transcriptsRoot, weighted, windowUsage } from './lib/spike/usage-window.mjs';
@@ -204,14 +204,16 @@ async function startRun(ref, key, flags, { fetchImpl, now, home, dataDir, gh, gi
   return begun(state, mark, false);
 }
 
-const openRepos = state => Object.entries(state.repos).filter(([, r]) => r.status === 'open');
+const isOpen = ([, r]) => r.status === 'open';
+const openRepos = state => Object.entries(trackOf(state).repos).filter(isOpen);
+const anyRemoved = state => allRepos(state).some(([, r]) => r.status === 'removed');
 
 // The card in progress keeps its status; its open window closes at the last transcript line of its execution,
 // and next opens a new one. A window with no line after its start held no work and is dropped.
-async function closeInterruptedCard(state, at) {
-  const { current } = state;
+async function closeInterruptedCard(state, track, at) {
+  const { current } = track;
   if (!current) return;
-  state.current = null;
+  track.current = null;
   const cardState = state.cards[current.card];
   const window = cardState.windows.at(-1);
   if (window.end) return;
@@ -232,9 +234,9 @@ async function closeInterruptedCard(state, at) {
 }
 
 async function resumeRun({ dir, state }, flags, { now, git, dataDir }) {
-  for (const [repoDir, repo] of openRepos(state)) checkTree(git, repoDir, repo);
+  for (const [repoDir, repo] of allRepos(state).filter(isOpen)) checkTree(git, repoDir, repo);
   const at = now();
-  await closeInterruptedCard(state, at);
+  for (const track of Object.values(state.tracks)) await closeInterruptedCard(state, track, at);
   await settleWindows(state, { dataDir });
   closeOpenExecutions(state);
   state.status = 'active';
@@ -248,10 +250,11 @@ const openTrees = state => Object.fromEntries(openRepos(state).map(([d, r]) => [
 
 // The diff goes into the card's repo tree once: when the tree opens during the card, or at next if it is already open.
 function applyCardPr(state, repoDir, { config, gh, git, dir }) {
-  const card = state.current?.card;
+  const track = trackOf(state);
+  const card = track.current?.card;
   const planned = card && state.plan.cards[card];
   if (planned?.origin !== 'existing-pr' || planned.pr?.repoDir !== repoDir || state.cards[card].prDiff) return {};
-  const repo = state.repos[repoDir];
+  const repo = track.repos[repoDir];
   if (repo?.status !== 'open') return {};
   const { number } = planned.pr;
   const r = gh(['pr', 'diff', String(number), '--repo', config().repos[repoDir].github, '--color', 'never']);
@@ -271,7 +274,8 @@ async function next(args, { home, now, gh, git, transcripts, dataDir, sleep, run
 const pendingCard = state => state.plan.order.find(k => state.cards[k].status !== 'done');
 
 async function nextCard(dir, state, { now, ...deps }) {
-  if (state.current) return fail(1, `${state.current.card} is still in progress: end it first`);
+  const { current } = trackOf(state);
+  if (current) return fail(1, `${current.card} is still in progress: end it first`);
   const execution = state.executions.at(-1);
   if (execution.endedAt) return fail(1, `the run is paused (${execution.endReason}): run begin to resume it`);
   await bindExecution(execution, { ...deps, now });
@@ -328,7 +332,7 @@ function refuseUnmeasured(dir, state, execution, { now, out = {} }) {
 
 function prunePendingWarnings(state, removed) {
   const warnings = removed.filter(r => r.prunePending)
-    .map(r => `${r.repo}: its source checkout ${state.repos[r.repo].source} is gone; run git worktree prune there once it is back`);
+    .map(r => `${r.repo}: its source checkout ${allRepos(state).find(([d]) => d === r.repo)[1].source} is gone; run git worktree prune there once it is back`);
   return warnings.length ? { warnings } : {};
 }
 
@@ -356,7 +360,7 @@ async function completeRun(dir, state, settled, { home, now, git, dataDir, sleep
   try {
     removed = teardownTrees(git, state, { dir });
   } catch (e) {
-    if (Object.values(state.repos).some(r => r.status === 'removed')) saveState(dir, state, at);
+    if (anyRemoved(state)) saveState(dir, state, at);
     throw e;
   }
   const execution = state.executions.at(-1);
@@ -388,13 +392,14 @@ async function tree(args, { home, now, git, gh, runSetup }) {
     if (!allowed.includes(repoDir)) return fail(1, `${repoDir} is not allowed for project ${state.project.slug}: its repos are ${allowed.join(', ')}`);
     let repo;
     try {
-      repo = openTree(git, state, { repoDir, repo: config.repos[repoDir], dir, runSetup });
+      repo = openTree(git, state, { trackId: trackIdOf(state), repoDir, repo: config.repos[repoDir], dir, runSetup });
     } catch (e) {
       if (!e.setup) throw e;
       saveState(dir, state, now());
       return { ...ok({ action: 'setup-failed', ...e.setup }), code: 1, stderr: lines([e.message]) };
     }
-    if (state.current) noteStartTrees(state, state.current.card);
+    const { current } = trackOf(state);
+    if (current) noteStartTrees(state, current.card);
     const pr = applyCardPr(state, repoDir, { config: () => config, gh, git, dir });
     saveState(dir, state, now());
     return ok({ repo: repoDir, path: repo.path, ...pr, touchedCheckouts: touchedCheckouts(state) });
@@ -436,15 +441,16 @@ async function fixup(args, { home, dataDir, now, git }) {
 }
 
 function fixupCard(dir, state, { fixes, paths, allow, slug, note, repo: repoDir }, { dataDir, now, git }) {
-  if (!state.current) return fail(1, 'no card is in progress: a fixup is recorded while working the card that caused it');
-  const from = state.current.card;
+  const { current } = trackOf(state);
+  if (!current) return fail(1, 'no card is in progress: a fixup is recorded while working the card that caused it');
+  const from = current.card;
   if (!note.trim()) return fail(1, 'a fixup needs a non-empty English --note saying what it fixes');
   for (const k of fixes) {
     if (k === from) return fail(1, `${k} is the card in progress: its own changes go in its card patch`);
     if (state.cards[k]?.status !== 'done') return fail(1, `${k} is not done in this run: only a done card can receive a fixup`);
   }
   const after = structuredClone(state);
-  const repo = after.repos[repoDir];
+  const repo = trackOf(after).repos[repoDir];
   if (repo?.status !== 'open') return fail(1, `${repoDir} has no open tree in this run`);
   checkTree(git, repoDir, repo);
   const snap = snapshot(git, repo, { paths });
@@ -470,7 +476,7 @@ async function rebuild(args, { home, git }) {
   if (!a || a.positional.length !== 1) return fail(2, ...USAGE);
   const [repoDir] = a.positional;
   return onActiveRun(home, a.flags.project, (dir, state) => {
-    const repo = state.repos[repoDir];
+    const repo = trackOf(state).repos[repoDir];
     if (repo?.status !== 'open') return fail(1, `${repoDir} has no open tree in this run`);
     guardTree(git, repoDir, repo);
     return ok({ repo: repoDir, tree: rebuildTree(git, repoDir, repo, { dir, patchRoot: join(dir, 'patches') }), rebuilt: true });
@@ -532,7 +538,7 @@ async function end(args, { home, dataDir, now, git, transcripts, runSetup }) {
 }
 
 async function endCard(dir, state, card, flags, { config, dataDir, now, git, transcripts, runSetup }) {
-  if (state.current?.card !== card) return fail(1, `${card} is not the card in progress`);
+  if (trackOf(state).current?.card !== card) return fail(1, `${card} is not the card in progress`);
   const notesFile = flags.notes ?? join(dir, 'notes', `${card}.json`);
   const notes = readNotes(notesFile);
   const noteErrors = checkNotes(notes);
@@ -540,7 +546,8 @@ async function endCard(dir, state, card, flags, { config, dataDir, now, git, tra
 
   const at = now();
   const after = structuredClone(state);
-  const execution = after.executions.find(e => e.id === after.current.execution);
+  const track = trackOf(after);
+  const execution = after.executions.find(e => e.id === track.current.execution);
   const cardState = after.cards[card];
   const window = cardState.windows.at(-1);
   window.end = at.toISOString();
@@ -582,7 +589,7 @@ async function endCard(dir, state, card, flags, { config, dataDir, now, git, tra
 
   cardState.status = 'done';
   cardState.recordWrittenAt = at.toISOString();
-  after.current = null;
+  track.current = null;
   const mark = issueMark(after, execution, at);
   saveState(dir, after, at);
   const cases = notes.cases?.length ?? 0;
@@ -600,14 +607,16 @@ async function endCard(dir, state, card, flags, { config, dataDir, now, git, tra
 
 // The card stays in progress: a later execution reopens it in a new window.
 async function closeCurrentWindow(state, endReason, { now, transcripts }) {
-  const { current } = state;
-  if (!current) return;
-  state.current = null;
-  const window = state.cards[current.card].windows.at(-1);
-  const execution = state.executions.find(e => e.id === current.execution);
-  await bindExecution(execution, { transcripts, now });
-  Object.assign(window, { end: now().toISOString(), endReason });
-  await measure(window, usageFiles(execution));
+  for (const track of Object.values(state.tracks)) {
+    const { current } = track;
+    if (!current) continue;
+    track.current = null;
+    const window = state.cards[current.card].windows.at(-1);
+    const execution = state.executions.find(e => e.id === current.execution);
+    await bindExecution(execution, { transcripts, now });
+    Object.assign(window, { end: now().toISOString(), endReason });
+    await measure(window, usageFiles(execution));
+  }
 }
 
 async function pause(args, { home, now, transcripts }) {
@@ -630,7 +639,7 @@ async function abandon(args, { home, now, git, transcripts }) {
     try {
       removed = teardownTrees(git, state, { dir, discard, advice: 'end the card that made it, or pass --discard to drop it with the run' });
     } catch (e) {
-      if (Object.values(state.repos).some(r => r.status === 'removed')) saveState(dir, state, now());
+      if (anyRemoved(state)) saveState(dir, state, now());
       throw e;
     }
     await closeCurrentWindow(state, 'abandoned', { now, transcripts });
@@ -645,7 +654,7 @@ async function abandon(args, { home, now, git, transcripts }) {
 
 // Read-only: a session found by its mark is used for this answer and not bound.
 async function currentSpend(state, { now, transcripts }) {
-  const { current } = state;
+  const { current } = trackOf(state);
   if (!current) return null;
   const cardState = state.cards[current.card];
   const execution = state.executions.find(e => e.id === current.execution);
@@ -687,7 +696,7 @@ async function status(args, { home, now, transcripts }) {
     current: await currentSpend(state, { now, transcripts }),
     cards: { done: cardsIn('done'), inProgress: cardsIn('in-progress'), pending: cardsIn('pending') },
     ...(state.plan.respike ? { modes: Object.fromEntries(state.plan.order.map(k => [k, state.plan.cards[k].mode])), replays: replayOutcomes(state) } : {}),
-    trees: Object.entries(state.repos).filter(([, r]) => r.status !== 'removed').map(([repo, r]) => ({ repo, kind: r.kind, status: r.status, path: r.path })),
+    trees: allRepos(state).filter(([, r]) => r.status !== 'removed').map(([repo, r]) => ({ repo, kind: r.kind, status: r.status, path: r.path })),
     unsettled: unsettledWindows(state).map(({ card, window }) => ({ card, execution: window.execution, end: window.end })),
   });
 }

@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseProjectRef } from '../scripts/lib/linear-fetch.mjs';
 import { buildRespikePlan } from '../scripts/lib/respike/plan.mjs';
 import { serializeRecord, validateRecord } from '../scripts/lib/record.mjs';
+import { runDir } from '../scripts/lib/spike/home.mjs';
 import { guardNetwork } from './helpers/no-network.mjs';
 import { A, B, issue, oldRecord, PATCH_A, PROJECT_URL, SLUG, respikeFixture } from './helpers/respike-fixture.mjs';
 
@@ -45,4 +46,15 @@ test('the approve hash changes when the tracks change', async () => {
   recordWithFixup(f, A, C);
   const joined = await planOf(f, [A, B, C]);
   assert.notEqual(apart.approve, joined.approve);
+});
+
+test('a run begun from a two-part selection keeps one track per part in run.json', async () => {
+  const f = fixture();
+  const cards = [PROJECT_URL, '--cards', `${A},${B},${C}`];
+  const plan = JSON.parse((await f.run('preflight', cards)).stdout);
+  assert.equal(plan.action, 'ready');
+  const r = await f.run('begin', [...cards, '--approve', plan.approve]);
+  assert.equal(r.code, 0, r.stderr);
+  const state = JSON.parse(readFileSync(join(runDir(f.home, SLUG, JSON.parse(r.stdout).runId), 'run.json'), 'utf8'));
+  assert.deepEqual(Object.entries(state.tracks).map(([id, t]) => [id, t.cards, t.status]), [['t1', [A, B], 'pending'], ['t2', [C], 'pending']]);
 });

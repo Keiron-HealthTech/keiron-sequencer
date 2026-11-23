@@ -8,6 +8,7 @@ import { deriveRepo } from './derive.mjs';
 import { runDir, trialPatchRoot, writeAtomic } from './home.mjs';
 import { scanPatch } from './secrets.mjs';
 import { cardPatchName, DIFF, snapshot } from './snapshot.mjs';
+import { trackIdOf } from './state.mjs';
 import { checkTree, openTree } from './trees.mjs';
 import { clearGenerated, repoTypecheck, typecheckLog } from './typecheck.mjs';
 
@@ -81,7 +82,7 @@ export function replayEntry(git, state, card, { dir, config, runSetup, dataDir, 
 
   const merged = [];
   for (const [repoDir, patches] of Object.entries(entry.units)) {
-    const repo = openTree(git, state, { repoDir, repo: config.repos[repoDir], dir, runSetup });
+    const repo = openTree(git, state, { trackId: trackIdOf(state), repoDir, repo: config.repos[repoDir], dir, runSetup });
     assertSnapshotted(git, repoDir, repo);
     const result = mergedTree(git, repoDir, repo, patches, { index: join(dir, 'tmp', `replay-${repoDir}.index`), pathOf });
     if (result.conflict) return [turn(state, card, at, 'conflict', { conflict: result.conflict })];
@@ -140,15 +141,16 @@ export function replayEntry(git, state, card, { dir, config, runSetup, dataDir, 
 // Each fresh patch is measured between the tree before it and the tree it produced, as the repo's log records them.
 function measured(git, state, card, fresh, { config, dir }) {
   const dirs = [...new Set(fresh.map(n => n.split('/')[0]))];
+  const { repos } = state.tracks[trackIdOf(state)];
   const patchMap = {
     cards: { [card]: {} },
-    repos: Object.fromEntries(dirs.map(d => [d, state.repos[d].name])),
+    repos: Object.fromEntries(dirs.map(d => [d, repos[d].name])),
     patches: Object.fromEntries(fresh.map(n => [n, { kind: 'card', cards: [card] }])),
   };
   const size = cardSizes(patchMap, n => readFileSync(join(dir, 'patches', n), 'utf8'))[card];
   const derived = fresh.map(name => {
     const [repoDir] = name.split('/');
-    const repo = state.repos[repoDir];
+    const repo = repos[repoDir];
     const i = repo.log.findLastIndex(e => e.name === basename(name, '.patch'));
     return deriveRepo(git, repoDir, {
       cwd: repo.path, rules: config.repos[repoDir]?.risk ?? [], startTree: i > 0 ? repo.log[i - 1].tree : repo.baseTree, endTree: repo.log[i].tree,

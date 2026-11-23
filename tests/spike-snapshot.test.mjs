@@ -114,7 +114,7 @@ test('each repo keeps its own last tree: a card that changes only one repo leave
   const dir = await startCard(fixture);
   const back = JSON.parse((await run(['tree', 'backend'], fixture.deps)).stdout).path;
   await run(['tree', 'frontend'], fixture.deps);
-  const before = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')).repos;
+  const before = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')).tracks.t1.repos;
   writeFileSync(join(back, 'README.md'), 'changed\n');
   fixture.at('2026-11-10T10:05:00.000Z');
   const r = await run(['end', 'CRM-1'], fixture.deps);
@@ -122,7 +122,7 @@ test('each repo keeps its own last tree: a card that changes only one repo leave
   const out = JSON.parse(r.stdout);
   assert.deepEqual(out.patches, ['backend/00001-new.patch']);
   assert.deepEqual(out.noChange, ['frontend']);
-  const after = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')).repos;
+  const after = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')).tracks.t1.repos;
   assert.notEqual(after.backend.last, before.backend.last);
   assert.equal(after.frontend.last, before.frontend.last);
   assert.deepEqual(after.frontend.log, []);

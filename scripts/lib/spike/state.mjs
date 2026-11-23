@@ -20,11 +20,13 @@ function refuseSharedNumbers(plan) {
   }
 }
 
+const newTrack = (cards, { current = null, repos = {} } = {}) => ({ cards, status: 'pending', mergedInto: null, current, generation: 0, repos });
+
 export function createRun({ runId, project, plan, home, dataDir, now }) {
   refuseSharedNumbers(plan);
   const at = now.toISOString();
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     runId,
     status: 'active',
     project,
@@ -33,13 +35,40 @@ export function createRun({ runId, project, plan, home, dataDir, now }) {
     home,
     dataDir,
     plan,
-    repos: {},
+    tracks: Object.fromEntries((plan.tracks ?? [{ id: 't1', cards: plan.order }]).map(t => [t.id, newTrack(t.cards)])),
+    crossings: [],
+    combine: { rounds: 0, results: [] },
     executions: [],
-    current: null,
     cards: Object.fromEntries(plan.order.map(key => [key, { status: 'pending', box: null, windows: [], patches: [] }])),
     fixups: [],
   };
 }
+
+// A schema-1 run is one track t1; its trees keep the paths they were made at.
+export function upgradeState(state) {
+  if (state.tracks) return state;
+  const { current = null, repos = {}, ...rest } = state;
+  return { ...rest, schemaVersion: 2, tracks: { t1: newTrack(state.plan?.order ?? [], { current, repos }) }, crossings: [], combine: { rounds: 0, results: [] } };
+}
+
+const liveTracks = state => Object.entries(state.tracks).filter(([, t]) => !t.mergedInto);
+
+export function trackIdOf(state, id) {
+  if (id !== undefined) {
+    if (!Object.hasOwn(state.tracks, id)) throw new Error(`${id} is not a track of run ${state.runId}`);
+    return id;
+  }
+  const live = liveTracks(state);
+  if (live.length !== 1) throw new Error(`pass --track <id>: this run has ${live.length} tracks`);
+  return live[0][0];
+}
+
+export const trackOf = (state, id) => state.tracks[trackIdOf(state, id)];
+
+export const trackOfCard = (state, card) => Object.entries(state.tracks).find(([, t]) => t.cards.includes(card))?.[0] ?? null;
+
+// Every tree of the run, whichever track holds it.
+export const allRepos = state => Object.values(state.tracks).flatMap(t => Object.entries(t.repos));
 
 export function openExecution(state, { now, sessions, caps = { tokens: null, cards: null }, box = null }) {
   const execution = {
@@ -77,7 +106,7 @@ export function openCardWindow(state, card, execution, now) {
   if (cardState.status === 'pending') cardState.box = state.plan.cards[card].origin === 'existing-pr' ? null : execution.box ?? null;
   cardState.status = 'in-progress';
   cardState.windows.push(window);
-  state.current = { card, startedAt: window.start, execution: execution.id };
+  state.tracks[trackOfCard(state, card)].current = { card, startedAt: window.start, execution: execution.id };
   return window;
 }
 
@@ -85,7 +114,7 @@ export function openCardWindow(state, card, execution, now) {
 export function noteStartTrees(state, card) {
   const cardState = state.cards[card];
   cardState.startTrees ??= {};
-  for (const [repoDir, repo] of Object.entries(state.repos)) if (repo.status === 'open') cardState.startTrees[repoDir] ??= repo.last;
+  for (const [repoDir, repo] of Object.entries(state.tracks[trackOfCard(state, card)].repos)) if (repo.status === 'open') cardState.startTrees[repoDir] ??= repo.last;
 }
 
 export function timeBoxFor(cardState) {
@@ -121,7 +150,7 @@ export function capReached(execution, spend) {
   return null;
 }
 
-export const readState = dir => JSON.parse(readFileSync(join(dir, STATE_FILE), 'utf8'));
+export const readState = dir => upgradeState(JSON.parse(readFileSync(join(dir, STATE_FILE), 'utf8')));
 
 export function saveState(dir, state, now) {
   state.updatedAt = now.toISOString();

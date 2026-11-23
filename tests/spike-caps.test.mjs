@@ -56,7 +56,7 @@ test('a token cap lets the card that crosses it finish, then pauses before the n
   assert.equal(state.status, 'paused');
   assert.deepEqual([state.cards['CRM-2'].status, state.cards['CRM-2'].windows], ['pending', []]);
   assert.deepEqual([state.executions[0].endReason, state.executions[0].endedAt], ['tokens', minute(20)]);
-  assert.ok(existsSync(state.repos.backend.path));
+  assert.ok(existsSync(state.tracks.t1.repos.backend.path));
 
   const again = await nextAt(fixture, 21, session);
   assert.equal(again.code, 1);
@@ -173,7 +173,7 @@ test('a card started under --box 100, interrupted and resumed with no --box keep
 
 test('in a respike run a card cap of 1 over a replay and two spikes pauses after the first spiked card: the replay spends nothing', async () => {
   const C = 'CRM-5';
-  const f = R.respikeFixture({ issues: ([a, b]) => [a, b, R.issue(C)] });
+  const f = R.respikeFixture({ issues: ([a, b]) => [a, { ...b, relations: { nodes: [{ type: 'blocks', relatedIssue: { identifier: C } }] } }, R.issue(C)] });
   const pick = [R.PROJECT_URL, '--cards', `${R.B},${C}`];
   const plan = JSON.parse((await f.run('preflight', pick)).stdout);
   assert.deepEqual(plan.order, [{ key: R.A, mode: 'replay' }, { key: R.B, mode: 'spike' }, { key: C, mode: 'spike' }]);

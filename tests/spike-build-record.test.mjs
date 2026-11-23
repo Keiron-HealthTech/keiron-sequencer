@@ -31,7 +31,7 @@ function doneState({ origin = 'thin-spike', box = null, windows, offProject = []
     cards: { 'CRM-1': { title: 'Card one', url: 'https://linear.app/x/issue/CRM-1', number: 1, milestoneOrder: null, description: '', origin, pr: null, offProject } },
   };
   const state = createRun({ runId, project: { id: 'p', slug: SLUG, name: 'Project', url: 'u' }, plan, home: HOME, dataDir: '/data', now: new Date('2026-11-10T10:00:00.000Z') });
-  state.repos.backend = { name: 'backend-repo', kind: 'worktree', status: 'open' };
+  state.tracks.t1.repos.backend = { name: 'backend-repo', kind: 'worktree', status: 'open' };
   const name = `backend/00001-${origin === 'existing-pr' ? 'existing' : 'new'}.patch`;
   Object.assign(state.cards['CRM-1'], {
     status: 'done', box, patches: [name], riskAreas: [], newPaths: [],

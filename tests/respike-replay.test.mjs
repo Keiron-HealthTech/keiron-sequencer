@@ -65,8 +65,8 @@ test('a conflicting replay turns the entry into a spike in place, touching neith
   assert.deepEqual(state.cards[A].replay.conflict, { repo: 'backend', patch: PATCH_A, reason: 'conflict', unmerged: ['src/list.js'] });
   assert.equal(state.cards[A].replay.status, 'conflict');
   assert.deepEqual(state.plan.order, [A, B]);
-  assertTreeClean(f, state.repos.backend);
-  assert.equal(state.repos.backend.last, state.repos.backend.baseTree);
+  assertTreeClean(f, state.tracks.t1.repos.backend);
+  assert.equal(state.tracks.t1.repos.backend.last, state.tracks.t1.repos.backend.baseTree);
   assert.deepEqual(walk(join(dir, 'patches')), []);
   assert.equal(recordText(f, A), before);
 });
@@ -98,10 +98,10 @@ test('a multi-repo unit that conflicts in its second repo leaves the first repo 
   assert.equal(out.replayConflict.repos[0], 'web');
   assert.equal(out.replayConflict.patch, 'web/00001-new.patch');
   const after = readState(dir);
-  assertTreeClean(f, after.repos.backend);
-  assert.equal(after.repos.backend.last, after.repos.backend.baseTree);
-  assert.deepEqual(after.repos.backend.log, []);
-  assert.doesNotMatch(readFileSync(join(after.repos.backend.path, 'src', 'list.js'), 'utf8'), /line5 from A/);
+  assertTreeClean(f, after.tracks.t1.repos.backend);
+  assert.equal(after.tracks.t1.repos.backend.last, after.tracks.t1.repos.backend.baseTree);
+  assert.deepEqual(after.tracks.t1.repos.backend.log, []);
+  assert.doesNotMatch(readFileSync(join(after.tracks.t1.repos.backend.path, 'src', 'list.js'), 'utf8'), /line5 from A/);
   assert.deepEqual(walk(join(dir, 'patches')), []);
   assert.equal(recordText(f, A), before);
   web.dispose();
@@ -122,7 +122,7 @@ test('a replay that applies cleanly but changes nothing is empty: no patch, the 
   assert.equal(state.plan.cards[A].mode, 'replay');
   assert.deepEqual(walk(join(dir, 'patches')), []);
   assert.equal(recordText(f, A), before);
-  assertTreeClean(f, state.repos.backend);
+  assertTreeClean(f, state.tracks.t1.repos.backend);
 });
 
 test('a patch whose pre-image blob is missing and whose context no longer matches is a no-preimage conflict', async () => {
@@ -136,7 +136,7 @@ test('a patch whose pre-image blob is missing and whose context no longer matche
   assert.deepEqual(out.replayConflict.unmerged, []);
   const state = readState(dir);
   assert.equal(state.cards[A].replay.conflict.reason, 'no-preimage');
-  assertTreeClean(f, state.repos.backend);
+  assertTreeClean(f, state.tracks.t1.repos.backend);
 });
 
 const FAKE_KEY = `AKIA${'Q'.repeat(16)}`;
@@ -159,8 +159,8 @@ test('a replay whose fresh diff holds a secret turns into a spike with the hits 
   assert.equal(state.plan.cards[A].mode, 'spike');
   assert.deepEqual(walk(join(dir, 'patches')), []);
   assert.equal(recordText(f, A), before);
-  assert.equal(existsSync(join(state.repos.backend.path, 'src', 'keys.js')), false);
-  assertTreeClean(f, state.repos.backend);
+  assert.equal(existsSync(join(state.tracks.t1.repos.backend.path, 'src', 'keys.js')), false);
+  assertTreeClean(f, state.tracks.t1.repos.backend);
   for (const text of [r.stdout, r.stderr, readFileSync(join(dir, 'run.json'), 'utf8')]) assert.equal(text.includes(FAKE_KEY), false);
 });
 
@@ -174,10 +174,10 @@ test('a setup that fails while opening the tree for a replay returns setup-faile
   assert.match(out.log, /setup-backend\.log$/);
   assert.match(failing.stderr, /setup of backend failed/);
   const state = readState(dir);
-  assert.equal(state.repos.backend.status, 'setup');
+  assert.equal(state.tracks.t1.repos.backend.status, 'setup');
   assert.equal(state.cards[A].status, 'pending');
   assert.equal(state.plan.cards[A].mode, 'replay');
-  assert.equal(state.current, null);
+  assert.equal(state.tracks.t1.current, null);
   const retried = json(await f.spike(['next']));
   assert.deepEqual(retried.replayed, [{ card: A, status: 'replayed', patches: [PATCH_A] }]);
   assert.equal(retried.card, B);
@@ -209,13 +209,13 @@ test('a unit holding a card patch and a kept fixup snapshots one fresh card patc
   assert.match(fresh, /^\+export const fixed = true$/m);
   assert.deepEqual(parseCardPatchName(PATCH_A), { kind: 'card', card: A, origin: 'thin-spike' });
   const state = readState(dir);
-  assertTreeClean(f, state.repos.backend);
-  assert.deepEqual(state.repos.backend.log.map(e => e.name), ['00001-new']);
-  assert.equal(state.repos.backend.log[0].tree, state.repos.backend.last);
+  assertTreeClean(f, state.tracks.t1.repos.backend);
+  assert.deepEqual(state.tracks.t1.repos.backend.log.map(e => e.name), ['00001-new']);
+  assert.equal(state.tracks.t1.repos.backend.log[0].tree, state.tracks.t1.repos.backend.last);
   assert.deepEqual(state.cards[A].replay.applied, [PATCH_A, FIXUP]);
   const rebuilt = await f.spike(['rebuild', 'backend']);
   assert.equal(rebuilt.code, 0, rebuilt.stderr);
-  assert.equal(json(rebuilt).tree, state.repos.backend.last);
+  assert.equal(json(rebuilt).tree, state.tracks.t1.repos.backend.last);
   const record = JSON.parse(recordText(f, A));
   assert.deepEqual(record.replayed.folded, [PATCH_A, FIXUP]);
   assert.deepEqual(record.refs.patches, [PATCH_A]);
@@ -232,7 +232,7 @@ test('a clean replay recomputes size, risk areas and new paths from the fresh pa
   const old = JSON.parse(readFileSync(path, 'utf8'));
   const { dir, runId } = await begin(f);
   await f.spike(['next']);
-  assertTreeClean(f, readState(dir).repos.backend);
+  assertTreeClean(f, readState(dir).tracks.t1.repos.backend);
   const text = recordText(f, A);
   const record = JSON.parse(text);
   assert.deepEqual(validateRecord(record), []);
@@ -265,7 +265,7 @@ test('a replayed trial record with no risk areas gains them from the config glob
   writeFileSync(path, serializeRecord(trialRecord));
   const { dir } = await begin(f);
   assert.deepEqual(json(await f.spike(['next'])).replayed, [{ card: A, status: 'replayed', patches: [PATCH_A] }]);
-  assertTreeClean(f, readState(dir).repos.backend);
+  assertTreeClean(f, readState(dir).tracks.t1.repos.backend);
   const record = JSON.parse(recordText(f, A));
   assert.deepEqual(validateRecord(record), []);
   assert.deepEqual(record.riskAreas, [{ kind: 'auth', paths: ['backend/src/auth/login.js'] }]);
@@ -310,7 +310,7 @@ test('next replays every ready entry in order, with no window and no box, before
   assert.deepEqual(out.replayed, [{ card: A, status: 'replayed', patches: [PATCH_A] }, { card: D, status: 'replayed', patches: [PATCH_D] }]);
   assert.equal(out.card, B);
   const state = readState(dir);
-  assertTreeClean(f, state.repos.backend);
+  assertTreeClean(f, state.tracks.t1.repos.backend);
   for (const k of [A, D]) assert.deepEqual([state.cards[k].windows, state.cards[k].box], [[], null], k);
   assert.equal(state.cards[B].box, 100);
 });
@@ -407,7 +407,7 @@ test('an entry that turns into a spike re-plans the pending replays: a fixup fro
   await endCard(f, dir, A, 'a.txt');
   f.at('2026-11-10T10:04:00.000Z');
   const second = json(await f.spike(['next']));
-  assertTreeClean(f, readState(dir).repos.backend);
+  assertTreeClean(f, readState(dir).tracks.t1.repos.backend);
   assert.deepEqual(second.replayed, [{ card: G, status: 'replayed', patches: [PATCH_G] }]);
   assert.doesNotMatch(readFileSync(join(dir, 'patches', PATCH_G), 'utf8'), /g-fix/);
   assert.deepEqual(JSON.parse(recordText(f, G)).replayed.folded, [PATCH_G, FIXUP_G]);
@@ -430,12 +430,12 @@ test('a fixup waits for its from card: when that card conflicts after the fixed 
   assert.equal(out.card, X);
   assert.deepEqual(walk(join(dir, 'patches')), [PATCH_A]);
   for (const text of freshTexts(dir)) assert.doesNotMatch(text, /adapted/);
-  assert.equal(existsSync(join(readState(dir).repos.backend.path, 'src', 'auth', 'adapted.js')), false);
+  assert.equal(existsSync(join(readState(dir).tracks.t1.repos.backend.path, 'src', 'auth', 'adapted.js')), false);
   const record = JSON.parse(recordText(f, A));
   assert.deepEqual(record.size, freshSize(dir, A, PATCH_A));
   assert.deepEqual(record.riskAreas, []);
   assert.deepEqual(record.novelty.newPaths, []);
-  assertTreeClean(f, readState(dir).repos.backend);
+  assertTreeClean(f, readState(dir).tracks.t1.repos.backend);
 });
 
 test('the holders of a two-card patch are re-spiked, never replayed, and a fixup from one of them is dropped before anything is applied', async () => {
@@ -450,7 +450,7 @@ test('the holders of a two-card patch are re-spiked, never replayed, and a fixup
   assert.deepEqual(walk(join(dir, 'patches')), [PATCH_G]);
   for (const text of freshTexts(dir)) assert.doesNotMatch(text, /g-fix|line5 from A/);
   assert.deepEqual(JSON.parse(recordText(f, G)).size, freshSize(dir, G, PATCH_G));
-  assertTreeClean(f, readState(dir).repos.backend);
+  assertTreeClean(f, readState(dir).tracks.t1.repos.backend);
 });
 
 test('in a chain A, then a selected X, then H, where A and H share a patch, X is spiked only after A, on a base that holds A\'s new code', async () => {
@@ -471,14 +471,14 @@ test('in a chain A, then a selected X, then H, where A and H share a patch, X is
   f.at('2026-11-10T10:04:00.000Z');
   const second = json(await f.spike(['next']));
   assert.equal(second.card, S);
-  assert.equal(readFileSync(join(readState(dir).repos.backend.path, 'a-fresh.txt'), 'utf8'), `${A}\n`);
+  assert.equal(readFileSync(join(readState(dir).tracks.t1.repos.backend.path, 'a-fresh.txt'), 'utf8'), `${A}\n`);
 });
 
 test('a fixup on a replayed card appends to its live record and writes no notes; a later replay reads its patches plus that fixup only', async () => {
   const f = respikeFixture();
   const { dir, runId } = await begin(f);
   assert.equal(json(await f.spike(['next'])).card, B);
-  assertTreeClean(f, readState(dir).repos.backend);
+  assertTreeClean(f, readState(dir).tracks.t1.repos.backend);
   const before = JSON.parse(recordText(f, A));
   const tree = json(await f.spike(['tree', 'backend'])).path;
   writeFileSync(join(tree, 'src', 'list.js'), readFileSync(join(tree, 'src', 'list.js'), 'utf8').replace('line5 from A', 'line5 from A, adapted'));
@@ -529,8 +529,8 @@ test('a replay that fails typecheck turns into a spike with reason typecheck', a
   const state = readState(dir);
   assert.equal(state.plan.cards[A].mode, 'spike');
   assert.equal(state.cards[A].replay.status, 'typecheck');
-  assertTreeClean(f, state.repos.backend);
-  assert.equal(state.repos.backend.last, state.repos.backend.baseTree);
+  assertTreeClean(f, state.tracks.t1.repos.backend);
+  assert.equal(state.tracks.t1.repos.backend.last, state.tracks.t1.repos.backend.baseTree);
   assert.deepEqual(walk(join(dir, 'patches')), []);
   assert.equal(recordText(f, A), before);
   assert.match(readFileSync(join(dir, 'logs', 'typecheck-backend.log'), 'utf8'), /tc src\/list\.js/);

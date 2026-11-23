@@ -4,6 +4,7 @@ import { parsePatchName } from '../../backfill/patch-map.mjs';
 import { invert, readDirMap } from '../patch-dirs.mjs';
 import { isLive } from '../records.mjs';
 import { runDir, statePath, trialPatchRoot } from '../spike/home.mjs';
+import { allRepos, upgradeState } from '../spike/state.mjs';
 import { mapRepo } from '../start/checkout.mjs';
 
 const compare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -33,7 +34,10 @@ function sourceOf(record, { home, slug }) {
 }
 
 function logNames(source, dir, { home, slug, trialLogDir }) {
-  if (source.from !== 'trial') return (readJson(statePath(home, slug, source.from))?.repos?.[dir]?.log ?? []).map(e => e.name);
+  if (source.from !== 'trial') {
+    const state = readJson(statePath(home, slug, source.from));
+    return (state ? allRepos(upgradeState(state)) : []).filter(([d]) => d === dir).flatMap(([, r]) => r.log ?? []).map(e => e.name);
+  }
   const trialDir = invert(readDirMap(trialPatchRoot(home, slug)))[dir] ?? dir;
   const path = join(trialLogDir ?? '', trialDir, 'log.txt');
   return existsSync(path) ? readFileSync(path, 'utf8').split('\n').map(l => l.split(/\s+/)[0]).filter(Boolean) : [];

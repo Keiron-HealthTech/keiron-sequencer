@@ -3,14 +3,16 @@ import { join } from 'node:path';
 import { patchStats } from '../patch-stats.mjs';
 import { runDir, statePath } from './home.mjs';
 import { parseCardPatchName } from './snapshot.mjs';
-import { readState } from './state.mjs';
+import { readState, trackOfCard } from './state.mjs';
 
 const NO_CHAIN = { baseCommit: null, patchTexts: [], chainedFiles: [], combine: false };
 
 const runRepo = (record, { home, slug, repoDir }) => {
   const runId = record?.refs?.runId;
   if (!runId || !existsSync(statePath(home, slug, runId))) return null;
-  const repo = readState(runDir(home, slug, runId)).repos?.[repoDir];
+  const state = readState(runDir(home, slug, runId));
+  const tracks = Object.values(state.tracks);
+  const repo = (state.tracks[trackOfCard(state, record.card)] ?? (tracks.length === 1 ? tracks[0] : null))?.repos[repoDir];
   return repo ? { runId, repo } : null;
 };
 

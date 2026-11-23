@@ -67,7 +67,7 @@ test('an interrupted card is resumed: its window closes at the last transcript e
   await begin(fixture, ['--box', '500'], second, '2026-11-10T11:00:00.000Z');
   const dir = activeRunDir(fixture.home);
   const interrupted = stateIn(dir);
-  assert.equal(interrupted.current, null);
+  assert.equal(interrupted.tracks.t1.current, null);
   assert.equal(interrupted.cards['CRM-1'].status, 'in-progress');
   assert.deepEqual(interrupted.cards['CRM-1'].windows, [{
     execution: 1, start: '2026-11-10T10:01:00.000Z', end: '2026-11-10T10:03:00.000Z', endReason: 'interrupted', settled: true, messages: 2,
@@ -153,7 +153,7 @@ test('resume runs the tree guard: a tree with a commit stops begin with exit 6 a
   await begin(fixture, [], null, '2026-11-10T10:00:00.000Z');
   await playCard(fixture, 'CRM-1', { start: '2026-11-10T10:01:00.000Z', end: '2026-11-10T10:05:00.000Z', cardNotes: notes });
   const dir = activeRunDir(fixture.home);
-  const tree = stateIn(dir).repos.backend.path;
+  const tree = stateIn(dir).tracks.t1.repos.backend.path;
   sandboxGit(['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '--allow-empty', '-m', 'oops'], { cwd: tree });
   const before = readFileSync(join(dir, 'run.json'), 'utf8');
   fixture.at('2026-11-10T11:00:00.000Z');
@@ -166,7 +166,7 @@ test('resume runs the tree guard: a tree with a commit stops begin with exit 6 a
 test('a respike run paused by its card cap resumes through spike begin with the same id, the same plan and its pending cards, and no hash', async () => {
   const [C, D, X] = ['CRM-5', 'CRM-6', 'CRM-4'];
   const f = R.respikeFixture({
-    issues: ([a, b]) => [a, b, R.issue(C), R.issue(D, { relations: { nodes: [{ type: 'blocks', relatedIssue: { identifier: X } }] } }),
+    issues: ([a, b]) => [a, b, R.issue(C, { relations: { nodes: [{ type: 'blocks', relatedIssue: { identifier: D } }] } }), R.issue(D, { relations: { nodes: [{ type: 'blocks', relatedIssue: { identifier: X } }] } }),
       R.issue(X, { relations: { nodes: [{ type: 'blocks', relatedIssue: { identifier: R.B } }] } })],
   });
   const patchX = 'backend/00004-new.patch';

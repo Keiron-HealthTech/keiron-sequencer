@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { isLive } from '../records.mjs';
 import { RUN_ID } from './home.mjs';
-import { readState } from './state.mjs';
+import { allRepos, readState } from './state.mjs';
 
 const KEEP = 2;
 export const isSlug = name => /^[A-Za-z0-9-]+$/.test(name);
@@ -16,7 +16,7 @@ function resumableWithTrees(dir) {
   if (!existsSync(join(dir, 'run.json'))) return null;
   const state = readState(dir);
   const open = state.status === 'active' || state.status === 'paused';
-  return open && Object.values(state.repos).some(r => r.status !== 'removed') ? `${state.status} with trees` : null;
+  return open && allRepos(state).some(([, r]) => r.status !== 'removed') ? `${state.status} with trees` : null;
 }
 
 // Only top-level records count: a history record never needs its patches again.

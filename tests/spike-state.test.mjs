@@ -1,11 +1,11 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { run } from '../scripts/spike.mjs';
 import { runDir } from '../scripts/lib/spike/home.mjs';
 import {
-  activeRunFor, CARD_STATUSES, createRun, openCardWindow, openExecution, readState, RUN_STATUSES, saveState, timeBoxFor,
+  activeRunFor, CARD_STATUSES, createRun, openCardWindow, openExecution, readState, RUN_STATUSES, saveState, timeBoxFor, trackOf, trackOfCard,
 } from '../scripts/lib/spike/state.mjs';
 import { tempDir } from './helpers/git-sandbox.mjs';
 import { guardNetwork } from './helpers/no-network.mjs';
@@ -34,6 +34,47 @@ test('the status values are fixed, a new run is active and its cards pending wit
   const state = newRun();
   assert.equal(state.status, 'active');
   assert.deepEqual(state.cards['CRM-1'], { status: 'pending', box: null, windows: [], patches: [] });
+});
+
+test('createRun builds one pending track per plan track', () => {
+  const p = { ...plan(['CRM-1', 'CRM-2', 'CRM-3']), tracks: [{ id: 't1', cards: ['CRM-1', 'CRM-3'] }, { id: 't2', cards: ['CRM-2'] }] };
+  const state = createRun({ runId: '20261110T100000Z', project: project(), plan: p, home: HOME, dataDir: '/data', now: NOW });
+  const track = cards => ({ cards, status: 'pending', mergedInto: null, current: null, generation: 0, repos: {} });
+  assert.equal(state.schemaVersion, 2);
+  assert.deepEqual(state.tracks, { t1: track(['CRM-1', 'CRM-3']), t2: track(['CRM-2']) });
+  assert.deepEqual([state.crossings, state.combine], [[], { rounds: 0, results: [] }]);
+  assert.equal('current' in state || 'repos' in state, false);
+  assert.deepEqual(newRun().tracks, { t1: track(['CRM-1', 'CRM-2']) });
+  assert.equal(trackOfCard(state, 'CRM-3'), 't1');
+});
+
+test('a schema-1 run reads as track t1 with its current card and trees', () => {
+  const dir = runDir(HOME, 'p1', '20261109T100000Z');
+  const old = { ...newRun(), schemaVersion: 1 };
+  delete old.tracks;
+  delete old.crossings;
+  delete old.combine;
+  const backend = { name: 'backend-repo', kind: 'worktree', path: join(dir, 'trees', 'backend'), status: 'open', log: [] };
+  Object.assign(old, { current: { card: 'CRM-2', startedAt: NOW.toISOString(), execution: 1 }, repos: { backend } });
+  old.cards['CRM-2'].status = 'in-progress';
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'run.json'), JSON.stringify(old));
+  const state = readState(dir);
+  assert.equal(state.schemaVersion, 2);
+  assert.equal(state.tracks.t1.current.card, 'CRM-2');
+  assert.equal(state.tracks.t1.repos.backend.path, join(dir, 'trees', 'backend'));
+  assert.deepEqual(state.tracks.t1.cards, ['CRM-1', 'CRM-2']);
+  assert.equal('current' in state || 'repos' in state, false);
+  assert.equal(trackOf(state), state.tracks.t1);
+});
+
+test('trackOf without an id refuses a run with two live tracks', () => {
+  const p = { ...plan(['CRM-1', 'CRM-2']), tracks: [{ id: 't1', cards: ['CRM-1'] }, { id: 't2', cards: ['CRM-2'] }] };
+  const state = createRun({ runId: '20261110T100000Z', project: project(), plan: p, home: HOME, dataDir: '/data', now: NOW });
+  assert.throws(() => trackOf(state), /pass --track <id>: this run has 2 tracks/);
+  assert.equal(trackOf(state, 't2'), state.tracks.t2);
+  state.tracks.t2.mergedInto = 't1';
+  assert.equal(trackOf(state), state.tracks.t1);
 });
 
 test('two run cards with the same number are refused, naming the pair', () => {
@@ -130,7 +171,7 @@ test('with active runs in two projects, next, tree and end need --project, which
   assert.equal(unknown.code, 1);
   assert.match(unknown.stderr, /no active spike run for project 000000000000/);
   const untouched = JSON.parse(readFileSync(join(runDir(home, 'ffffffffffff', other.runId), 'run.json'), 'utf8'));
-  assert.equal(untouched.current, null);
+  assert.equal(untouched.tracks.t1.current, null);
 });
 
 test('the respike plan keys, the replay outcomes and a combine base survive save, pause, resume and abandon', async () => {
@@ -150,9 +191,9 @@ test('the respike plan keys, the replay outcomes and a combine base survive save
     status: 'conflict', at: NOW.toISOString(), applied: [], folded: [], before: { size: null, riskAreas: null, newPaths: [] },
     conflict: { repo: 'backend', patch: 'backend/00001-new.patch', reason: 'conflict', unmerged: ['src/a.js'] },
   };
-  state.repos.extra = { status: 'removed', combine: { heads: [{ card: 'CRM-7', sha: 'a'.repeat(40) }], tree: 'b'.repeat(40) } };
+  state.tracks.t1.repos.extra = { status: 'removed', combine: { heads: [{ card: 'CRM-7', sha: 'a'.repeat(40) }], tree: 'b'.repeat(40) } };
   saveState(dir, state, NOW);
-  const kept = s => [s.plan.respike, s.plan.cards['CRM-1'].mode, s.cards['CRM-1'].replay, s.repos.extra.combine];
+  const kept = s => [s.plan.respike, s.plan.cards['CRM-1'].mode, s.cards['CRM-1'].replay, s.tracks.t1.repos.extra.combine];
   const expected = kept(state);
 
   at('2026-11-10T10:01:00.000Z');

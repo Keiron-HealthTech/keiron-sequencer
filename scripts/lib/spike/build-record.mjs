@@ -9,7 +9,7 @@ import { displayData, runDir, writeAtomic } from './home.mjs';
 import { mergeRiskAreas, riskAreas } from './derive.mjs';
 import { offProjectFindings } from './order.mjs';
 import { parseCardPatchName } from './snapshot.mjs';
-import { timeBoxFor } from './state.mjs';
+import { timeBoxFor, trackOfCard } from './state.mjs';
 
 const compare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -21,9 +21,10 @@ function sizeOf(state, card, readPatch) {
   for (const name of names) {
     if (parseCardPatchName(name, { prefix })?.card !== card) throw new Error(`${name} is not a card patch of ${card}`);
   }
+  const { repos } = state.tracks[trackOfCard(state, card)];
   const patchMap = {
     cards: { [card]: {} },
-    repos: Object.fromEntries(names.map(n => n.split('/')[0]).map(dir => [dir, state.repos[dir].name])),
+    repos: Object.fromEntries(names.map(n => n.split('/')[0]).map(dir => [dir, repos[dir].name])),
     patches: Object.fromEntries(names.map(n => [n, { kind: 'card', cards: [card] }])),
   };
   return cardSizes(patchMap, readPatch)[card];
