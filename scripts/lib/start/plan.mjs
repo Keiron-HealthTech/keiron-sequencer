@@ -70,7 +70,8 @@ function repoReasons(issue, checkout, config, found, warnings) {
   if (warning) warnings.push(warning);
   if (!wrongRepo) return { reasons: [], repos };
   const message = `${issue.key} belongs to ${wrongRepo.join(', ')}, not ${current.name}; start it from that checkout`;
-  return { reasons: [reason('wrong-repo', message)], repos };
+  const checkouts = repos.map(r => ({ dir: r.dir, name: r.name, github: config.repos[r.dir]?.github ?? null, checkout: config.repos[r.dir]?.checkout ?? null }));
+  return { reasons: [{ ...reason('wrong-repo', message), checkouts }], repos };
 }
 
 async function gatherBlockers(cardKey, analyzed, flags, { key, fetchImpl }, warnings) {

@@ -130,6 +130,7 @@ test('a card of another configured repo is a wrong-repo stop naming the expected
   assert.equal(out.action, 'stop');
   assert.deepEqual(codes(out), ['wrong-repo']);
   assert.match(out.reasons[0].message, /web-repo/);
+  assert.deepEqual(out.reasons[0].checkouts, [{ dir: 'web', name: 'web-repo', github: 'acme/web', checkout: '/src/web' }]);
   assert.deepEqual(out.card.repos, [{ dir: 'web', name: 'web-repo', source: 'title' }]);
   assert.equal(f.gh.calls.length, 0);
 });

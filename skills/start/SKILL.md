@@ -95,8 +95,9 @@ Show, in this order:
   `checkout.notes` verbatim.
 - The `action`. Show every entry of `reasons` with its message, including the non-blocking `gh-unavailable` and `dirty-checkout`:
   - `not-execution-card`, `card-closed`, `repo-unconfigured`, `wrong-repo`:
-    the card cannot start here. `wrong-repo` names the expected repo: the
-    user runs the start from that repo's checkout.
+    the card cannot start here. `wrong-repo` names the expected repo, and
+    its `checkouts` give each one's configured checkout: Step 5 offers to
+    carry the start there.
   - `no-branch-name`: Linear gives the card no branch name.
   - `unstarted-blocker`: a blocker has not started; name it and the
     inversion (this card depends on work nobody began).
@@ -118,8 +119,8 @@ Show, in this order:
     typecheck baseline, and the route from the card text. With no map, only
     the `--blocker` flags give the card blockers (the plan warns so): if the
     card text or its Linear relations name one, plan again with
-    `--blocker <CARD>`. `wrong-repo` still stops it: start it from that repo's
-    checkout.
+    `--blocker <CARD>`. `wrong-repo` still stops it, and Step 5 offers to carry
+    the start to that repo's checkout.
 - The blockers: each with its Linear state, its PRs, its `status`, and
   every blocker `warning` (for example a blocker merged on GitHub whose card
   is still open in Linear). List `skippedBlockers`.
@@ -172,6 +173,28 @@ Show, in this order:
   reviews" when `base.pushReviews` has entries. When `base.note` ends with
   "fetch to decide", the blocker heads are not fetched yet: run `fetch` with the plan's `approve` hash
   (Step 7), then plan again and show the new plan.
+- `stop` for `wrong-repo`: nothing runs here. Offer to carry the start to
+  the repo the reason names, at its `checkouts[].checkout` (with several,
+  ask which repo first). A `checkout` of null means the config names none:
+  ask the user for the folder. How depends on where this session runs:
+  - Claude desktop app (the session tools `start_session` and
+    `change_directory` exist): ask once, two options, and never pick for
+    the user. Recommend a new session when this session has work of its own
+    (uncommitted changes, an open PR, another task); recommend moving this
+    session when the start is all it was opened for.
+    - New session: `start_session` with `cwd` the checkout (or the user's
+      saved preset for that folder), the prompt
+      `/keiron-sequencer:start <CARD>` with the same blocker flags, and a
+      background that names the `wrong-repo` stop. The app nests it under
+      this session, in this repo's sidebar group; right after it starts,
+      `detach_session` it so it lands in its own repo's group. Say that a
+      detached session no longer reports back here.
+    - This session: `change_directory` to the checkout. The move applies
+      when the turn ends, so end the turn saying so, and plan again from
+      the new checkout on the next turn.
+  - Claude Code CLI (no session tools): tell the user to run
+    `/keiron-sequencer:start <CARD>` from a session opened in that checkout,
+    and give its path. Never `cd` there from this session.
 - `ask` for an unverified blocker: ask the user, then plan again with one of:
   - `--blocker-pr <CARD>=<PR url>`, when the user gives the blocker's PR;
   - `--blocker-branch <CARD>=<branch>`, when the user gives the blocker's
