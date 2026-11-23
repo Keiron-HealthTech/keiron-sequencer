@@ -85,12 +85,18 @@ function onActiveRun(home, ref, fn, lock) {
   return withLock(dir, () => fn(dir, readState(dir)), lock);
 }
 
+const treeStatuses = track => JSON.stringify(Object.entries(track.repos).map(([d, r]) => [d, r.status]));
+
+// A merge or rewind (generation), a pause or abandon (run status), or a teardown (a tree's status) since before.
+const movedSince = (state, before, trackId) => state.tracks[trackId].generation !== before.tracks[trackId].generation
+  || state.status !== before.status || treeStatuses(state.tracks[trackId]) !== treeStatuses(before.tracks[trackId]);
+
 // The second locked section of a command whose heavy work ran outside the lock: it writes onto the state read here, never
-// onto the copy the work started from, and only while no merge or rewind has moved the track's generation.
-function relock(dir, lock, trackId, generation, fn) {
+// onto the copy the work started from, and nothing at all if the run or the track moved since section 1 read before.
+function relock(dir, lock, trackId, before, fn) {
   return withLock(dir, () => {
     const state = readState(dir);
-    return state.tracks[trackId].generation === generation ? fn(state) : ok({ action: 'stale', track: trackId });
+    return movedSince(state, before, trackId) ? ok({ action: 'stale', track: trackId }) : fn(state);
   }, lock);
 }
 
@@ -296,7 +302,7 @@ async function next(args, { home, now, gh, git, transcripts, dataDir, sleep, run
   } catch (e) {
     failure = e;
   }
-  return relock(dir, lock, trackId, state.tracks[trackId].generation, fresh => {
+  return relock(dir, lock, trackId, state, fresh => {
     adoptReplay(fresh, state, work, trackId);
     saveState(dir, fresh, now());
     if (failure && !failure.setup) throw failure;
@@ -444,7 +450,7 @@ async function tree(args, { home, now, git, gh, runSetup, lock }) {
     if (!e.setup) throw e;
     failure = e;
   }
-  return relock(dir, lock, trackId, state.tracks[trackId].generation, fresh => {
+  return relock(dir, lock, trackId, state, fresh => {
     const track = fresh.tracks[trackId];
     copyMoved(track.repos, work.tracks[trackId].repos, state.tracks[trackId].repos);
     if (failure) {
@@ -609,7 +615,7 @@ async function end(args, { home, dataDir, now, git, transcripts, runSetup, lock 
       if (check.ran && !check.ok) return refusedForTypecheck(repoDir, log, check);
     }
   }
-  return relock(dir, lock, trackId, state.tracks[trackId].generation, fresh => endCard(dir, fresh, card, first, flags, { config, dataDir, now, git, transcripts }));
+  return relock(dir, lock, trackId, state, fresh => endCard(dir, fresh, card, first, flags, { config, dataDir, now, git, transcripts }));
 }
 
 async function endCard(dir, state, card, { notesFile, notes }, flags, { config, dataDir, now, git, transcripts }) {

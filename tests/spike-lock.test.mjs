@@ -1,7 +1,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run } from '../scripts/spike.mjs';
@@ -40,6 +40,35 @@ test('a lock held by a dead pid is taken over', async () => {
   const release = await acquireLock(dir, { pid: 4343, isAlive: () => false, waitMs: 0 });
   assert.equal(holder(dir), '4343\n');
   release();
+});
+
+// The winner of the dead lock gets the dead holder's pid back: the loser saw that pid dead and must still not take it.
+test('two waiters facing the same dead lock never hold it together, even when the winner has the dead pid', async () => {
+  const dir = lockDir();
+  writeFileSync(join(dir, 'run.lock'), '4242\n');
+  const live = new Set();
+  let holders = 0;
+  let most = 0;
+  const hold = release => {
+    most = Math.max(most, ++holders);
+    return () => { holders--; release(); };
+  };
+  let winner = null;
+  const isAlive = pid => {
+    if (winner) return live.has(pid);
+    winner = acquireLock(dir, { pid: 4242, isAlive: () => false }).then(hold);
+    live.add(4242);
+    return false;
+  };
+  const loser = acquireLock(dir, { pid: 4343, isAlive, pollMs: 5 }).then(hold);
+  const releaseWinner = await winner;
+  assert.equal(holder(dir), '4242\n');
+  setTimeout(() => { live.delete(4242); releaseWinner(); }, 30);
+  const releaseLoser = await loser;
+  assert.equal(most, 1);
+  assert.equal(holder(dir), '4343\n');
+  releaseLoser();
+  assert.deepEqual(readdirSync(dir), []);
 });
 
 test('by default a lock whose process is gone is taken over, and a live one is waited on until waitMs', async () => {
@@ -116,4 +145,35 @@ test('rerunning end after a kill mid-check ends the card once', async () => {
   assert.deepEqual(state.tracks.t1.repos.backend.log.map(e => e.name), ['00001-new']);
   assert.deepEqual(walk(join(dir, 'patches')), ['backend/00001-new.patch']);
   assert.deepEqual(walk(dataDir), [`${SLUG}/CRM-1.json`]);
+});
+
+test('an abandon that lands during tree\'s setup makes tree stale, and the tree record stays removed', async () => {
+  const fixture = spikeFixture({ config: config => ({ ...config, repos: { backend: { ...config.repos.backend, setup: [['make', 'deps']] } } }) });
+  const { deps, home, scratch } = fixture;
+  const { runId } = JSON.parse((await run(['begin', PROJECT_URL], deps)).stdout);
+  const dir = join(home, SLUG, 'runs', runId);
+  fixture.at('2026-11-10T10:01:00.000Z');
+  assert.equal((await run(['next'], deps)).code, 0);
+  const failed = await run(['tree', 'backend'], { ...deps, runSetup: fakeSetup({ 'make deps': 2 }).run });
+  assert.equal(JSON.parse(failed.stdout).action, 'setup-failed');
+  assert.equal(stateOf(dir).tracks.t1.repos.backend.status, 'setup');
+
+  const treePath = join(dir, 'trees', 't1', 'backend');
+  let abandoned = null;
+  const git = (args, opts = {}) => {
+    const out = deps.git(args, opts);
+    if (!abandoned && args[0] === 'write-tree' && opts.cwd === treePath) {
+      abandoned = spawnSync(process.execPath, [SPIKE, 'abandon', '--discard'], {
+        env: { ...SANDBOX_ENV, HOME: scratch, KEIRON_SEQUENCER_HOME: home }, encoding: 'utf8',
+      });
+    }
+    return out;
+  };
+  const r = await run(['tree', 'backend'], { ...deps, git, runSetup: fakeSetup().run });
+  assert.equal(abandoned?.status, 0, abandoned?.stderr);
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), { action: 'stale', track: 't1' });
+  const state = stateOf(dir);
+  assert.equal(state.status, 'abandoned');
+  assert.equal(state.tracks.t1.repos.backend.status, 'removed');
 });

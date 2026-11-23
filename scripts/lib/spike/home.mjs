@@ -1,4 +1,4 @@
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 
@@ -90,9 +90,25 @@ function holderAlive(holder, isAlive) {
   }
 }
 
-// Read again just before removing, so a waiter that lost the race to another taker does not remove the new holder's lock.
-function removeDeadLock(path, holder) {
-  if (readHolder(path) === holder) rmSync(path, { force: true });
+// A rename or a re-read could still remove a lock another waiter has just re-created. The claim is a hard link only one
+// waiter can make, and it pins the file that waiter saw: only that file's holder is checked again, and only it is removed.
+// True when the lock is gone and worth contending for again.
+function takeOver(path, holder, isAlive) {
+  const claim = `${path}.dead-${holder}`;
+  try {
+    linkSync(path, claim);
+  } catch (e) {
+    if (e.code === 'ENOENT') return true;
+    if (e.code === 'EEXIST') return false;
+    throw e;
+  }
+  try {
+    if (readHolder(claim) !== holder || holderAlive(holder, isAlive)) return false;
+    rmSync(path, { force: true });
+    return true;
+  } finally {
+    rmSync(claim, { force: true });
+  }
 }
 
 export async function acquireLock(dir, { pid = process.pid, waitMs = 30_000, pollMs = 100, isAlive = p => process.kill(p, 0) } = {}) {
@@ -107,10 +123,7 @@ export async function acquireLock(dir, { pid = process.pid, waitMs = 30_000, pol
       if (e.code !== 'EEXIST') throw e;
       const holder = readHolder(path);
       if (holder === null) continue;
-      if (!holderAlive(holder, isAlive)) {
-        removeDeadLock(path, holder);
-        continue;
-      }
+      if (!holderAlive(holder, isAlive) && takeOver(path, holder, isAlive)) continue;
       if (Date.now() >= deadline) throw new Error(`the run is locked by pid ${holder || 'unknown'}: remove ${path} only if that process is gone`);
       await pause(pollMs);
       continue;
