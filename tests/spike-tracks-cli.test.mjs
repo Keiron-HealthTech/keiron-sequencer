@@ -107,7 +107,7 @@ test('tracks and status list each track with done/total', async () => {
   ];
   const tracks = await spike(['tracks']);
   assert.equal(tracks.code, 0, tracks.stderr);
-  assert.deepEqual(json(tracks), { action: 'tracks', tracks: expected });
+  assert.deepEqual(json(tracks), { action: 'tracks', workers: 1, checks: 1, tracks: expected });
   const status = await spike(['status']);
   assert.equal(status.code, 0, status.stderr);
   assert.deepEqual(json(status).tracks, expected);

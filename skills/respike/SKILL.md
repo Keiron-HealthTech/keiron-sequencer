@@ -335,7 +335,7 @@ the user wants. Anything other than an explicit yes is a no.
 ## Step 5: Begin
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs begin <project ref> --approve <hash> [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]... [--max-tokens <n>] [--max-cards <n>] [--box <n>] [--session-file <transcript.jsonl>]
+node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs begin <project ref> --approve <hash> [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]... [--max-tokens <n>] [--max-cards <n>] [--box <n>] [--workers <n>] [--checks <n>] [--session-file <transcript.jsonl>]
 ```
 
 It recomputes the plan and creates the run only when the hash matches and
@@ -343,7 +343,8 @@ the plan is `ready`. It prints `mark`, `runId`, the `plan` and `respike`
 counts (`selected`, `replay`, `spike`, `built`). The caps work as in
 /keiron-sequencer:spike: both optional, checked only between cards, a fresh budget at
 every begin, and replays count toward no cap. `--box` is warn-only and fixed
-at the card's first window. Exit 5 means nothing was created: the plan moved
+at the card's first window. `--workers` (default 3) is how many tracks run at once and `--checks` (default 1) how many
+typechecks, test runs and setup commands may run at once; both are stored on the run and `status` and `tracks` print them. Exit 5 means nothing was created: the plan moved
 (a PR head or a branch moved), it is not `ready`, or a run is open. On exit 5, show the new plan and ask again,
 after a preflight with the same flags.
 

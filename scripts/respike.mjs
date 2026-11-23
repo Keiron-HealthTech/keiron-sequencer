@@ -33,7 +33,7 @@ const USAGE = [
   `usage: node scripts/respike.mjs preflight <project ref> ${SELECT}`,
   `usage: node scripts/respike.mjs fetch <project ref> --approve <hash> ${SELECT}`,
   `usage: node scripts/respike.mjs fast-forward <project ref> --repo <repoDir> --approve <hash> ${SELECT}`,
-  `usage: node scripts/respike.mjs begin <project ref> --approve <hash> ${SELECT} [--max-tokens <n>] [--max-cards <n>] [--box <n>] [--session-file <transcript.jsonl>]`,
+  `usage: node scripts/respike.mjs begin <project ref> --approve <hash> ${SELECT} [--max-tokens <n>] [--max-cards <n>] [--box <n>] [--workers <n>] [--checks <n>] [--session-file <transcript.jsonl>]`,
   `usage: node scripts/respike.mjs config <project ref> --out <draft.json> [--root <dir>]... ${SELECT}`,
   'usage: node scripts/respike.mjs config --draft <draft.json> [--approve <hash>]',
   'usage: node scripts/respike.mjs report <project ref> [--run <runId>]',
@@ -217,6 +217,7 @@ async function begin(args, deps) {
     const runId = runIdAt(at);
     const project = { id: built.raw.project.id, slug: plan.project.slug, name: plan.project.name, url: built.raw.project.url };
     const state = createRun({ runId, project, plan: runPlan(built, at), home: deps.home, dataDir: deps.dataDir, now: at });
+    Object.assign(state, { workers: limits.workers ?? 3, checks: limits.checks ?? 1 });
     const execution = openExecution(state, { now: at, sessions: sessionsFrom(a.flags, at), ...limits });
     const mark = issueMark(state, execution, at);
     await withLock(runDir(deps.home, project.slug, runId), () => saveState(runDir(deps.home, project.slug, runId), state, at));

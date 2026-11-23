@@ -32,6 +32,8 @@ test('status shows the run, the execution, the current card\'s live spend agains
   const out = JSON.parse(r.stdout);
   assert.deepEqual(out, {
     action: 'status',
+    workers: 1,
+    checks: 1,
     runId,
     status: 'active',
     project: { slug: out.project.slug, name: 'Tracer project' },

@@ -98,7 +98,7 @@ Install: the user installs it as a plugin; do not run these yourself:
 
 ## Step 1: Begin or resume
 
-`node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs begin <project ref> [--max-tokens <n>] [--max-cards <n>] [--box <n>] [--session-file <transcript.jsonl>]`
+`node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs begin <project ref> [--max-tokens <n>] [--max-cards <n>] [--box <n>] [--workers <n>] [--checks <n>] [--session-file <transcript.jsonl>]`
 
 The ref is the project URL, slug, UUID or identifier. `begin` reads Linear
 once, orders the open execution cards (blockers first, then milestone, then
@@ -118,6 +118,10 @@ cards, and prints `{mark, runId, resumed, project, plan}`.
   that start later. Existing-PR cards never get a box. Never mark the scope
   incomplete for a box overrun: `scope.complete: false` is for scope that was
   genuinely left out, with a note.
+- `--workers <n>` (default 1) is how many tracks run at once; above 1 the order is split into its
+  connected tracks. `--checks <n>` (default 1) is how many typechecks, test runs and setup commands may run
+  at once. Both are stored on the run, `status` and `tracks` print them, and a resume keeps them unless the
+  flag is passed again (a resumed run keeps its tracks).
 - `--session-file` names this session's transcript when the CLI cannot find
   it by its mark.
 - A project with a paused or interrupted run resumes it: same `runId`, done

@@ -255,3 +255,22 @@ test('completing a respike run tears its trees down and prunes the runs no live 
   assert.deepEqual([...done.pruned].sort(), stale);
   assert.deepEqual(readdirSync(join(f.home, SLUG, 'runs')).sort(), [f.oldRunId, runId]);
 });
+
+test('respike begin defaults to 3 workers and 1 check, takes --workers and --checks, and refuses a non-positive count with exit 2', async () => {
+  const f = respikeFixture();
+  const plan = json(await f.run('preflight', pick));
+  for (const bad of [['--workers', '0'], ['--checks', '0'], ['--workers', 'two']]) {
+    assert.equal((await f.run('begin', [...pick, '--approve', plan.approve, ...bad])).code, 2, bad.join(' '));
+  }
+  f.at('2026-11-10T10:01:00.000Z');
+  const { runId } = json(await f.run('begin', [...pick, '--approve', plan.approve]));
+  const stateOf = id => JSON.parse(readFileSync(join(runDir(f.home, SLUG, id), 'run.json'), 'utf8'));
+  assert.deepEqual([stateOf(runId).workers, stateOf(runId).checks], [3, 1]);
+  assert.equal(json(await f.spike(['tracks'])).workers, 3);
+
+  const other = respikeFixture();
+  const second = json(await other.run('preflight', pick));
+  const made = json(await other.run('begin', [...pick, '--approve', second.approve, '--workers', '2', '--checks', '2']));
+  const kept = JSON.parse(readFileSync(join(runDir(other.home, SLUG, made.runId), 'run.json'), 'utf8'));
+  assert.deepEqual([kept.workers, kept.checks], [2, 2]);
+});

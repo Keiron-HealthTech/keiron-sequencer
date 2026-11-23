@@ -1,6 +1,6 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { run } from '../scripts/spike.mjs';
 import {
@@ -10,7 +10,7 @@ import {
 import { expandChanged } from '../scripts/lib/spike/typecheck.mjs';
 import { tempDir } from './helpers/git-sandbox.mjs';
 import { guardNetwork } from './helpers/no-network.mjs';
-import { PROJECT_URL, SLUG, spikeFixture } from './helpers/spike-fixture.mjs';
+import { activeRunDir, blocks, issue, PROJECT_URL, SLUG, spikeFixture } from './helpers/spike-fixture.mjs';
 
 guardNetwork();
 
@@ -419,4 +419,49 @@ test('spikeTypecheck validates as argv and expands {changed}', () => {
   assert.ok(paths(validateConfig(config({ api: repo({ spikeTypecheckTimeoutMs: 0 }) }))).includes('repos.api.spikeTypecheckTimeoutMs'));
   assert.ok(REPO_KEYS.includes('spikeTypecheck') && REPO_KEYS.includes('spikeTypecheckTimeoutMs'));
   assert.deepEqual(expandChanged(['tsc', '{changed}', '--x'], ['a.ts', 'b.ts']), ['tsc', 'a.ts', 'b.ts', '--x']);
+});
+
+const stored = f => JSON.parse(readFileSync(join(activeRunDir(f.home), 'run.json'), 'utf8'));
+const three = () => spikeFixture({ issues: ['CRM-1', 'CRM-2', 'CRM-3'].map(k => issue(k)) });
+
+test('spike begin defaults to 1 worker and 1 check and keeps the whole order on one track', async () => {
+  const f = three();
+  assert.equal((await run(['begin', PROJECT_URL], f.deps)).code, 0);
+  const state = stored(f);
+  assert.deepEqual([state.workers, state.checks], [1, 1]);
+  assert.deepEqual(Object.entries(state.tracks).map(([id, t]) => [id, t.cards]), [['t1', ['CRM-1', 'CRM-2', 'CRM-3']]]);
+});
+
+test('spike begin with --workers above 1 splits the order into its connected tracks and stores the counts', async () => {
+  const f = spikeFixture({ issues: [issue('CRM-1', { relations: blocks('CRM-2') }), issue('CRM-2'), issue('CRM-3')] });
+  assert.equal((await run(['begin', PROJECT_URL, '--workers', '2', '--checks', '2'], f.deps)).code, 0);
+  const state = stored(f);
+  assert.deepEqual([state.workers, state.checks], [2, 2]);
+  assert.deepEqual(Object.entries(state.tracks).map(([id, t]) => [id, t.cards]), [['t1', ['CRM-1', 'CRM-2']], ['t2', ['CRM-3']]]);
+});
+
+test('--workers and --checks must be positive integers: anything else exits 2 before the run is created', async () => {
+  const f = three();
+  for (const bad of [['--workers', '0'], ['--workers', 'x'], ['--checks', '0'], ['--checks', '1.5'], ['--workers', '-1']]) {
+    assert.equal((await run(['begin', PROJECT_URL, ...bad], f.deps)).code, 2, bad.join(' '));
+  }
+  assert.equal(existsSync(join(f.home, SLUG, 'runs')), false);
+});
+
+test('resume keeps the stored workers, checks and tracks unless the flag is passed, and a passed flag changes only its count', async () => {
+  const f = spikeFixture({ issues: [issue('CRM-1', { relations: blocks('CRM-2') }), issue('CRM-2'), issue('CRM-3')] });
+  assert.equal((await run(['begin', PROJECT_URL, '--workers', '2', '--checks', '2'], f.deps)).code, 0);
+  assert.equal((await run(['begin', PROJECT_URL], f.deps)).code, 0);
+  assert.deepEqual([stored(f).workers, stored(f).checks, Object.keys(stored(f).tracks)], [2, 2, ['t1', 't2']]);
+  assert.equal((await run(['begin', PROJECT_URL, '--workers', '1'], f.deps)).code, 0);
+  assert.deepEqual([stored(f).workers, stored(f).checks, Object.keys(stored(f).tracks)], [1, 2, ['t1', 't2']]);
+});
+
+test('status and tracks report the run\'s workers and checks, 1 and 1 for a run that stored none', async () => {
+  const f = three();
+  assert.equal((await run(['begin', PROJECT_URL, '--workers', '3', '--checks', '2'], f.deps)).code, 0);
+  for (const cmd of ['status', 'tracks']) {
+    const out = JSON.parse((await run([cmd], f.deps)).stdout);
+    assert.deepEqual([out.workers, out.checks], [3, 2], cmd);
+  }
 });

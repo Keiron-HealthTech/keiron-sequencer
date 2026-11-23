@@ -5,6 +5,7 @@ import { basename, join, resolve } from 'node:path';
 import { fail, isEntry, lines, ok, parseArgs, redacted } from './lib/cli.mjs';
 import { analyzeProject } from './lib/graph.mjs';
 import { fetchDescriptions, fetchProject, fetchProjectMap, parseProjectRef, readLinearKey } from './lib/linear-fetch.mjs';
+import { tracksOf } from './lib/spike/tracks.mjs';
 import { withCheckSlot } from './lib/spike/checks.mjs';
 import { checkNotes, crossedRecordFile, finishCard, finishFixup, NOTES_ALLOWED, notesPath, notesTemplate, rewriteUsage } from './lib/spike/build-record.mjs';
 import { deriveRepo, mergeRiskAreas } from './lib/spike/derive.mjs';
@@ -28,7 +29,7 @@ import { applyPrDiff, assertLastTree, checkTree, discardTree, guardTree, openTre
 import { bindSession, lastEntryAt, withoutMarked, sessionFiles, transcriptsRoot, weighted, windowUsage } from './lib/spike/usage-window.mjs';
 
 const USAGE = [
-  'usage: node scripts/spike.mjs begin <project ref> [--max-tokens <n>] [--max-cards <n>] [--box <n>] [--session-file <transcript.jsonl>]',
+  'usage: node scripts/spike.mjs begin <project ref> [--max-tokens <n>] [--max-cards <n>] [--box <n>] [--workers <n>] [--checks <n>] [--session-file <transcript.jsonl>]',
   'usage: node scripts/spike.mjs next [--track <id>] [--project <project ref>]',
   'usage: node scripts/spike.mjs tree <repoDir> [--track <id>] [--project <project ref>]',
   'usage: node scripts/spike.mjs notes-template <CARD> [--track <id>] [--project <project ref>]',
@@ -259,7 +260,10 @@ async function startRun(ref, key, flags, { fetchImpl, now, home, dataDir, gh, gi
   const at = now();
   const runId = runIdAt(at);
   const project = { id: raw.project.id, slug: raw.project.slug, name: raw.project.name, url: raw.project.url };
+  const workers = flags.limits.workers ?? 1;
+  if (workers > 1) plan.tracks = tracksOf({ order, edges: plan.edges, links: [] });
   const state = createRun({ runId, project, plan, home, dataDir, now: at });
+  Object.assign(state, { workers, checks: flags.limits.checks ?? 1 });
   const execution = openExecution(state, { now: at, sessions: sessionsFrom(flags, at), ...flags.limits });
   const mark = issueMark(state, execution, at);
   const dir = runDir(home, project.slug, runId);
@@ -306,6 +310,7 @@ async function resumeRun({ dir, state }, flags, { now, git, dataDir, transcripts
   await settleWindows(state, { dataDir, transcripts, now });
   closeOpenExecutions(state);
   state.status = 'active';
+  for (const k of ['workers', 'checks']) if (flags.limits[k] != null) state[k] = flags.limits[k];
   const execution = openExecution(state, { now: at, sessions: sessionsFrom(flags, at), ...flags.limits });
   const mark = issueMark(state, execution, at);
   saveState(dir, state, at);
@@ -1134,7 +1139,8 @@ const trackList = state => Object.entries(state.tracks).map(([id, t]) => ({
 async function tracks(args, { home }) {
   const a = parseArgs(args, ['--project']);
   if (!a || a.positional.length) return fail(2, ...USAGE);
-  return ok({ action: 'tracks', tracks: trackList(activeRun(home, a.flags.project).state) });
+  const { state } = activeRun(home, a.flags.project);
+  return ok({ action: 'tracks', workers: state.workers ?? 1, checks: state.checks ?? 1, tracks: trackList(state) });
 }
 
 async function status(args, { home, now, transcripts }) {
@@ -1148,6 +1154,8 @@ async function status(args, { home, now, transcripts }) {
     action: 'status',
     runId: state.runId,
     status: state.status,
+    workers: state.workers ?? 1,
+    checks: state.checks ?? 1,
     project: { slug: state.project.slug, name: state.project.name },
     execution: {
       id: execution.id, startedAt: execution.startedAt, endedAt: execution.endedAt, endReason: execution.endReason, caps: execution.caps, box: execution.box,
