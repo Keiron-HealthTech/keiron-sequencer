@@ -253,6 +253,7 @@ test('a crossing recorded after C ended re-spikes C too', async () => {
   await open('CRM-1', 't1', { 'CRM-1.txt': 'CRM-1\n', 'CRM-2.txt': 'CRM-2 changed by CRM-1\n' });
   const ended = await end('CRM-1', 't1');
   assert.deepEqual(ended.crossingSuspects.map(s => s.card), ['CRM-2']);
+  const spiked = record('CRM-1');
 
   const r = await cross('t1', 'CRM-1', 'CRM-2', 'changes');
   assert.equal(r.code, 0, r.stderr);
@@ -263,6 +264,114 @@ test('a crossing recorded after C ended re-spikes C too', async () => {
   assert.deepEqual(files(treeOf(dir, 't2')), ['CRM-2.txt']);
   const next = json(await spike(['next', '--track', 't2']));
   assert.deepEqual([next.card, next.wip], ['CRM-1', undefined]);
+  assert.deepEqual(next.previous, { spikedAt: spiked.spikedAt, findings: spiked.findings, decisions: spiked.decisions, openDecisions: spiked.openDecisions });
+  const template = json(await spike(['notes-template', 'CRM-1', '--track', 't2']));
+  assert.deepEqual(template.notes.priorFindings, []);
+});
+
+test('a crossing recorded after C ended also re-spikes B\'s done dependents numbered after C', async () => {
+  const { dir, open, end, cross } = await tracksRun(
+    [issue('CRM-1', { relations: blocks('CRM-3') }), issue('CRM-2'), issue('CRM-3')], { t1: ['CRM-1', 'CRM-3'], t2: ['CRM-2'] },
+  );
+  for (const card of ['CRM-1', 'CRM-3']) {
+    await open(card, 't1');
+    await end(card, 't1');
+  }
+  await open('CRM-2', 't2', { 'CRM-1.txt': 'CRM-1 changed by CRM-2\n' });
+  await end('CRM-2', 't2');
+  const r = await cross('t2', 'CRM-2', 'CRM-1', 'changes');
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(json(r).respiked, ['CRM-2', 'CRM-3']);
+  assert.deepEqual(files(treeOf(dir, 't1')), ['CRM-1.txt']);
+  assert.deepEqual(readState(dir).tracks.t1.cards, ['CRM-1', 'CRM-2', 'CRM-3']);
+});
+
+test('fixups that leave every live log are marked droppedBy and leave the fixed card\'s record', async () => {
+  const { dir, spike, open, end, cross, record } = await tracksRun(
+    [issue('CRM-1', { relations: blocks('CRM-2') }), issue('CRM-2'), issue('CRM-3', { relations: blocks('CRM-4') }), issue('CRM-4')],
+    { t1: ['CRM-1', 'CRM-2'], t2: ['CRM-3', 'CRM-4'] },
+  );
+  await open('CRM-1', 't1');
+  await end('CRM-1', 't1');
+  await open('CRM-3', 't2');
+  await end('CRM-3', 't2');
+  await open('CRM-2', 't1', { 'CRM-1.txt': 'CRM-1 adapted\n' });
+  const fixed = await spike(['fixup', '--track', 't1', '--fixes', 'CRM-1', '--slug', 'adapt', '--note', 'Adapts CRM-1.', '--repo', 'backend', '--', 'CRM-1.txt']);
+  assert.equal(fixed.code, 0, fixed.stderr);
+  const patch = 'backend/fixup-1-from-2-adapt.patch';
+  assert.deepEqual(record('CRM-1').fixups.received.map(f => f.patch), [patch]);
+
+  const r = await cross('t1', 'CRM-2', 'CRM-4', 'depends');
+  assert.equal(r.code, 0, r.stderr);
+  const state = readState(dir);
+  assert.deepEqual(state.fixups.map(f => [f.patch, f.droppedBy]), [[patch, { crossing: 0 }]]);
+  assert.deepEqual(record('CRM-1').fixups.received, []);
+  assert.deepEqual(record('CRM-1').mergedFrom, { track: 't1', crossing: 0 });
+  assert.equal(readFileSync(join(treeOf(dir, 't2'), 'CRM-1.txt'), 'utf8'), 'CRM-1\n');
+  assert.match(readFileSync(json(r).wip, 'utf8'), /\+CRM-1 adapted/);
+});
+
+test('cross into or from a track whose replay is in flight answers 75; a dead replay mark does not count', async () => {
+  const { f, dir, open, end, cross } = await tracksRun([issue('CRM-1'), issue('CRM-2')], { t1: ['CRM-1'], t2: ['CRM-2'] });
+  await open('CRM-2', 't2');
+  await end('CRM-2', 't2');
+  await open('CRM-1', 't1');
+  const mark = (track, pid) => {
+    const state = readState(dir);
+    state.tracks[track].replaying = pid ? { pid } : undefined;
+    saveState(dir, state, f.deps.now());
+  };
+  for (const track of ['t2', 't1']) {
+    mark(track, process.pid);
+    const r = await cross('t1', 'CRM-1', 'CRM-2', 'depends');
+    assert.equal(r.code, 75, r.stderr);
+    assert.deepEqual(json(r), { action: 'busy', replaying: track });
+    assert.equal(readState(dir).crossings.length, 0);
+    mark(track, null);
+  }
+  const gone = spawnSync(process.execPath, ['-e', ''], { env: { HOME: f.scratch } }).pid;
+  mark('t2', gone);
+  const r = await cross('t1', 'CRM-1', 'CRM-2', 'depends');
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(json(r).action, 'merged');
+});
+
+test('two tracks crossing each other mid-card: the second cross merges, and the first applies inside the track on its rerun', async () => {
+  const { dir, spike, open, end, cross } = await tracksRun(
+    [issue('CRM-1', { relations: blocks('CRM-2') }), issue('CRM-2'), issue('CRM-3', { relations: blocks('CRM-4') }), issue('CRM-4'), issue('CRM-5')],
+    { t1: ['CRM-1', 'CRM-2'], t2: ['CRM-3', 'CRM-4', 'CRM-5'] },
+  );
+  await open('CRM-1', 't1');
+  await end('CRM-1', 't1');
+  for (const card of ['CRM-3', 'CRM-4']) {
+    await open(card, 't2');
+    await end(card, 't2');
+  }
+  await open('CRM-2', 't1', { 'CRM-2.txt': 'CRM-2\n', 'CRM-3.txt': 'CRM-3 changed by CRM-2\n' });
+  await open('CRM-5', 't2');
+  assert.equal(json(await cross('t1', 'CRM-2', 'CRM-3', 'changes')).action, 'deferred');
+
+  const merged = await cross('t2', 'CRM-5', 'CRM-1', 'depends');
+  assert.equal(merged.code, 0, merged.stderr);
+  assert.deepEqual([json(merged).action, json(merged).track, json(merged).merged, json(merged).parked], ['merged', 't1', 't2', 'CRM-2']);
+  let state = readState(dir);
+  assert.deepEqual(['CRM-2', 'CRM-5'].map(k => state.cards[k].status), ['pending', 'pending']);
+  assert.equal(state.tracks.t1.current, null);
+  assert.match(readFileSync(join(dir, 'wip', 'CRM-2.patch'), 'utf8'), /\+CRM-3 changed by CRM-2/);
+  assert.deepEqual(files(treeOf(dir, 't1')), ['CRM-1.txt', 'CRM-3.txt', 'CRM-4.txt']);
+  assert.ok(clean(dir, 't1'));
+  assert.equal(state.crossings[0].pending, true);
+
+  const applied = await cross('t1', 'CRM-2', 'CRM-3', 'changes');
+  assert.equal(applied.code, 0, applied.stderr);
+  assert.deepEqual(json(applied), { action: 'applied', crossing: 0, track: 't1', kind: 'changes', respiked: ['CRM-4'] });
+  state = readState(dir);
+  assert.deepEqual([state.crossings[0].pending, state.crossings[0].fromTrack, state.crossings[0].toTrack], [undefined, 't1', 't1']);
+  assert.deepEqual([state.cards['CRM-4'].status, state.cards['CRM-4'].respikedBy], ['pending', { crossing: 0 }]);
+  assert.deepEqual(files(treeOf(dir, 't1')), ['CRM-1.txt', 'CRM-3.txt']);
+  assert.deepEqual(state.tracks.t1.cards, ['CRM-1', 'CRM-3', 'CRM-2', 'CRM-4', 'CRM-5']);
+  const next = json(await spike(['next', '--track', 't1']));
+  assert.deepEqual([next.card, next.wip], ['CRM-2', join(dir, 'wip', 'CRM-2.patch')]);
 });
 
 test('a replay that goes stale leaves a tree another command moved where that command put it', async () => {
@@ -282,6 +391,7 @@ test('a replay that goes stale leaves a tree another command moved where that co
     if (!merged && args[0] === 'ls-tree' && opts.cwd === tree) {
       merged = true;
       const state = readState(dir);
+      assert.deepEqual(state.tracks.t1.replaying, { pid: process.pid });
       state.tracks.t1.generation += 1;
       saveState(dir, state, f.deps.now());
       writeFileSync(join(tree, 'src', 'list.js'), rebuilt);
@@ -293,6 +403,7 @@ test('a replay that goes stale leaves a tree another command moved where that co
   assert.equal(r.code, 0, r.stderr);
   assert.deepEqual(json(r), { action: 'stale', track: 't1' });
   assert.equal(readFileSync(join(tree, 'src', 'list.js'), 'utf8'), rebuilt);
+  assert.equal(readState(dir).tracks.t1.replaying, undefined);
 });
 
 test('while a cross runs both tracks answer 75; a pause makes it stale, the crossing stays pending and a rerun applies it', async () => {
@@ -364,6 +475,7 @@ test('in a respike run a merge keeps a replayed card\'s record as replayed and a
   assert.equal((await f.spike(['end', C, '--track', 't2'])).code, 0);
   const b = await work(R.B, 't1', 4);
   assert.deepEqual(b.replayed.map(e => [e.card, e.status]), [[R.A, 'replayed']]);
+  assert.equal(readState(dir).tracks.t1.replaying, undefined);
 
   f.at(at(5));
   const r = await f.spike(['cross', '--track', 't1', '--card', R.B, '--needs', C, '--kind', 'depends', '--note', 'B needs C.']);

@@ -57,9 +57,11 @@ const liveTracks = state => Object.entries(state.tracks).filter(([, t]) => !t.me
 
 const liveTarget = (state, id) => (state.tracks[id].mergedInto ? liveTarget(state, state.tracks[id].mergedInto) : id);
 
-// A merge whose process is gone holds nothing: a rerun of its cross takes it over.
-export const mergingCrossing = (state, trackId, isAlive = p => process.kill(p, 0)) => state.crossings
-  .find(c => c.merging && [c.fromTrack, c.toTrack].includes(trackId) && holderAlive(String(c.merging.pid), isAlive)) ?? null;
+// A mark whose process is gone holds nothing: a rerun takes it over.
+export const liveMark = (mark, isAlive = p => process.kill(p, 0)) => Boolean(mark) && holderAlive(String(mark.pid), isAlive);
+
+export const mergingCrossing = (state, trackId, isAlive) => state.crossings
+  .find(c => [c.fromTrack, c.toTrack].includes(trackId) && liveMark(c.merging, isAlive)) ?? null;
 
 // Exit 75 answers busy like a full check slot: the command changed nothing and is run again.
 export const mergingRefusal = c => Object.assign(exitError(75, `${c.fromTrack} is merging into ${c.toTrack}: run the command again once that cross ends`), {

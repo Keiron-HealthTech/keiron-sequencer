@@ -6,7 +6,7 @@ import { fail, isEntry, lines, ok, parseArgs, redacted } from './lib/cli.mjs';
 import { analyzeProject } from './lib/graph.mjs';
 import { fetchDescriptions, fetchProject, fetchProjectMap, parseProjectRef, readLinearKey } from './lib/linear-fetch.mjs';
 import { withCheckSlot } from './lib/spike/checks.mjs';
-import { checkNotes, finishCard, finishFixup, NOTES_ALLOWED, notesPath, notesTemplate, rewriteUsage } from './lib/spike/build-record.mjs';
+import { checkNotes, crossedRecordFile, finishCard, finishFixup, NOTES_ALLOWED, notesPath, notesTemplate, rewriteUsage } from './lib/spike/build-record.mjs';
 import { deriveRepo, mergeRiskAreas } from './lib/spike/derive.mjs';
 import { allowedRepos, loadConfig } from './lib/spike/config.mjs';
 import { ghRunner, gitRunner, setupRunner } from './lib/spike/exec.mjs';
@@ -22,7 +22,7 @@ import { cardPatchName, fixupPatchName, oldSideRanges, overlapCandidates, ranges
 import { scanPatch, SECRET_KINDS } from './lib/spike/secrets.mjs';
 import {
   activeRunFor, activeRuns, allRepos, capReached, closeOpenExecutions, createRun, executionSpend, issueMark, latestRun, mergingRefusal, noteStartTrees, openCardWindow,
-  mergingCrossing, openExecution, readState, saveState, timeBoxFor, trackIdOf, trackOfCard, unsettledWindows, waitingOn,
+  liveMark, mergingCrossing, openExecution, readState, saveState, timeBoxFor, trackIdOf, trackOfCard, unsettledWindows, waitingOn,
 } from './lib/spike/state.mjs';
 import { applyPrDiff, assertLastTree, checkTree, discardTree, guardTree, openTree, rebuildTree, teardownTrees, touchedCheckouts } from './lib/spike/trees.mjs';
 import { bindSession, lastEntryAt, withoutMarked, sessionFiles, transcriptsRoot, weighted, windowUsage } from './lib/spike/usage-window.mjs';
@@ -103,7 +103,7 @@ function relock(dir, lock, trackId, before, fn, onStale = () => {}) {
   return withLock(dir, () => {
     const state = readState(dir);
     if (!movedSince(state, before, trackId)) return fn(state);
-    onStale();
+    onStale(state);
     return ok({ action: 'stale', track: trackId });
   }, lock);
 }
@@ -336,7 +336,10 @@ async function next(args, { home, now, gh, git, transcripts, dataDir, sleep, run
   const deps = { home, now, config: () => loadConfig(home), gh, git, transcripts, dataDir, sleep, runSetup, slot };
   const first = await onActiveRun(home, a.flags.project, async (dir, state) => {
     const trackId = trackIdOf(state, a.flags.track);
-    return refusedNext(state, trackId) || !replayAhead(state, trackId) ? { result: await nextCard(dir, state, trackId, deps) } : { dir, state, trackId };
+    if (refusedNext(state, trackId) || !replayAhead(state, trackId)) return { result: await nextCard(dir, state, trackId, deps) };
+    state.tracks[trackId].replaying = { pid: process.pid };
+    saveState(dir, state, now());
+    return { dir, state, trackId };
   }, lock);
   if (first.result) return first.result;
   const { dir, trackId } = first;
@@ -346,6 +349,13 @@ async function next(args, { home, now, gh, git, transcripts, dataDir, sleep, run
     if (!step.state) return step.result ?? step;
     before = step.state;
   }
+}
+
+// The track's replay mark, set when next starts replaying, fences a cross until the last entry is kept or goes stale.
+function clearReplaying(dir, state, trackId, now) {
+  if (!state.tracks[trackId]?.replaying) return;
+  delete state.tracks[trackId].replaying;
+  saveState(dir, state, now());
 }
 
 // One replay entry: its tree work outside the lock, then a short locked section keeps it (state, patches, record) or, if the
@@ -362,10 +372,14 @@ async function replayStep(dir, trackId, before, replayed, { lock, ...deps }) {
       failure = e;
     }
   });
-  if (slotted.busy) return { result: busy({ replayed }) };
+  if (slotted.busy) {
+    await withLock(dir, () => clearReplaying(dir, readState(dir), trackId, now), lock);
+    return { result: busy({ replayed }) };
+  }
   return relock(dir, lock, trackId, before, async fresh => {
     adoptReplay(fresh, before, work, trackId);
     if (entry) fresh.tracks[trackId].status = 'active';
+    if (failure || refusedNext(fresh, trackId) || !replayAhead(fresh, trackId)) delete fresh.tracks[trackId].replaying;
     for (const w of entry?.writes ?? []) writeAtomic(w.path, w.text);
     saveState(dir, fresh, now());
     if (entry) replayed.push(entry.outcome);
@@ -373,7 +387,10 @@ async function replayStep(dir, trackId, before, replayed, { lock, ...deps }) {
     if (failure) return { result: { ...ok({ action: 'setup-failed', ...failure.setup, replayed }), code: 1, stderr: lines([failure.message]) } };
     if (refusedNext(fresh, trackId) || !replayAhead(fresh, trackId)) return { result: await nextCard(dir, fresh, trackId, deps, replayed) };
     return { state: fresh };
-  }, () => rollBackTrees(git, before, work, trackId));
+  }, fresh => {
+    rollBackTrees(git, before, work, trackId);
+    clearReplaying(dir, fresh, trackId, now);
+  });
 }
 
 const pendingCard = (state, trackId) => state.tracks[trackId].cards.find(k => state.cards[k].status !== 'done');
@@ -442,7 +459,7 @@ async function nextCard(dir, state, trackId, { now, ...deps }, replayed = []) {
   saveState(dir, state, at);
   return ok({
     mark, action: 'card', card, track: trackId, ...respike, ...replayContext(state.cards[card]), ...(resumed ? { resumed } : {}), title: planned.title, url: planned.url, description: planned.description,
-    origin: planned.origin, pr: planned.pr, ...pr, offProject: planned.offProject, previous: previousOf(deps.dataDir, state.project.slug, card, state.runId),
+    origin: planned.origin, pr: planned.pr, ...pr, offProject: planned.offProject, previous: previousOf(deps.dataDir, state.project.slug, card, state.runId, { sameRun: Boolean(state.cards[card].respikedBy) }),
     ...(existsSync(wipPath(dir, card)) ? { wip: wipPath(dir, card) } : {}), trees: openTrees(state, trackId), window: { start: window.start },
   });
 }
@@ -684,8 +701,10 @@ async function cross(args, { home, now, git, lock, slot, runSetup, dataDir, tran
   let failure = null;
   const slotted = await withCheckSlot(dir, { slots: state.checks ?? 1, command: `cross ${f.card}`, ...slot }, () => {
     try {
-      const wip = wipOf(git, work, from, f.card, dir);
-      outcome = { wip, ...mergeTracks(work, { from, into, edge: { from: f.needs, to: f.card }, kind: f.kind, crossing: index }, { git, dir, config, runSetup, dataDir }) };
+      const parked = parkTrack(git, work, into, dir);
+      const wip = from === into ? null : wipOf(git, work, from, f.card, dir);
+      const edge = { from: f.needs, to: f.card };
+      outcome = { wip, parked, ...mergeTracks(work, { from, into, edge, kind: f.kind, crossing: index, parked }, { git, dir, config, runSetup, dataDir }) };
     } catch (e) {
       failure = e;
     }
@@ -699,7 +718,7 @@ async function cross(args, { home, now, git, lock, slot, runSetup, dataDir, tran
   }
   return withLock(dir, async () => {
     const fresh = readState(dir);
-    if (!crossMoved(fresh, state, { from, into, index })) return adoptMerge(dir, fresh, state, work, { from, into, index, card: f.card, outcome }, { git, now, transcripts });
+    if (!crossMoved(fresh, state, { from, into, index })) return adoptMerge(dir, fresh, state, work, { from, into, index, card: f.card, outcome }, { git, now, transcripts, dataDir });
     rollBackTrees(git, state, work, into);
     unmarkCrossing(dir, fresh, index, now);
     return ok({ action: 'stale', track: from });
@@ -712,10 +731,14 @@ function markCrossing(dir, state, { track, card: C, needs: B, kind, note }, { no
   if (!state.tracks[from].cards.includes(C)) return refuse(1, `${C} is not a card of track ${from}`);
   const into = trackOfCard(state, B);
   if (!into) return refuse(1, `${B} is not a card of run ${state.runId}`);
-  if (into === from) return refuse(1, `${B} is in track ${from} too: inside one track a need is a blocks edge and a change is a fixup`);
-  if (state.cards[C].status === 'pending') return refuse(1, `${C} is neither in progress nor done: a crossing is found while working a card or at its end`);
-  const other = state.tracks[from].cards.find(k => k !== C && state.cards[k].status === 'in-progress');
+  const known = state.crossings.findIndex(c => c.from === C && c.to === B && (c.pending || c.merging));
+  const inTrack = into === from;
+  if (inTrack && known === -1) return refuse(1, `${B} is in track ${from} too: inside one track a need is a blocks edge and a change is a fixup`);
+  if (!inTrack && state.cards[C].status === 'pending') return refuse(1, `${C} is neither in progress nor done: a crossing is found while working a card or at its end`);
+  const other = inTrack ? null : state.tracks[from].cards.find(k => k !== C && state.cards[k].status === 'in-progress');
   if (other) return refuse(1, `${other} is in progress in ${from}: end it before ${C} crosses`);
+  const replaying = [from, into].find(id => liveMark(state.tracks[id].replaying));
+  if (replaying) return { result: { ...ok({ action: 'busy', replaying }), code: 75, stderr: lines([`${replaying} is replaying: run cross again once its next answers`]) } };
   const execution = state.executions.at(-1);
   if (execution.endedAt) return refuse(1, `the run is paused (${execution.endReason}): run begin to resume it`);
   if (closesCycle(state, B, C)) return refuse(5, `${B} -> ${C} closes a cycle: ${C} already leads to ${B}`);
@@ -724,18 +747,31 @@ function markCrossing(dir, state, { track, card: C, needs: B, kind, note }, { no
 
   const at = now();
   const entry = { at: at.toISOString(), kind, from: C, to: B, fromTrack: from, toTrack: into, note, respiked: [] };
-  const known = state.crossings.findIndex(c => c.from === C && c.to === B && (c.pending || c.merging));
   const index = known === -1 ? state.crossings.length : known;
-  const held = state.tracks[into].cards.find(k => state.cards[k].status === 'in-progress');
+  const held = state.tracks[into].cards.find(k => state.cards[k].status === 'in-progress' && k !== C && !stopped(state, k));
   state.crossings[index] = held ? { ...entry, pending: true } : { ...entry, merging: { pid: process.pid } };
   if (held) {
     saveState(dir, state, at);
     const why = `${held} is in progress in ${into}: the crossing is recorded as pending; run cross again once ${held} has ended`;
     return { result: { ...ok({ action: 'deferred', crossing: index, track: into, card: held }), code: 1, stderr: lines([why]) } };
   }
-  for (const id of [from, into]) state.tracks[id].generation += 1;
+  for (const id of new Set([from, into])) state.tracks[id].generation += 1;
   saveState(dir, state, at);
   return { dir, state, from, into, index };
+}
+
+// A card whose own crossing waits on another track has a stopped worker: it does not hold its track against a merge.
+const stopped = (state, card) => state.crossings.some(c => c.pending && c.from === card);
+
+// The target's card still in progress (a stopped one, or C itself inside one track) is set aside before the merge moves its
+// trees: its unsnapshotted work goes to its wip at once, and the trees go back to their last snapshot.
+function parkTrack(git, state, trackId, dir) {
+  const card = state.tracks[trackId].cards.find(k => state.cards[k].status === 'in-progress');
+  if (!card) return null;
+  const wip = wipOf(git, state, trackId, card, dir, { fromLast: true });
+  if (wip) writeAtomic(wip.path, wip.text);
+  for (const [, repo] of openRepos(state, trackId)) resetTree(git, repo);
+  return card;
 }
 
 function unmarkCrossing(dir, state, index, now) {
@@ -752,13 +788,14 @@ const crossMoved = (fresh, before, { from, into, index }) => fresh.status !== be
   || [from, into].some(id => JSON.stringify(fresh.tracks[id]) !== JSON.stringify(before.tracks[id]))
   || [...before.tracks[from].cards, ...before.tracks[into].cards].some(k => fresh.cards[k].status !== before.cards[k].status);
 
-// Everything the card did since it first touched each repo, fixups included; the merge puts its trees back to their last snapshot.
-function wipOf(git, state, trackId, card, dir) {
+// Everything the card did since it first touched each repo, fixups included (they leave the trees with it), or with fromLast
+// only what is not snapshotted yet (its fixups stay in the trees).
+function wipOf(git, state, trackId, card, dir, { fromLast = false } = {}) {
   if (state.cards[card].status !== 'in-progress') return null;
   mkdirSync(join(dir, 'tmp', trackId), { recursive: true });
   const index = join(dir, 'tmp', trackId, 'wip.index');
   const text = Object.entries(state.tracks[trackId].repos).filter(isOpen)
-    .map(([repoDir, repo]) => wipDiff(git, repoDir, repo, { index, from: state.cards[card].startTrees?.[repoDir] ?? repo.last })).join('');
+    .map(([repoDir, repo]) => wipDiff(git, repoDir, repo, { index, from: (!fromLast && state.cards[card].startTrees?.[repoDir]) || repo.last })).join('');
   return text ? { path: wipPath(dir, card), text } : null;
 }
 
@@ -767,18 +804,32 @@ function resetTree(git, repo) {
   git(['clean', '-fdq'], { cwd: repo.path });
 }
 
-async function adoptMerge(dir, fresh, before, work, { from, into, index, card, outcome }, { git, now, transcripts }) {
-  const crossed = before.tracks[from].current?.card === card ? before.tracks[from].current : null;
+// Records are rewritten here, under the lock, from what the disk holds now.
+async function adoptMerge(dir, fresh, before, work, { from, into, index, card, outcome }, { git, now, transcripts, dataDir }) {
+  const { wip, parked, replayed, respiked, dropped, records, writes } = outcome;
   for (const id of [from, into]) fresh.tracks[id] = work.tracks[id];
   copyMoved(fresh.cards, work.cards, before.cards);
   adoptPlan(fresh, before, work);
   fresh.crossings[index] = work.crossings[index];
-  if (crossed) await closeWindow(fresh, crossed, 'crossing', { now, transcripts });
-  const { wip, replayed, respiked, writes } = outcome;
+  for (const patch of dropped) {
+    const row = fresh.fixups.find(x => x.patch === patch);
+    if (row) row.droppedBy = { crossing: index };
+  }
+  for (const id of new Set([from, into])) {
+    const current = before.tracks[id].current;
+    if (current && [card, parked].includes(current.card)) await closeWindow(fresh, current, 'crossing', { now, transcripts });
+  }
   for (const w of [...writes, ...(wip ? [wip] : [])]) writeAtomic(w.path, w.text);
-  for (const [, repo] of Object.entries(fresh.tracks[from].repos).filter(isOpen)) resetTree(git, repo);
+  for (const k of records) {
+    const record = crossedRecordFile(fresh, k, dataDir);
+    if (record) writeAtomic(record.path, record.text);
+  }
+  if (from !== into) for (const [, repo] of Object.entries(fresh.tracks[from].repos).filter(isOpen)) resetTree(git, repo);
   saveState(dir, fresh, now());
-  return ok({ action: 'merged', crossing: index, track: into, merged: from, kind: fresh.crossings[index].kind, replayed, respiked, ...(wip ? { wip: wip.path } : {}) });
+  const { kind } = fresh.crossings[index];
+  const extra = { ...(wip ? { wip: wip.path } : {}), ...(parked ? { parked } : {}) };
+  if (from === into) return ok({ action: 'applied', crossing: index, track: into, kind, respiked, ...extra });
+  return ok({ action: 'merged', crossing: index, track: into, merged: from, kind, replayed, respiked, ...extra });
 }
 
 function readNotes(path) {
@@ -824,7 +875,7 @@ async function notesTemplateFor(args, { home, dataDir }) {
   const trackId = trackIdOf(state, a.flags.track);
   if (!state.plan.cards[card]) return fail(1, `${card} is not a card of run ${state.runId}`);
   if (!state.tracks[trackId].cards.includes(card)) return fail(1, `${card} is not a card of track ${trackId}`);
-  const previous = previousOf(dataDir, state.project.slug, card, state.runId);
+  const previous = previousOf(dataDir, state.project.slug, card, state.runId, { sameRun: Boolean(state.cards[card].respikedBy) });
   return ok({ action: 'notes-template', card, notes: notesTemplate(previous), allowed: NOTES_ALLOWED });
 }
 

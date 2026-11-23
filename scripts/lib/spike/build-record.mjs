@@ -96,7 +96,7 @@ function effortOf(state, card, windows) {
 }
 
 function fixupsOf(state, card) {
-  const fixups = state.fixups ?? [];
+  const fixups = (state.fixups ?? []).filter(f => !f.droppedBy);
   return {
     received: fixups.filter(f => f.fixed.includes(card)).map(f => ({ from: f.from, patch: f.patch, note: f.note })),
     caused: fixups.filter(f => f.from === card).flatMap(f => f.fixed.map(to => ({ to, patch: f.patch, note: f.note }))),
@@ -224,13 +224,17 @@ export function rewriteUsage(state, card, dataDir) {
   return `${displayData(dataDir, state.project.slug)}/${card}.json`;
 }
 
-// A record this run wrote gets the card's crossing fields; one from an earlier run is history and stays as it is.
+// A record this run wrote gets the card's crossing fields and loses the fixups a merge dropped; one from an earlier run is
+// history and stays as it is.
 export function crossedRecordFile(state, card, dataDir) {
   const path = join(dataDir, state.project.slug, `${card}.json`);
   if (!existsSync(path)) return null;
   const old = readExisting(path);
   if (old.refs?.runId !== state.runId) return null;
-  const record = { ...old, ...crossingFields(state.cards[card]) };
+  const dropped = new Set((state.fixups ?? []).filter(f => f.droppedBy).map(f => f.patch));
+  const kept = list => list.filter(f => !dropped.has(f.patch));
+  const fixups = old.fixups && { ...old.fixups, received: kept(old.fixups.received ?? []), caused: kept(old.fixups.caused ?? []) };
+  const record = { ...old, ...crossingFields(state.cards[card]), ...(fixups ? { fixups } : {}) };
   const errors = validateRecord(record);
   if (errors.length) throw new Error(`the record for ${card} is invalid: ${errors.join('; ')}`);
   return { path, text: serializeRecord(record) };

@@ -1,7 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { exitError } from '../cli.mjs';
-import { crossedRecordFile } from './build-record.mjs';
 import { spikeOrder } from './order.mjs';
 import { assertSnapshotted, mergedTree, replanAfterTurn } from './replay.mjs';
 import { DIFF } from './snapshot.mjs';
@@ -52,11 +51,12 @@ function orderOf(state, cards, edges, rank) {
 
 const isDone = (state, k) => state.cards[k].status === 'done';
 
-// The done cards below B, before C in the merged order: they were built on the B that C is about to change.
+// The done cards below B, before C in the merged order: they were built on the B that C is about to change. C ranks as not
+// done even when it is, so a done dependent numbered after C still sorts before it.
 export function dependentsBefore(state, B, C) {
   const cards = [...new Set([B, C].flatMap(k => state.tracks[trackOfCard(state, k)].cards))];
   const edges = [...runEdges(state), { from: B, to: C }];
-  const order = orderOf(state, cards, edges, k => (isDone(state, k) ? 0 : 1));
+  const order = orderOf(state, cards, edges, k => (isDone(state, k) && k !== C ? 0 : 1));
   const below = reach(edges, B);
   return order.slice(0, order.indexOf(C)).filter(k => below.has(k) && isDone(state, k));
 }
@@ -162,9 +162,11 @@ function assertAtLast(git, state, trackId) {
 }
 
 // Track `from` joins `into` (the crossing's entry already sits at index `crossing`): `into`'s trees go back before the cards a
-// `changes` crossing re-spikes, then `from`'s done cards are replayed onto them in `from`'s order. Patches and records are not
-// written here: they come back as writes, for the caller to make once it keeps the merge.
-export function mergeTracks(state, { from, into, edge, kind, crossing }, { git, dir, config, runSetup, dataDir }) {
+// `changes` crossing re-spikes, then `from`'s done cards are replayed onto them in `from`'s order. With from === into the
+// crossing applies inside one track: only the edge and the re-spikes. `parked` is a card of `into` whose work the caller already
+// set aside; it restarts like C. Patches come back as writes and records as the cards whose record the caller rewrites, both
+// for the caller to make once it keeps the merge.
+export function mergeTracks(state, { from, into, edge, kind, crossing, parked = null }, { git, dir, config, runSetup, dataDir }) {
   const C = edge.to;
   const ctx = { into, config, dir, runSetup };
   mkdirSync(join(dir, 'tmp', into), { recursive: true });
@@ -175,7 +177,7 @@ export function mergeTracks(state, { from, into, edge, kind, crossing }, { git, 
   const writes = cutTrees(git, state, into, respiked, edges, ctx);
 
   const replayed = [];
-  for (const card of state.tracks[from].cards.filter(k => isDone(state, k))) {
+  for (const card of from === into ? [] : state.tracks[from].cards.filter(k => isDone(state, k))) {
     closeBelow(state, respiked, edges);
     if (respiked.has(card)) continue;
     const out = replayCard(git, state, card, from, ctx);
@@ -186,13 +188,14 @@ export function mergeTracks(state, { from, into, edge, kind, crossing }, { git, 
   closeBelow(state, respiked, edges);
 
   const turned = [...respiked].filter(k => state.plan.cards[k].mode === 'replay');
-  for (const k of [...respiked, C]) {
+  for (const k of new Set([...respiked, C, ...(parked ? [parked] : [])])) {
     const cardState = state.cards[k];
     cardState.status = 'pending';
     delete cardState.startTrees;
     delete cardState.prDiff;
     state.plan.cards[k].mode = 'spike';
   }
+  if (parked && state.tracks[into].current?.card === parked) state.tracks[into].current = null;
   for (const k of respiked) state.cards[k].respikedBy = { crossing };
   for (const k of replayed) state.cards[k].mergedFrom = { track: from, crossing };
 
@@ -204,15 +207,17 @@ export function mergeTracks(state, { from, into, edge, kind, crossing }, { git, 
   const ahead = new Set([C, ...[...reach(merged, C, { up: true })].filter(k => !isDone(state, k))]);
   const rank = k => (ahead.has(k) ? 0 : state.plan.cards[k].mode === 'replay' ? 1 : 2);
   const target = state.tracks[into];
-  target.cards = orderOf(state, [...target.cards, ...state.tracks[from].cards], merged, rank);
+  target.cards = orderOf(state, [...new Set([...target.cards, ...state.tracks[from].cards])], merged, rank);
   target.status = target.cards.some(k => isDone(state, k)) ? 'active' : 'pending';
   target.generation += 1;
-  Object.assign(state.tracks[from], { status: 'merged', mergedInto: into, current: null, generation: state.tracks[from].generation + 1 });
+  if (from !== into) Object.assign(state.tracks[from], { status: 'merged', mergedInto: into, current: null, generation: state.tracks[from].generation + 1 });
+
+  // A fixup belongs to the card that made it: when that card's entries left the trees, its fixups left with them.
+  const live = new Set(Object.entries(target.repos).flatMap(([d, r]) => r.log.map(e => `${d}/${e.name}.patch`)));
+  const dropped = state.fixups.filter(f => !f.droppedBy && target.cards.includes(f.from) && !live.has(f.patch));
+  for (const f of dropped) f.droppedBy = { crossing };
 
   if (state.plan.respike) for (const k of turned) replanAfterTurn(state, { dataDir }, k);
-  for (const k of [...respiked, ...replayed]) {
-    const record = crossedRecordFile(state, k, dataDir);
-    if (record) writes.push(record);
-  }
-  return { replayed, respiked: entry.respiked, writes };
+  const records = [...new Set([...respiked, ...replayed, ...dropped.flatMap(f => [f.from, ...f.fixed])])];
+  return { replayed, respiked: entry.respiked, dropped: dropped.map(f => f.patch), records, writes };
 }

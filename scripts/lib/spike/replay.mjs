@@ -16,10 +16,11 @@ const compare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const NO_PREIMAGE = /lacks the necessary blob/;
 
 // What a respike hands the card loop from the card's existing record, so old findings get an outcome; null on a first spike.
-export function previousOf(dataDir, slug, card, runId) {
+// A card a crossing re-spiked hands on this run's own record: the spike before the crossing.
+export function previousOf(dataDir, slug, card, runId, { sameRun = false } = {}) {
   if (!existsSync(join(dataDir, slug, `${card}.json`))) return null;
   const r = readRecord(dataDir, slug, card);
-  if (r.refs?.runId === runId) return null;
+  if (r.refs?.runId === runId && !sameRun) return null;
   return { spikedAt: r.spikedAt, findings: r.findings ?? [], decisions: r.decisions ?? [], openDecisions: r.openDecisions ?? [] };
 }
 
