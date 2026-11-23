@@ -5,6 +5,7 @@ import { basename, join, resolve } from 'node:path';
 import { fail, isEntry, lines, ok, parseArgs, redacted } from './lib/cli.mjs';
 import { analyzeProject } from './lib/graph.mjs';
 import { fetchDescriptions, fetchProject, fetchProjectMap, parseProjectRef, readLinearKey } from './lib/linear-fetch.mjs';
+import { withCheckSlot } from './lib/spike/checks.mjs';
 import { checkNotes, finishCard, finishFixup, NOTES_ALLOWED, notesPath, notesTemplate, rewriteUsage } from './lib/spike/build-record.mjs';
 import { deriveRepo, mergeRiskAreas } from './lib/spike/derive.mjs';
 import { allowedRepos, loadConfig } from './lib/spike/config.mjs';
@@ -31,6 +32,7 @@ const USAGE = [
   'usage: node scripts/spike.mjs tree <repoDir> [--project <project ref>]',
   'usage: node scripts/spike.mjs notes-template <CARD> [--project <project ref>]',
   'usage: node scripts/spike.mjs end <CARD> [--notes <notes.json>] [--allow <kind>:<path>]... [--skip-typecheck <reason>] [--project <project ref>]',
+  'usage: node scripts/spike.mjs check [--track <id>] [--cwd <repoDir>] [--project <project ref>] -- <argv>...',
   'usage: node scripts/spike.mjs candidates [--repo <repoDir>] [--project <project ref>]',
   'usage: node scripts/spike.mjs fixup --fixes <CARD>[,<CARD>] --slug <kebab-slug> --note <text> --repo <repoDir> [--allow <kind>:<path>]... [--project <project ref>] -- <path>...',
   'usage: node scripts/spike.mjs rebuild <repoDir> [--project <project ref>]',
@@ -44,14 +46,14 @@ const USAGE = [
 
 const cardNumber = key => Number(String(key).match(/(\d+)$/)?.[1] ?? 0);
 
-const COMMANDS = { begin, next, tree, candidates, 'notes-template': notesTemplateFor, end, fixup, rebuild, pause, abandon, prune, status, config };
+const COMMANDS = { begin, next, tree, check, candidates, 'notes-template': notesTemplateFor, end, fixup, rebuild, pause, abandon, prune, status, config };
 
 // transcripts: null means no session discovery, so only an explicit --session-file is ever read.
 export async function run(argv, {
   env = process.env, fetchImpl = fetch, keyFile, now = () => new Date(), home, dataDir, repoDataDir,
-  transcripts = null, git = gitRunner(), gh = ghRunner(), runSetup = setupRunner(), sleep = ms => new Promise(r => setTimeout(r, ms)), lock = {},
+  transcripts = null, git = gitRunner(), gh = ghRunner(), runSetup = setupRunner(), sleep = ms => new Promise(r => setTimeout(r, ms)), lock = {}, slot = {},
 } = {}) {
-  const deps = { env, fetchImpl, keyFile, now, home: home ?? sequencerHome(env), dataDir: dataDir ?? home ?? dataDirFor(env), transcripts, git, gh, runSetup, sleep, lock };
+  const deps = { env, fetchImpl, keyFile, now, home: home ?? sequencerHome(env), dataDir: dataDir ?? home ?? dataDirFor(env), transcripts, git, gh, runSetup, sleep, lock, slot };
   const [command, ...rest] = argv;
   if (!Object.hasOwn(COMMANDS, command)) return fail(2, ...USAGE);
   const repoData = repoDataDir ?? (dataDir === undefined && home === undefined ? REPO_DATA_DIR : null);
@@ -296,10 +298,10 @@ function applyCardPr(state, repoDir, { config, gh, git, dir }) {
   return applied.status === 'applied' ? { prDiff: 'applied' } : { prDiff: 'conflict', prDiffError: applied.error };
 }
 
-async function next(args, { home, now, gh, git, transcripts, dataDir, sleep, runSetup, lock }) {
+async function next(args, { home, now, gh, git, transcripts, dataDir, sleep, runSetup, lock, slot }) {
   const a = parseArgs(args, ['--project']);
   if (!a || a.positional.length) return fail(2, ...USAGE);
-  const deps = { home, now, config: () => loadConfig(home), gh, git, transcripts, dataDir, sleep, runSetup };
+  const deps = { home, now, config: () => loadConfig(home), gh, git, transcripts, dataDir, sleep, runSetup, slot };
   const first = await onActiveRun(home, a.flags.project, async (dir, state) => (
     refusedNext(state) || !replayAhead(state) ? { result: await nextCard(dir, state, deps) } : { dir, state }
   ), lock);
@@ -316,16 +318,19 @@ async function next(args, { home, now, gh, git, transcripts, dataDir, sleep, run
 // One replay entry: its tree work outside the lock, then a short locked section keeps it (state, patches, record) or, if the
 // run moved meanwhile, undoes it. Entries kept before a stale one stay kept.
 async function replayStep(dir, before, replayed, { lock, ...deps }) {
-  const { now, git } = deps;
+  const { now, git, slot } = deps;
   const trackId = trackIdOf(before);
   const work = structuredClone(before);
   let entry = null;
   let failure = null;
-  try {
-    entry = replayNext(dir, work, deps);
-  } catch (e) {
-    failure = e;
-  }
+  const slotted = await withCheckSlot(dir, { slots: before.checks ?? 1, command: 'replay', ...slot }, () => {
+    try {
+      entry = replayNext(dir, work, deps);
+    } catch (e) {
+      failure = e;
+    }
+  });
+  if (slotted.busy) return { result: ok({ action: 'busy', replayed }) };
   return relock(dir, lock, trackId, before, async fresh => {
     adoptReplay(fresh, before, work, trackId);
     for (const w of entry?.writes ?? []) writeAtomic(w.path, w.text);
@@ -453,7 +458,7 @@ async function completeRun(dir, state, settled, { home, now, git, dataDir, sleep
   });
 }
 
-async function tree(args, { home, now, git, gh, runSetup, lock }) {
+async function tree(args, { home, now, git, gh, runSetup, lock, slot }) {
   const a = parseArgs(args, ['--project']);
   if (!a || a.positional.length !== 1) return fail(2, ...USAGE);
   const [repoDir] = a.positional;
@@ -469,12 +474,15 @@ async function tree(args, { home, now, git, gh, runSetup, lock }) {
   const trackId = trackIdOf(state);
   const work = structuredClone(state);
   let failure = null;
-  try {
-    openTree(git, work, { trackId, repoDir, repo: config.repos[repoDir], dir, runSetup });
-  } catch (e) {
-    if (!e.setup) throw e;
-    failure = e;
-  }
+  const slotted = await withCheckSlot(dir, { slots: state.checks ?? 1, command: `tree ${repoDir}`, ...slot }, () => {
+    try {
+      openTree(git, work, { trackId, repoDir, repo: config.repos[repoDir], dir, runSetup });
+    } catch (e) {
+      if (!e.setup) throw e;
+      failure = e;
+    }
+  });
+  if (slotted.busy) return ok({ action: 'busy' });
   return relock(dir, lock, trackId, state, fresh => {
     const track = fresh.tracks[trackId];
     copyMoved(track.repos, work.tracks[trackId].repos, state.tracks[trackId].repos);
@@ -487,6 +495,23 @@ async function tree(args, { home, now, git, gh, runSetup, lock }) {
     saveState(dir, fresh, now());
     return ok({ repo: repoDir, path: track.repos[repoDir].path, ...pr, touchedCheckouts: touchedCheckouts(fresh) });
   }, () => rollBackTrees(git, state, work, trackId));
+}
+
+// Runs a command in a track's tree under a check slot; the run lock is only held to read the state, never while waiting.
+async function check(args, { home, runSetup, slot }) {
+  const split = args.indexOf('--');
+  const argv = split < 0 ? [] : args.slice(split + 1);
+  const a = parseArgs(split < 0 ? args : args.slice(0, split), ['--track', '--cwd', '--project']);
+  if (!a || a.positional.length || !argv.length) return fail(2, ...USAGE);
+  const { dir, state } = activeRun(home, a.flags.project);
+  const repos = Object.entries(trackOf(state, a.flags.track).repos).filter(isOpen);
+  const wanted = a.flags.cwd ? repos.filter(([d]) => d === a.flags.cwd) : repos.slice(0, 1);
+  if (!wanted.length) return fail(1, a.flags.cwd ? `${a.flags.cwd} has no open tree in this track` : 'this track has no open tree: run tree <repoDir> first');
+  const [[, { path }]] = wanted;
+  const slotted = await withCheckSlot(dir, { slots: state.checks ?? 1, command: argv.join(' '), ...slot }, () => runSetup(argv, { cwd: path }));
+  if (slotted.busy) return ok({ action: 'busy' });
+  const { status, stdout, stderr } = slotted.value;
+  return { code: status ?? 1, stdout: stdout ?? '', stderr: stderr ?? '' };
 }
 
 async function candidates(args, { home, git, lock }) {
@@ -613,7 +638,7 @@ async function notesTemplateFor(args, { home, dataDir }) {
 
 const notInProgress = card => fail(1, `${card} is not the card in progress`);
 
-async function end(args, { home, dataDir, now, git, transcripts, runSetup, lock }) {
+async function end(args, { home, dataDir, now, git, transcripts, runSetup, lock, slot }) {
   const config = loadConfig(home);
   const a = parseArgs(args, ['--notes', '--project', '--skip-typecheck'], ['--allow']);
   const allow = a && parseAllow(a.flags.allow);
@@ -634,11 +659,16 @@ async function end(args, { home, dataDir, now, git, transcripts, runSetup, lock 
   const open = openRepos(state);
   for (const [repoDir, repo] of open) checkTree(git, repoDir, repo);
   if (flags['skip-typecheck'] === undefined) {
-    for (const [repoDir, repo] of open) {
-      const log = typecheckLog(dir, repoDir);
-      const check = repoTypecheck(runSetup, config.repos[repoDir], { treePath: repo.path, changed: changedSinceLast(git, repo), logPath: log });
-      if (check.ran && !check.ok) return refusedForTypecheck(repoDir, log, check);
-    }
+    const slotted = await withCheckSlot(dir, { slots: state.checks ?? 1, command: `typecheck ${card}`, ...slot }, () => {
+      for (const [repoDir, repo] of open) {
+        const log = typecheckLog(dir, repoDir);
+        const check = repoTypecheck(runSetup, config.repos[repoDir], { treePath: repo.path, changed: changedSinceLast(git, repo), logPath: log });
+        if (check.ran && !check.ok) return refusedForTypecheck(repoDir, log, check);
+      }
+      return null;
+    });
+    if (slotted.busy) return ok({ action: 'busy' });
+    if (slotted.value) return slotted.value;
   }
   return relock(dir, lock, trackId, state, fresh => endCard(dir, fresh, card, first, flags, { config, dataDir, now, git, transcripts }));
 }

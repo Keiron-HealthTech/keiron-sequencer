@@ -36,7 +36,11 @@ subagent per card, no headless runs.
   key into the chat.
 - No production DB writes. No patient data in logs, not even masked.
 - Run heavy commands (install, build, type-check, tests) one at a time, with
-  the target repo's own limits.
+  the target repo's own limits, through
+  `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs check [--track <id>] [--cwd <repoDir>] [--project <project ref>] -- <argv>...`:
+  it runs the argv in the track's first open tree (`--cwd` picks a repo), takes a
+  check slot first, and exits with the command's exit code. `action: 'busy'` means
+  no slot freed in time: run the same check again.
 - Patches and run state live in `~/.keiron-sequencer`, outside every repo: the run's
   folder is `~/.keiron-sequencer/<slug>/runs/<runId>/` (`patches/`, `trees/`, `notes/`,
   `logs/`, `run.json`). Never copy a patch into a repo. The per-card records
@@ -265,7 +269,7 @@ them. Ask the user mid-card only on real conflicts.
   unsettled usage windows.
 - `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs prune [<slug>] [--dry-run]` applies
   the retention by hand.
-- `--project <project ref>` on next, tree, candidates, fixup, end, rebuild,
+- `--project <project ref>` on next, tree, check, candidates, fixup, end, rebuild,
   pause, abandon and status is needed only when more than one project has an
   active run.
 

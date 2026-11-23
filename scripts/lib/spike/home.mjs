@@ -70,9 +70,10 @@ export const writeJsonAtomic = (path, value) => writeAtomic(path, `${JSON.string
 
 const pause = ms => new Promise(r => setTimeout(r, ms));
 
-function readHolder(path) {
+// The pid is the first line: a check slot file carries its command after it.
+export function readHolder(path) {
   try {
-    return readFileSync(path, 'utf8').trim();
+    return readFileSync(path, 'utf8').split('\n')[0].trim();
   } catch (e) {
     if (e.code === 'ENOENT') return null;
     throw e;
@@ -80,7 +81,7 @@ function readHolder(path) {
 }
 
 // An empty or unparsable pid is a holder still writing its lock, so it counts as alive. EPERM is a live process of another user.
-function holderAlive(holder, isAlive) {
+export function holderAlive(holder, isAlive) {
   const pid = Number(holder);
   if (!Number.isInteger(pid) || pid <= 0) return true;
   try {
@@ -93,7 +94,7 @@ function holderAlive(holder, isAlive) {
 // A rename or a re-read could still remove a lock another waiter has just re-created. The claim is a hard link only one
 // waiter can make, and it pins the file that waiter saw: only that file's holder is checked again, and only it is removed.
 // True when the lock is gone and worth contending for again.
-function takeOver(path, holder, isAlive) {
+export function takeOver(path, holder, isAlive) {
   const claim = `${path}.dead-${holder}`;
   try {
     linkSync(path, claim);
