@@ -449,6 +449,9 @@ test('a worker reruns the same command on stale and on busy exit 75, and stops w
   workerSays('was merged into');
   workerSays('never switch tracks yourself');
   step6Says('reruns the same command');
+  workerSays('After 3 `busy` or `stale` answers in a row to the same command, stop and return the last one');
+  workerSays('`holders`');
+  step6Says('three `busy` or `stale` answers in a row');
 });
 
 test('heavy CLI calls run with the longest shell timeout or in the background, combine always in the background', () => {
@@ -518,5 +521,6 @@ test('a pending crossing survives a pause: on resume the coordinator reads it fr
 
 test('the report step shows the tracks, the crossings and the combined check', () => {
   const step8 = sectionOf('Step 8: Report');
-  for (const anchor of ['`## Tracks`', '`## Crossings`', '`## Combined check`', '`tracks`', '`crossings`', '`combined`', '`respiked`', '`failures`']) stepSays(step8, anchor);
+  for (const anchor of ['`## Tracks`', '`## Crossings`', '`## Combined check`', '`tracks`', '`crossings`', '`combined`', '`respiked`', '`failures`', '`skipped`']) stepSays(step8, anchor);
+  step6Says('the combined check never ran in those repos');
 });

@@ -40,13 +40,13 @@ test('pause ends the execution mid-card and keeps the trees; the card resumes in
   const state = stateIn(runDirOf(fixture, runId));
   assert.equal(state.status, 'paused');
   assert.deepEqual([state.executions[0].endReason, state.executions[0].endedAt], ['paused', '2026-11-10T10:03:00.000Z']);
-  assert.equal(state.tracks.t1.current, null);
+  assert.equal(state.tracks.t1.current.card, 'CRM-1');
   assert.equal(state.cards['CRM-1'].status, 'in-progress');
   const [window] = state.cards['CRM-1'].windows;
   assert.deepEqual([window.end, window.endReason, window.w], ['2026-11-10T10:03:00.000Z', 'paused', 25]);
   assert.ok(existsSync(join(tree, 'CRM-1.txt')));
 
-  assert.match((await call(fixture, ['next'])).stderr, /paused.*begin/);
+  assert.match((await call(fixture, ['next'])).stderr, /CRM-1 is still in progress: end it first/);
   assert.match((await call(fixture, ['pause'])).stderr, /already paused/);
   fixture.at('2026-11-10T11:00:00.000Z');
   await begin(fixture);

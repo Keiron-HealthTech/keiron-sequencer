@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { run as respike } from './respike.mjs';
 import { basename, join, resolve } from 'node:path';
-import { fail, isEntry, lines, ok, parseArgs, redacted } from './lib/cli.mjs';
+import { fail, failed, isEntry, lines, ok, parseArgs, redacted } from './lib/cli.mjs';
 import { analyzeProject } from './lib/graph.mjs';
 import { fetchDescriptions, fetchProject, fetchProjectMap, parseProjectRef, readLinearKey } from './lib/linear-fetch.mjs';
 import { tracksOf } from './lib/spike/tracks.mjs';
@@ -71,7 +71,7 @@ export async function run(argv, {
     assertHomeOutsideWorkTree(deps.home);
     result = await COMMANDS[command](rest, deps);
   } catch (e) {
-    result = { ...fail(e.exitCode ?? 1, e.message), ...(e.output ? { stdout: `${JSON.stringify(e.output)}\n` } : {}) };
+    result = failed(e);
   }
   return moved.length ? { ...result, stderr: `${result.stderr}${lines(moved)}` } : result;
 }
@@ -148,7 +148,7 @@ async function begin(args, deps) {
   try {
     return redacted(await startRun(parsed.ref, key, { ...a.flags, limits }, deps), key);
   } catch (e) {
-    return redacted(fail(e.exitCode ?? 1, e.message), key);
+    return redacted(failed(e), key);
   }
 }
 
@@ -278,6 +278,11 @@ async function startRun(ref, key, flags, { fetchImpl, now, home, dataDir, gh, gi
 // EX_TEMPFAIL: a wrapped command's own exit code is 0 for a pass, so busy must not look like one.
 const busy = extra => ({ ...ok({ action: 'busy', ...extra }), code: 75 });
 
+const slotBusy = (slotted, extra = {}) => ({
+  ...busy({ ...extra, holders: slotted.holders }),
+  stderr: lines([`no check slot freed in time: ${slotted.holders.map(h => `slot ${h.slot} is held by pid ${h.pid} (${h.command})`).join(', ') || 'every slot is held'}; run the same command again`]),
+});
+
 const isOpen = ([, r]) => r.status === 'open';
 const openRepos = (state, trackId) => Object.entries(state.tracks[trackId].repos).filter(isOpen);
 const anyRemoved = state => allRepos(state).some(([, r]) => r.status === 'removed');
@@ -384,7 +389,7 @@ async function replayStep(dir, trackId, before, replayed, { lock, ...deps }) {
   });
   if (slotted.busy) {
     await withLock(dir, () => clearReplaying(dir, readState(dir), trackId, now), lock);
-    return { result: busy({ replayed }) };
+    return { result: slotBusy(slotted, { replayed }) };
   }
   return relock(dir, lock, trackId, before, async fresh => {
     if (failure && !failure.setup) {
@@ -515,7 +520,7 @@ function replayNext(dir, state, trackId, { now, git, dataDir, runSetup, config }
   return entry;
 }
 
-async function completeRun(dir, state, settled, { home, now, git, dataDir, sleep, transcripts }, respike = {}, action = 'complete') {
+async function completeRun(dir, state, settled, { home, now, git, dataDir, sleep, transcripts }, respike = {}, action = 'complete', extra = {}) {
   for (let i = 0; i < SETTLE_POLLS && settled.unsettled.length; i++) {
     await sleep(SETTLE_POLL_MS);
     settled = await settleWindows(state, { dataDir, transcripts, now });
@@ -541,7 +546,7 @@ async function completeRun(dir, state, settled, { home, now, git, dataDir, sleep
     ...(pruned.unreadable ?? []).map(f => `no run was pruned: the record ${f} cannot be read`),
   ];
   return ok({
-    mark, action, runId: state.runId, ...(state.plan.respike ? { respike: true, ...respike } : {}), removed, pruned: pruned.removed, touchedCheckouts: touchedCheckouts(state),
+    mark, action, runId: state.runId, ...(state.plan.respike ? { respike: true, ...respike } : {}), ...extra, removed, pruned: pruned.removed, touchedCheckouts: touchedCheckouts(state),
     ...(warnings.length ? { warnings } : {}),
   });
 }
@@ -569,7 +574,7 @@ async function tree(args, { home, now, git, gh, runSetup, lock, slot }) {
       failure = e;
     }
   });
-  if (slotted.busy) return busy();
+  if (slotted.busy) return slotBusy(slotted);
   return relock(dir, lock, trackId, state, fresh => {
     const track = fresh.tracks[trackId];
     copyMoved(track.repos, work.tracks[trackId].repos, state.tracks[trackId].repos);
@@ -604,7 +609,7 @@ async function check(args, { home, runSetup, slot }) {
       return { status: CHECK_TIMED_OUT, stdout: '', stderr: lines([`the command timed out after ${timeoutMs} ms and was stopped`]) };
     }
   });
-  if (slotted.busy) return busy();
+  if (slotted.busy) return slotBusy(slotted);
   const { status, stdout, stderr } = slotted.value;
   return { code: status ?? 1, stdout: stdout ?? '', stderr: stderr ?? '' };
 }
@@ -776,7 +781,7 @@ async function cross(args, { home, now, git, lock, slot, runSetup, dataDir, tran
       unpark(git, state, into, parked, dir);
     }
     await withLock(dir, () => unmarkCrossing(dir, readState(dir), index, now), lock);
-    if (slotted.busy) return busy();
+    if (slotted.busy) return slotBusy(slotted);
     if (failure.setup) return { ...ok({ action: 'setup-failed', ...failure.setup }), code: 1, stderr: lines([failure.message]) };
     throw failure;
   }
@@ -1011,11 +1016,11 @@ async function combine(args, { home, now, git, lock, slot, runSetup, transcripts
   if (first.result) return first.result;
   const { dir, state } = first;
   const repos = structuredClone(state.combine.repos ?? {});
-  let errors = null;
+  let built = null;
   let failure = null;
   const slotted = await withCheckSlot(dir, { slots: state.checks ?? 1, command: 'combine', ...slot }, held => {
     try {
-      errors = buildCombined(git, state, repos, { config, dir, runSetup: asChild(runSetup, held) });
+      built = buildCombined(git, state, repos, { config, dir, runSetup: asChild(runSetup, held) });
     } catch (e) {
       failure = e;
     }
@@ -1026,28 +1031,29 @@ async function combine(args, { home, now, git, lock, slot, runSetup, transcripts
     if (fresh.status === 'active' || fresh.status === 'paused') fresh.combine.repos = repos;
     else for (const [repoDir, repo] of Object.entries(repos)) if (!state.combine.repos?.[repoDir]) discardTree(git, repo);
     saveState(dir, fresh, now());
-    if (slotted.busy) return busy();
+    if (slotted.busy) return slotBusy(slotted);
     if (failure?.setup) return { ...ok({ action: 'setup-failed', ...failure.setup }), code: 1, stderr: lines([failure.message]) };
     if (failure) throw failure;
     const moved = fresh.status !== state.status || JSON.stringify([fresh.tracks, fresh.crossings, fresh.fixups]) !== JSON.stringify([state.tracks, state.crossings, state.fixups]);
     if (moved) return ok({ action: 'stale' });
-    return keepRound(dir, fresh, errors, { home, now, git, transcripts, dataDir, sleep });
+    return keepRound(dir, fresh, built, { home, now, git, transcripts, dataDir, sleep });
   }, lock);
 }
 
-async function keepRound(dir, state, errors, deps) {
+async function keepRound(dir, state, { errors, skipped }, deps) {
   const at = deps.now().toISOString();
+  const unchecked = skipped.length ? { skipped } : {};
   if (!errors.length) {
-    state.combine.results.push({ at, ok: true });
+    state.combine.results.push({ at, ok: true, ...unchecked });
     await bindExecution(state.executions.at(-1), deps);
-    return completeRun(dir, state, await settleWindows(state, deps), deps, {}, 'combined-ok');
+    return completeRun(dir, state, await settleWindows(state, deps), deps, {}, 'combined-ok', unchecked);
   }
   const round = state.combine.rounds + 1;
   state.combine.rounds = round;
-  state.combine.results.push({ at, ok: false, round, errors });
-  if (round >= COMBINE_ROUNDS) return pauseRun(dir, state, state.executions.at(-1), 'combine', { now: deps.now, out: { errors } });
+  state.combine.results.push({ at, ok: false, round, errors, ...unchecked });
+  if (round >= COMBINE_ROUNDS) return pauseRun(dir, state, state.executions.at(-1), 'combine', { now: deps.now, out: { errors, ...unchecked } });
   saveState(dir, state, deps.now());
-  return ok({ action: 'combined-failed', round, errors });
+  return ok({ action: 'combined-failed', round, errors, ...unchecked });
 }
 
 function readNotes(path) {
@@ -1128,7 +1134,7 @@ async function end(args, { home, dataDir, now, git, transcripts, runSetup, lock,
       }
       return null;
     });
-    if (slotted.busy) return busy();
+    if (slotted.busy) return slotBusy(slotted);
     if (slotted.value) return slotted.value;
   }
   return relock(dir, lock, trackId, state, fresh => endCard(dir, fresh, trackId, card, first, flags, { config, dataDir, now, git, transcripts }));
@@ -1143,6 +1149,7 @@ async function endCard(dir, state, trackId, card, { notesFile, notes }, flags, {
   const cardState = after.cards[card];
   const window = cardState.windows.at(-1);
   window.end = at.toISOString();
+  delete window.endReason;
   await bindExecution(execution, { transcripts, now });
   const usage = await measure(window, await windowFiles(after, window, execution, { transcripts, now }));
 
@@ -1211,12 +1218,13 @@ async function closeWindow(state, current, endReason, { now, transcripts }) {
   await measure(window, await windowFiles(state, window, execution, { transcripts, now }));
 }
 
-// The card stays in progress: a later execution reopens it in a new window.
-async function closeCurrentWindow(state, endReason, deps) {
+// The card stays in progress: a later execution reopens it in a new window. A pause keeps it current, so a worker still on
+// it can end it: in-flight cards finish.
+async function closeCurrentWindow(state, endReason, deps, { keepCurrent = false } = {}) {
   for (const track of Object.values(state.tracks)) {
     const { current } = track;
     if (!current) continue;
-    track.current = null;
+    if (!keepCurrent) track.current = null;
     await closeWindow(state, current, endReason, deps);
   }
 }
@@ -1227,7 +1235,7 @@ async function pause(args, { home, now, transcripts, lock }) {
   return onActiveRun(home, a.flags.project, async (dir, state) => {
     const execution = state.executions.at(-1);
     if (execution.endedAt) return fail(1, `the run is already paused (${execution.endReason}): run begin to resume it`);
-    await closeCurrentWindow(state, 'paused', { now, transcripts });
+    await closeCurrentWindow(state, 'paused', { now, transcripts }, { keepCurrent: true });
     return pauseRun(dir, state, execution, 'paused', { now, out: { runId: state.runId } });
   }, lock);
 }

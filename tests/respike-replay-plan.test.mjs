@@ -77,6 +77,22 @@ test('a fixup is kept only when its from card and every fixed card are built or 
   assert.deepEqual(respiked['CRM-1'].units, { 'example-api': ['example-api/00001-new.patch'] });
 });
 
+test('a fix made on the combined tree counts as present once every card it fixed is, and lands with the last of them', () => {
+  const s = store();
+  const combined = 'example-api/fixup-1-2-from-combine-1.patch';
+  for (const n of ['example-api/00001-new.patch', 'example-api/00002-new.patch', combined]) s.runPatch(n);
+  s.runState({ repos: {}, fixups: [{ fixed: ['CRM-1', 'CRM-2'], from: 'combine', patch: combined }] });
+  const records = [
+    record('CRM-1', ['example-api/00001-new.patch'], { received: [fixup('combine', combined)] }),
+    record('CRM-2', ['example-api/00002-new.patch'], { received: [fixup('combine', combined)] }),
+  ];
+  const out = byKey(plan(s, { ancestors: ['CRM-1', 'CRM-2'], records }));
+  assert.deepEqual([out['CRM-1'].dropped, out['CRM-2'].dropped], [[], []]);
+  assert.deepEqual(out['CRM-2'].units, { 'example-api': ['example-api/00002-new.patch', combined] });
+  const respiked = byKey(plan(s, { ancestors: ['CRM-1'], selected: ['CRM-2'], records }));
+  assert.deepEqual(respiked['CRM-1'].dropped, [{ patch: combined, reason: 'fixed-absent' }]);
+});
+
 test('a card patch naming two cards is never replayed: its holders and every card it names in the run are spikes for a shared patch', () => {
   const s = store();
   for (const n of ['example-api/00001-new.patch', 'example-api/01220-01222-finish.patch', 'example-api/01224-01225.patch', 'example-api/01225-new.patch']) s.trialPatch(n);

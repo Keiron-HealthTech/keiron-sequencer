@@ -73,7 +73,7 @@ test('a wait past waitMs returns busy and runs nothing', async () => {
   writeFileSync(join(dir, 'checks', '0.lock'), '4242\nholder\n');
   let ran = false;
   const r = await withCheckSlot(dir, { slots: 1, command: 'x', pollMs: 5, waitMs: 40, isAlive: alive }, () => { ran = true; });
-  assert.deepEqual(r, { busy: true });
+  assert.deepEqual(r, { busy: true, holders: [{ slot: 0, pid: 4242, command: 'holder' }] });
   assert.equal(ran, false);
   assert.equal(existsSync(join(dir, 'checks', '0.lock')), true);
 });
@@ -113,9 +113,11 @@ test('check answers busy when no slot frees in time', async () => {
   const dir = activeRunDir(fixture.home);
   mkdirSync(join(dir, 'checks'), { recursive: true });
   writeFileSync(join(dir, 'checks', '0.lock'), `${process.pid}\nother\n`);
+  writeFileSync(join(dir, 'checks', '0.lock.child'), `${process.pid}\n`);
   const r = await run(['check', '--', 'sh', '-c', 'exit 3'], { ...deps, slot: { waitMs: 30, pollMs: 5 } });
   assert.equal(r.code, 75);
-  assert.equal(JSON.parse(r.stdout).action, 'busy');
+  assert.deepEqual(JSON.parse(r.stdout), { action: 'busy', holders: [{ slot: 0, pid: process.pid, command: 'other', child: process.pid }] });
+  assert.match(r.stderr, new RegExp(`no check slot freed in time: slot 0 is held by pid ${process.pid} \\(other\\)`));
 });
 
 const BUSY = { slot: { waitMs: 30, pollMs: 5 } };

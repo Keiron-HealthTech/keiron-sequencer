@@ -83,6 +83,23 @@ test('by default a lock whose process is gone is taken over, and a live one is w
   release();
 });
 
+test('a command that cannot get the run lock in time answers busy with exit 75 and the holder\'s pid, and never says to remove the lock', async () => {
+  const fixture = spikeFixture();
+  fixture.at('2026-11-10T10:00:00.000Z');
+  assert.equal((await run(['begin', PROJECT_URL], fixture.deps)).code, 0);
+  const dir = join(fixture.home, SLUG, 'runs', readdirSync(join(fixture.home, SLUG, 'runs'))[0]);
+  writeFileSync(join(dir, 'run.lock'), `${process.pid}\n`);
+  const deps = { ...fixture.deps, lock: { waitMs: 30, pollMs: 5 } };
+  for (const argv of [['next'], ['begin', PROJECT_URL]]) {
+    const r = await run(argv, deps);
+    assert.equal(r.code, 75, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout), { action: 'busy', lock: { pid: process.pid } });
+    assert.match(r.stderr, new RegExp(`locked by pid ${process.pid}`));
+    assert.doesNotMatch(r.stderr, /remove/);
+  }
+  assert.equal(holder(dir), `${process.pid}\n`);
+});
+
 async function cardReadyToEnd(typecheck) {
   const fixture = spikeFixture();
   const { deps, home } = fixture;

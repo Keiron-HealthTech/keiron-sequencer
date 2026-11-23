@@ -1,4 +1,4 @@
-import { closeSync, mkdirSync, openSync, rmSync, writeSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { holderAlive, readHolder, takeOver } from './home.mjs';
 
@@ -40,6 +40,26 @@ function take(path, { pid, command, isAlive }) {
   };
 }
 
+const readSlot = path => {
+  try {
+    return readFileSync(path, 'utf8').split('\n');
+  } catch (e) {
+    if (e.code === 'ENOENT') return null;
+    throw e;
+  }
+};
+
+// Who holds each slot, as its file says: the pid that took it, its command, and the pid of the heavy command it runs.
+function holdersOf(base, slots) {
+  return Array.from({ length: slots }, (_, n) => {
+    const path = join(base, `${n}.lock`);
+    const lines = readSlot(path);
+    if (!lines) return null;
+    const child = Number(readHolder(childFile(path)));
+    return { slot: n, pid: Number(lines[0]) || null, command: lines[1] ?? '', ...(child > 0 ? { child } : {}) };
+  }).filter(Boolean);
+}
+
 // Heavy commands (type-check, tests, tree setup) share `slots` places across every worker of a run, so a small machine is
 // never asked to run them all at once. Never call it while holding the run lock: a waiter would block every other command.
 // fn gets the slot's `child` pid file: each heavy command it runs passes it to the runner as childPidFile.
@@ -60,7 +80,7 @@ export async function withCheckSlot(dir, { slots, command, pollMs = 500, waitMs 
       }
     }
     if (again) continue;
-    if (Date.now() >= deadline) return { busy: true };
+    if (Date.now() >= deadline) return { busy: true, holders: holdersOf(base, slots) };
     await pause(pollMs);
   }
 }

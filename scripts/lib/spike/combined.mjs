@@ -112,18 +112,26 @@ function buildRepo(git, state, repos, repoDir, { config, dir, runSetup }) {
     .map(e => ({ ...e, ranges: oldSideRanges(readFileSync(pathOf(e.name), 'utf8')) }));
   const index = join(dir, 'tmp', COMBINED, `combine-${repoDir}.index`);
   const merged = mergedTree(git, repoDir, { ...repo, last: repo.baseTree }, touched.map(t => t.name), { index, pathOf });
-  if (merged.conflict) return conflictErrors(repoDir, touched, merged.conflict);
+  if (merged.conflict) return { errors: conflictErrors(repoDir, touched, merged.conflict) };
   git(['read-tree', '-m', '-u', repo.last, merged.tree], { cwd: repo.path });
   repo.last = merged.tree;
   const changed = git(['diff', '--name-only', '--diff-filter=d', repo.baseTree, repo.last], { cwd: repo.path }).split('\n').filter(Boolean);
   const log = typecheckLog(dir, COMBINED, repoDir);
   rmSync(log, { force: true });
   const check = repoTypecheck(runSetup, config.repos[repoDir], { treePath: repo.path, changed, logPath: log });
-  return !check.ran || check.ok ? [] : typeErrors(repoDir, repo, touched, check, log);
+  if (!check.ran) return { errors: [], skipped: check.skipped };
+  return { errors: check.ok ? [] : typeErrors(repoDir, repo, touched, check, log) };
 }
 
-// `repos` is the combined trees' state, changed in place; the errors of every repo come back, none when all pass.
+// `repos` is the combined trees' state, changed in place. The errors of every repo come back, none when all pass, and each
+// repo whose check never ran with the reason: a pass there proves nothing.
 export function buildCombined(git, state, repos, deps) {
   mkdirSync(join(deps.dir, 'tmp', COMBINED), { recursive: true });
-  return combinedRepos(state).flatMap(repoDir => buildRepo(git, state, repos, repoDir, deps));
+  const out = { errors: [], skipped: [] };
+  for (const repoDir of combinedRepos(state)) {
+    const { errors, skipped } = buildRepo(git, state, repos, repoDir, deps);
+    out.errors.push(...errors);
+    if (skipped) out.skipped.push({ repo: repoDir, reason: skipped });
+  }
+  return out;
 }

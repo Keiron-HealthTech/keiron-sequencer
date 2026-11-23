@@ -43,10 +43,15 @@ background: a merge can take longer than that timeout. A command the shell
 kills mid-check reports nothing: run it again.
 
 - A command that ends with exit code 75 and `action: 'busy'`: no check slot
-  freed in time, or another track is `merging` into yours, or a track is
-  `replaying`. Nothing changed: run the same command again.
+  freed in time (`holders` names each slot's pid and command), the run lock
+  stayed held (`lock` names its pid), or another track is `merging` into
+  yours, or a track is `replaying`. Nothing changed: run the same command
+  again.
 - `action: 'stale'`: a merge or a pause moved your track while the command
   ran, and nothing was kept: run the same command again.
+- After 3 `busy` or `stale` answers in a row to the same command, stop and
+  return the last one, with its `holders`, to the coordinator: something
+  holds the run longer than a rerun can wait out.
 - A command that says your track was merged into another, or that your card
   is no longer in progress: stop and return that answer. Never switch tracks
   yourself; the coordinator decides.
@@ -236,7 +241,7 @@ before it says so:
 - **Exit 6**: a tree guard failed; nothing was written.
 - **Exit 7**: usage unmeasured while a token cap is set.
 - **Exit 8**: the typecheck failed at `end`; nothing was written.
-- **Exit 75**: busy; run the same command again.
+- **Exit 75**: busy; run the same command again, at most 3 times in a row.
 - **Exit 124**: at `check`, the command ran past `--timeout-ms` and was
   stopped. Report it; rerun with a larger `--timeout-ms` only when the
   command is known to need it.

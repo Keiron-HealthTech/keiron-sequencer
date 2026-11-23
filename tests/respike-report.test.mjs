@@ -491,6 +491,7 @@ test('the report lists tracks, each crossing with its re-spiked cards, and each 
   ]);
   assert.deepEqual(report.combined, {
     passed: '2026-11-10T13:00:00.000Z',
+    skipped: [],
     failures: [
       {
         at: '2026-11-10T11:00:00.000Z', round: 1, errors: [error('TS2304: Cannot find name helper.', ['CRM-1', 'CRM-4'])],
@@ -515,9 +516,19 @@ test('a crossing whose cross died mid-merge reads as pending; one whose cross is
   assert.deepEqual(buildReport({ state, records: [], previous: new Map() }).crossings.map(c => c.status), ['pending', 'merging']);
 });
 
+test('the combined check names each repo whose check never ran in the passing round', () => {
+  const state = runState([['CRM-1', 'spike']]);
+  state.tracks = { t1: { cards: ['CRM-1'], status: 'done', mergedInto: null, current: null, generation: 0, repos: {} } };
+  state.crossings = [];
+  state.combine = { rounds: 0, results: [{ at: '2026-11-10T13:00:00.000Z', ok: true, skipped: [{ repo: 'api', reason: 'no-typescript-project' }] }] };
+  assert.deepEqual(buildReport({ state, records: [], previous: new Map() }).combined, {
+    passed: '2026-11-10T13:00:00.000Z', skipped: [{ repo: 'api', reason: 'no-typescript-project' }], failures: [],
+  });
+});
+
 test('a run read without tracks reports one track t1, no crossings and no combined check', () => {
   const report = buildReport({ state: runState([['CRM-1', 'spike'], ['CRM-2', 'spike']]), records: [], previous: new Map() });
   assert.deepEqual(report.tracks, [{ id: 't1', status: 'active', mergedInto: null, cards: ['CRM-1', 'CRM-2'] }]);
   assert.deepEqual(report.crossings, []);
-  assert.deepEqual(report.combined, { passed: null, failures: [] });
+  assert.deepEqual(report.combined, { passed: null, skipped: [], failures: [] });
 });

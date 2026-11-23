@@ -109,6 +109,7 @@ test('combine with clean tracks completes the run', async () => {
   assert.equal(r.code, 0, r.stderr);
   const out = json(r);
   assert.equal(out.action, 'combined-ok');
+  assert.equal(out.skipped, undefined);
   assert.deepEqual(out.removed.map(x => x.path).sort(), ['combined', 't1', 't2'].map(t => join(dir, 'trees', t, 'backend')));
   assert.deepEqual(tc.calls.map(c => [c.cwd, c.changed]), [[join(dir, 'trees', 'combined', 'backend'), ['CRM-1.txt', 'CRM-2.txt', 'CRM-3.txt']]]);
   const state = readState(dir);
@@ -116,6 +117,18 @@ test('combine with clean tracks completes the run', async () => {
   assert.deepEqual(state.combine.results.map(x => x.ok), [true]);
   assert.equal(state.combine.rounds, 0);
   assert.equal(existsSync(join(dir, 'trees', 'combined', 'backend')), false);
+});
+
+test('combined-ok names each repo whose check never ran, with the reason, and keeps it in the round', async () => {
+  const { f, dir, spike } = await doneTracks();
+  const path = join(f.home, 'config.json');
+  const config = JSON.parse(readFileSync(path, 'utf8'));
+  config.repos.backend.spikeTypecheck = false;
+  writeFileSync(path, JSON.stringify(config));
+  const r = await spike(['combine']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual([json(r).action, json(r).skipped], ['combined-ok', [{ repo: 'backend', reason: 'off' }]]);
+  assert.deepEqual(readState(dir).combine.results.map(x => x.skipped), [[{ repo: 'backend', reason: 'off' }]]);
 });
 
 test('combine reports each type error with the cards that touched its lines', async () => {

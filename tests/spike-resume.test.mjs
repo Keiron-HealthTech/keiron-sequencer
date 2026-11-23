@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { serializeRecord } from '../scripts/lib/record.mjs';
 import { join } from 'node:path';
 import { sandboxGit } from './helpers/git-sandbox.mjs';
@@ -203,4 +203,71 @@ test('a respike run paused by its card cap resumes through spike begin with the 
   assert.ok(f.linear.sent.length - linearCalls <= 1);
   f.at('2026-11-10T10:06:00.000Z');
   assert.equal(JSON.parse((await f.spike(['next', '--track', 't1'])).stdout).card, D);
+});
+
+test('a pause keeps the card in progress, so its in-flight end still records it; begin then hands out the next card', async () => {
+  const fixture = fixtureOf(2);
+  const session = sessionIn(fixture, 'session-1');
+  await begin(fixture, [], session, '2026-11-10T10:00:00.000Z');
+  fixture.at('2026-11-10T10:01:00.000Z');
+  assert.equal(JSON.parse((await call(fixture, ['next'], { session })).stdout).card, 'CRM-1');
+  const tree = JSON.parse((await call(fixture, ['tree', 'backend'])).stdout).path;
+  writeFileSync(join(tree, 'CRM-1.txt'), 'CRM-1\n');
+  const dir = activeRunDir(fixture.home);
+  mkdirSync(join(dir, 'notes'), { recursive: true });
+  writeFileSync(join(dir, 'notes', 'CRM-1.json'), JSON.stringify(notes));
+  fixture.at('2026-11-10T10:02:00.000Z');
+  assert.equal((await call(fixture, ['pause'])).code, 0);
+  assert.equal(stateIn(dir).tracks.t1.current.card, 'CRM-1');
+
+  fixture.at('2026-11-10T10:03:00.000Z');
+  const ended = await call(fixture, ['end', 'CRM-1']);
+  assert.equal(ended.code, 0, ended.stderr);
+  const state = stateIn(dir);
+  assert.deepEqual([state.status, state.cards['CRM-1'].status, state.tracks.t1.current], ['paused', 'done', null]);
+  const window = state.cards['CRM-1'].windows.at(-1);
+  assert.deepEqual([window.end, window.endReason], ['2026-11-10T10:03:00.000Z', undefined]);
+  assert.equal(recordOf(fixture, 'CRM-1').card, 'CRM-1');
+
+  await begin(fixture, [], sessionIn(fixture, 'session-2'), '2026-11-10T11:00:00.000Z');
+  fixture.at('2026-11-10T11:01:00.000Z');
+  assert.equal(JSON.parse((await call(fixture, ['next'])).stdout).card, 'CRM-2');
+});
+
+test('a schema-1 run with its tree at trees/<repoDir> resumes, and its card ends and completes there', async () => {
+  const fixture = fixtureOf(1);
+  await begin(fixture, [], sessionIn(fixture, 'session-1'), '2026-11-10T10:00:00.000Z');
+  fixture.at('2026-11-10T10:01:00.000Z');
+  await call(fixture, ['next']);
+  const opened = JSON.parse((await call(fixture, ['tree', 'backend'])).stdout).path;
+  const dir = activeRunDir(fixture.home);
+  const old = join(dir, 'trees', 'backend');
+  const { tracks, crossings, combine, workers, checks, ...rest } = stateIn(dir);
+  sandboxGit(['worktree', 'move', opened, old], { cwd: tracks.t1.repos.backend.source });
+  delete rest.plan.edges;
+  delete rest.plan.tracks;
+  const repos = { backend: { ...tracks.t1.repos.backend, path: old } };
+  writeFileSync(join(dir, 'run.json'), JSON.stringify({ ...rest, schemaVersion: 1, current: tracks.t1.current, repos }));
+  writeFileSync(join(old, 'CRM-1.txt'), 'CRM-1\n');
+  mkdirSync(join(dir, 'notes'), { recursive: true });
+  writeFileSync(join(dir, 'notes', 'CRM-1.json'), JSON.stringify(notes));
+
+  await begin(fixture, [], sessionIn(fixture, 'session-2'), '2026-11-10T11:00:00.000Z');
+  fixture.at('2026-11-10T11:01:00.000Z');
+  const brief = JSON.parse((await call(fixture, ['next'])).stdout);
+  assert.deepEqual([brief.card, brief.resumed, brief.trees], ['CRM-1', true, { backend: old }]);
+  fixture.at('2026-11-10T11:02:00.000Z');
+  const ended = await call(fixture, ['end', 'CRM-1']);
+  assert.equal(ended.code, 0, ended.stderr);
+  assert.deepEqual(JSON.parse(ended.stdout).patches, ['backend/00001-new.patch']);
+  assert.match(readFileSync(join(dir, 'patches', 'backend', '00001-new.patch'), 'utf8'), /\+CRM-1/);
+  assert.equal(recordOf(fixture, 'CRM-1').card, 'CRM-1');
+  const state = stateIn(dir);
+  assert.deepEqual([state.schemaVersion, state.tracks.t1.repos.backend.path], [2, old]);
+  assert.equal(existsSync(join(dir, 'trees', 't1', 'backend')), false);
+
+  fixture.at('2026-11-10T11:03:00.000Z');
+  const done = JSON.parse((await call(fixture, ['next'])).stdout);
+  assert.equal(done.action, 'complete');
+  assert.deepEqual(done.removed.map(r => r.path), [old]);
 });

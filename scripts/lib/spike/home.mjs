@@ -1,6 +1,7 @@
 import { closeSync, existsSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
+import { exitError } from '../cli.mjs';
 
 export { RUN_ID } from '../record.mjs';
 
@@ -112,7 +113,10 @@ export function takeOver(path, holder, isAlive) {
   }
 }
 
-export async function acquireLock(dir, { pid = process.pid, waitMs = 30_000, pollMs = 100, isAlive = p => process.kill(p, 0) } = {}) {
+export const RUN_LOCK_WAIT_MS = 120_000;
+
+// A wait that runs out answers busy (75) like a full check slot: the holder is alive, so its lock is never removed by hand.
+export async function acquireLock(dir, { pid = process.pid, waitMs = RUN_LOCK_WAIT_MS, pollMs = 100, isAlive = p => process.kill(p, 0) } = {}) {
   mkdirSync(dir, { recursive: true });
   const path = join(dir, LOCK_FILE);
   const deadline = Date.now() + waitMs;
@@ -125,7 +129,11 @@ export async function acquireLock(dir, { pid = process.pid, waitMs = 30_000, pol
       const holder = readHolder(path);
       if (holder === null) continue;
       if (!holderAlive(holder, isAlive) && takeOver(path, holder, isAlive)) continue;
-      if (Date.now() >= deadline) throw new Error(`the run is locked by pid ${holder || 'unknown'}: remove ${path} only if that process is gone`);
+      if (Date.now() >= deadline) {
+        throw Object.assign(exitError(75, `the run is locked by pid ${holder || 'unknown'}: run the command again once it ends`), {
+          output: { action: 'busy', lock: { pid: Number(holder) || null } },
+        });
+      }
       await pause(pollMs);
       continue;
     }

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { parsePatchName } from '../../backfill/patch-map.mjs';
 import { invert, readDirMap } from '../patch-dirs.mjs';
+import { COMBINE_FIXUP } from '../record.mjs';
 import { isLive } from '../records.mjs';
 import { runDir, statePath, trialPatchRoot } from '../spike/home.mjs';
 import { allRepos, upgradeState } from '../spike/state.mjs';
@@ -141,7 +142,7 @@ export function replayPlans({ ancestors, selected = [], records, isBuilt, home, 
     const kept = [];
     for (const f of p.fixups) {
       const fixed = fixedBy(f.patch, p.source, key, ctx);
-      if (!present(f.from)) { p.entry.dropped.push({ patch: f.patch, reason: 'from-absent' }); continue; }
+      if (f.from !== COMBINE_FIXUP && !present(f.from)) { p.entry.dropped.push({ patch: f.patch, reason: 'from-absent' }); continue; }
       if (!fixed.every(present)) { p.entry.dropped.push({ patch: f.patch, reason: 'fixed-absent' }); continue; }
       kept.push(f.patch);
       // A fixup adapts its fixed cards to its from card's change: it lands only once all of them have replayed.

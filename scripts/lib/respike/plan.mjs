@@ -5,6 +5,7 @@ import { exitError } from '../cli.mjs';
 import { analyzeProject } from '../graph.mjs';
 import { canonicalJson } from '../harvest.mjs';
 import { fetchDescriptions, fetchProject, fetchProjectMap } from '../linear-fetch.mjs';
+import { COMBINE_FIXUP } from '../record.mjs';
 import { dataInRepoWarning, isLive, readRecords } from '../records.mjs';
 import { allowedRepos, loadConfig } from '../spike/config.mjs';
 import { displayData, trialPatchRoot, trialReferenceDir } from '../spike/home.mjs';
@@ -79,6 +80,20 @@ function dataInRepo(dataDir, repoDataDir, slug) {
   return w ? [{ code: w.kind, message: w.message }] : [];
 }
 
+// A fixup ties its from card to each card it fixed; a fix made on the combined tree has no from card, so it ties together
+// every card that received it.
+function fixupLinks(records) {
+  const links = [];
+  const combined = new Map();
+  for (const r of records) {
+    for (const f of r.fixups?.received ?? []) {
+      if (f.from === COMBINE_FIXUP) combined.set(f.patch, [...(combined.get(f.patch) ?? []), r.card]);
+      else links.push([f.from, r.card]);
+    }
+  }
+  return [...links, ...combined.values()];
+}
+
 export async function buildRespikePlan(ref, key, {
   cards = null, stale = false, all = false, answers = { built: new Map(), unbuilt: new Set() }, config: given = null, coverageOnly = false,
 } = {}, deps) {
@@ -114,7 +129,7 @@ export async function buildRespikePlan(ref, key, {
   if (trialLogDir === undefined && ancestors.some(a => a.mode === 'replay' && a.from === 'trial')) assertTrialReference(home, slug, logDir);
   const modes = new Map([...ancestors.map(a => [a.key, a.mode]), ...selected.map(k => [k, 'spike'])]);
   const ordered = orderOf(modes);
-  const links = [...records.values()].flatMap(r => (r.fixups?.received ?? []).map(f => [f.from, r.card]));
+  const links = fixupLinks(records.values());
   const tracks = tracksOf({ order: ordered.order, edges: contractedEdges(analysis.edges, new Set(ordered.order)), links });
   const stops = ordered.cycles.map(members => ({ code: 'cycle', members, message: `cycle among the run's cards: ${members.join(', ')}` }));
 

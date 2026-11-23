@@ -386,7 +386,12 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs cross --track <id> --card <CARD> --
 - `action: 'stale'` (a merge or a pause moved the track while the command
   ran) and Exit 75 with `action: 'busy'` (no check slot freed in time, or a
   track is `merging` or `replaying`): nothing was kept, and whoever ran the
-  command, the coordinator or a worker, reruns the same command.
+  command, the coordinator or a worker, reruns the same command. A slot's
+  `busy` names its `holders` (each slot's pid and command), a held run lock
+  its `lock` pid. After three `busy` or `stale` answers in a row to one
+  command, stop rerunning it: a worker returns it to you. Read the holders:
+  wait for another worker's check or a `combine` to end, then continue, and
+  report a holder that is no command of this run to the user.
 - `next` processes the ready replay entries first, inline: no window, no box,
   no question. Each output lists them in `replayed` (`card`, `status`,
   `patches`): `replayed` (applied cleanly; the record keeps its findings,
@@ -521,7 +526,10 @@ respike base with every track's patches and fixups, and type-checks it.
 Never type-check the combined tree by hand: `combine` checks it.
 
 - `combined-ok`: the run is complete; report it as `complete` below, then
-  Step 8.
+  Step 8. When it lists `skipped` (`{ repo, reason }`: `off`,
+  `no-typescript-project`, `no-typescript-changes` or `no-changes`), the
+  combined check never ran in those repos: say so, since a pass there proves
+  nothing. `combined-failed` carries `skipped` the same way.
 - `combined-failed` with `round` and `errors`, each `{ repo, file, line,
   message, cards }`. Diagnose before fixing, in the main session: read each
   error, the cards it names, their records and patches, and say which cards
@@ -637,7 +645,8 @@ blocks nothing and changes no record. Show:
 - Under `## Crossings`, each entry of `crossings`: the two cards and tracks,
   its kind, note and status, the cards it `respiked`, the cards it
   `replayed` onto the merged track, and its `droppedFixups`.
-- Under `## Combined check`, `combined`: `passed` (when the check passed)
+- Under `## Combined check`, `combined`: `passed` (when the check passed),
+  the `skipped` repos where that passing check never ran, with their reason,
   and each of the `failures` with its errors, the `fixups` recorded for it
   (the note is the diagnosis; a dropped one is shown as dropped) and the
   crossings recorded for it.

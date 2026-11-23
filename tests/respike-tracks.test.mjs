@@ -51,6 +51,20 @@ test('a previous fixup from CRM-3 into CRM-1 puts them in one track', async () =
   assert.deepEqual([...plan.tracks[0].cards].sort(), [A, B, C]);
 });
 
+test('a fix made on the combined tree for CRM-1 and CRM-3 puts them in one track', async () => {
+  const f = fixture();
+  const combined = 'backend/fixup-1-3-from-combine-1.patch';
+  for (const card of [A, C]) {
+    const record = oldRecord(card, { spikedAt: '2026-11-01T10:30:00.000Z', patches: card === A ? [PATCH_A] : [] });
+    record.fixups = { received: [{ from: 'combine', patch: combined, note: 'the two tracks did not fit' }], caused: [] };
+    assert.deepEqual(validateRecord(record), []);
+    mkdirSync(join(f.dataDir, SLUG), { recursive: true });
+    writeFileSync(join(f.dataDir, SLUG, `${card}.json`), serializeRecord(record));
+  }
+  const plan = await planOf(f, [A, B, C]);
+  assert.equal(plan.tracks.length, 1);
+});
+
 test('the approve hash changes when the tracks change', async () => {
   const f = fixture();
   const apart = await planOf(f, [A, B, C]);

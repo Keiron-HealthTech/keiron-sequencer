@@ -173,8 +173,10 @@ function combinedCheck(state) {
   const results = state.combine?.results ?? [];
   const within = (at, i) => at > results[i].at && (i + 1 === results.length || at <= results[i + 1].at);
   const fixups = (state.fixups ?? []).filter(f => f.from === COMBINE_FIXUP);
+  const passed = results.find(r => r.ok);
   return {
-    passed: results.find(r => r.ok)?.at ?? null,
+    passed: passed?.at ?? null,
+    skipped: passed?.skipped ?? [],
     failures: results.flatMap((r, i) => (r.ok ? [] : [{
       at: r.at,
       round: r.round,

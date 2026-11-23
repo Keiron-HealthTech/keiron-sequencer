@@ -10,6 +10,9 @@ export const exitError = (code, message) => Object.assign(new Error(message), { 
 
 export const ok = value => ({ code: 0, stdout: `${JSON.stringify(value)}\n`, stderr: '' });
 
+// An error that carries an `output` answers it as JSON beside its message (busy, for one).
+export const failed = e => ({ ...fail(e.exitCode ?? 1, e.message), ...(e.output ? { stdout: `${JSON.stringify(e.output)}\n` } : {}) });
+
 export const redacted = (result, key) => ({ ...result, stdout: redact(result.stdout, key), stderr: redact(result.stderr, key) });
 
 export function parseArgs(args, flags = [], repeatable = []) {
