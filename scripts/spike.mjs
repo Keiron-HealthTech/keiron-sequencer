@@ -387,13 +387,18 @@ async function replayStep(dir, trackId, before, replayed, { lock, ...deps }) {
     return { result: busy({ replayed }) };
   }
   return relock(dir, lock, trackId, before, async fresh => {
+    if (failure && !failure.setup) {
+      rollBackTrees(git, before, work, trackId);
+      delete fresh.tracks[trackId].replaying;
+      saveState(dir, fresh, now());
+      throw failure;
+    }
     adoptReplay(fresh, before, work, trackId);
     if (entry) fresh.tracks[trackId].status = 'active';
     if (failure || refusedNext(fresh, trackId) || !replayAhead(fresh, trackId)) delete fresh.tracks[trackId].replaying;
     for (const w of entry?.writes ?? []) writeAtomic(w.path, w.text);
     saveState(dir, fresh, now());
     if (entry) replayed.push(entry.outcome);
-    if (failure && !failure.setup) throw failure;
     if (failure) return { result: { ...ok({ action: 'setup-failed', ...failure.setup, replayed }), code: 1, stderr: lines([failure.message]) } };
     if (refusedNext(fresh, trackId) || !replayAhead(fresh, trackId)) return { result: await nextCard(dir, fresh, trackId, deps, replayed) };
     return { state: fresh };

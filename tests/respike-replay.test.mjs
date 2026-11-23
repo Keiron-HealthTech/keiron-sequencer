@@ -617,3 +617,32 @@ test('a generation bump during a replay entry\'s type-check rolls that entry bac
   assert.deepEqual(out.replayed.map(o => [o.card, o.status]), [[D, 'replayed'], [F, 'replayed']]);
   assert.equal(out.card, B);
 });
+
+test('a replay that throws after its snapshot keeps nothing: no log entry, the tree back at its last snapshot, and next replays it again', async () => {
+  const f = respikeFixture();
+  const { dir } = await begin(f);
+  assert.equal((await f.spike(['tree', 'backend'])).code, 0);
+  const tree = join(dir, 'trees', 't1', 'backend');
+  const opened = readState(dir).tracks.t1.repos.backend;
+  let thrown = false;
+  const git = (args, opts = {}) => {
+    if (!thrown && args[0] === 'ls-tree' && opts.cwd === tree) {
+      thrown = true;
+      throw new Error('forced failure after the snapshot');
+    }
+    return f.deps.git(args, opts);
+  };
+  const r = await f.spike(['next'], { git });
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /forced failure after the snapshot/);
+  const state = readState(dir);
+  assert.deepEqual([state.tracks.t1.repos.backend.last, state.tracks.t1.repos.backend.log], [opened.last, opened.log]);
+  assert.equal(state.tracks.t1.replaying, undefined);
+  assert.equal(state.cards[A].status, 'pending');
+  assertTreeClean(f, state.tracks.t1.repos.backend);
+  assert.equal(existsSync(join(dir, 'patches', PATCH_A)), false);
+
+  const out = json(await f.spike(['next']));
+  assert.deepEqual(out.replayed, [{ card: A, status: 'replayed', patches: [PATCH_A] }]);
+  assert.equal(out.card, B);
+});
