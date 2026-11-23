@@ -402,3 +402,15 @@ test('spike: the config is shown as one line per repo and its path, found from t
   spikeSays('the folder that holds the checkout this session runs in');
   spikeSays('Never show the JSON, the hash, the setup or the risk paths unless the user asks');
 });
+
+test('spike: a run begun with --workers above 1 is driven like a respike run\'s tracks, and --workers 1 keeps the inline loop', () => {
+  const section = spike.split('\n### Several tracks\n')[1]?.split(/\n##+ /)[0] ?? '';
+  assert.ok(section, 'spike SKILL.md has no "### Several tracks" section');
+  const flatSection = section.replace(/\s+/g, ' ');
+  for (const anchor of [
+    'begun with `--workers` above 1', 'exactly like a respike run\'s tracks', '/keiron-sequencer:respike Step 6: The card loop',
+    '`${CLAUDE_PLUGIN_ROOT}/skills/respike/worker.md`', 'as the worker brief', 'ends with `combine`', '`--workers 1` (the default)', 'keeps the inline card loop above',
+  ]) assert.ok(flatSection.includes(anchor), `the several-tracks section does not say ${JSON.stringify(anchor)}`);
+  assert.ok(existsSync(new URL('skills/respike/worker.md', ROOT)), 'the worker brief it names does not exist');
+  assert.ok(skills.respike.includes('\n## Step 6: The card loop\n'), 'the respike step it names does not exist');
+});
