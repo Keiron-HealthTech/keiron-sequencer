@@ -60,13 +60,16 @@ export function trackIdOf(state, id) {
     return id;
   }
   const live = liveTracks(state);
-  if (live.length !== 1) throw new Error(`pass --track <id>: this run has ${live.length} tracks`);
+  if (live.length !== 1) throw new Error(`pass --track <id>: this run has ${live.length} tracks: ${live.map(([k]) => k).join(', ')}`);
   return live[0][0];
 }
 
 export const trackOf = (state, id) => state.tracks[trackIdOf(state, id)];
 
 export const trackOfCard = (state, card) => Object.entries(state.tracks).find(([, t]) => t.cards.includes(card))?.[0] ?? null;
+
+// A card that a crossing says needs another card waits until that card is done.
+export const waitingOn = (state, card) => state.crossings.find(c => c.from === card && state.cards[c.to]?.status !== 'done')?.to ?? null;
 
 // Every tree of the run, whichever track holds it.
 export const allRepos = state => Object.values(state.tracks).flatMap(t => Object.entries(t.repos));
@@ -108,7 +111,7 @@ export function openCardWindow(state, card, execution, now) {
   cardState.status = 'in-progress';
   cardState.windows.push(window);
   const track = state.tracks[trackOfCard(state, card)];
-  if (track.status === 'pending') track.status = 'active';
+  track.status = 'active';
   track.current = { card, startedAt: window.start, execution: execution.id };
   return window;
 }

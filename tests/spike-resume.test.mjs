@@ -166,7 +166,7 @@ test('resume runs the tree guard: a tree with a commit stops begin with exit 6 a
 test('a respike run paused by its card cap resumes through spike begin with the same id, the same plan and its pending cards, and no hash', async () => {
   const [C, D, X] = ['CRM-5', 'CRM-6', 'CRM-4'];
   const f = R.respikeFixture({
-    issues: ([a, b]) => [a, b, R.issue(C, { relations: { nodes: [{ type: 'blocks', relatedIssue: { identifier: D } }] } }), R.issue(D, { relations: { nodes: [{ type: 'blocks', relatedIssue: { identifier: X } }] } }),
+    issues: ([a, b]) => [a, b, R.issue(C), R.issue(D, { relations: { nodes: [{ type: 'blocks', relatedIssue: { identifier: X } }] } }),
       R.issue(X, { relations: { nodes: [{ type: 'blocks', relatedIssue: { identifier: R.B } }] } })],
   });
   const patchX = 'backend/00004-new.patch';
@@ -179,15 +179,15 @@ test('a respike run paused by its card cap resumes through spike begin with the 
   const { runId } = JSON.parse((await f.run('begin', [...pick, '--approve', plan.approve, '--max-cards', '1'])).stdout);
   const dir = join(f.home, R.SLUG, 'runs', runId);
   f.at('2026-11-10T10:02:00.000Z');
-  assert.equal(JSON.parse((await f.spike(['next'])).stdout).card, C);
-  const tree = JSON.parse((await f.spike(['tree', 'backend'])).stdout).path;
+  assert.equal(JSON.parse((await f.spike(['next', '--track', 't2'])).stdout).card, C);
+  const tree = JSON.parse((await f.spike(['tree', 'backend', '--track', 't2'])).stdout).path;
   writeFileSync(join(tree, 'c.txt'), 'c\n');
   mkdirSync(join(dir, 'notes'), { recursive: true });
   writeFileSync(join(dir, 'notes', `${C}.json`), JSON.stringify(R.notes(C)));
   f.at('2026-11-10T10:03:00.000Z');
-  assert.equal((await f.spike(['end', C])).code, 0);
+  assert.equal((await f.spike(['end', C, '--track', 't2'])).code, 0);
   f.at('2026-11-10T10:04:00.000Z');
-  assert.equal(JSON.parse((await f.spike(['next'])).stdout).reason, 'cards');
+  assert.equal(JSON.parse((await f.spike(['next', '--track', 't1'])).stdout).reason, 'cards');
   const paused = stateIn(dir);
   assert.equal(paused.status, 'paused');
   assert.deepEqual([paused.cards[X].status, paused.plan.cards[X].mode], ['pending', 'spike']);
@@ -202,5 +202,5 @@ test('a respike run paused by its card cap resumes through spike begin with the 
   assert.equal(after.status, 'active');
   assert.ok(f.linear.sent.length - linearCalls <= 1);
   f.at('2026-11-10T10:06:00.000Z');
-  assert.equal(JSON.parse((await f.spike(['next'])).stdout).card, D);
+  assert.equal(JSON.parse((await f.spike(['next', '--track', 't1'])).stdout).card, D);
 });

@@ -527,7 +527,7 @@ test('a replay that fails typecheck turns into a spike with reason typecheck', a
   assert.deepEqual(out.replayed, [{ card: A, status: 'typecheck', patches: [] }]);
   assert.equal(out.action, 'card');
   assert.equal(out.card, A);
-  assert.deepEqual(out.replayTypecheck, { repo: 'backend', log: join(dir, 'logs', 'typecheck-backend.log') });
+  assert.deepEqual(out.replayTypecheck, { repo: 'backend', log: join(dir, 'logs', 't1', 'typecheck-backend.log') });
   const state = readState(dir);
   assert.equal(state.plan.cards[A].mode, 'spike');
   assert.equal(state.cards[A].replay.status, 'typecheck');
@@ -535,7 +535,7 @@ test('a replay that fails typecheck turns into a spike with reason typecheck', a
   assert.equal(state.tracks.t1.repos.backend.last, state.tracks.t1.repos.backend.baseTree);
   assert.deepEqual(walk(join(dir, 'patches')), []);
   assert.equal(recordText(f, A), before);
-  assert.match(readFileSync(join(dir, 'logs', 'typecheck-backend.log'), 'utf8'), /tc src\/list\.js/);
+  assert.match(readFileSync(join(dir, 'logs', 't1', 'typecheck-backend.log'), 'utf8'), /tc src\/list\.js/);
 });
 
 const F = 'CRM-8';

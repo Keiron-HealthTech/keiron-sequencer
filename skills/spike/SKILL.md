@@ -268,10 +268,14 @@ them. Ask the user mid-card only on real conflicts.
 - `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs status [--project <project ref>]` is
   read-only: the current card's spend against its box, the open trees and the
   unsettled usage windows.
+- `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs tracks [--project <project ref>]` is
+  read-only: each track's status, current card and done/total. A run with more
+  than one track needs `--track <id>` on next, tree, notes-template, candidates,
+  fixup, end and rebuild.
 - `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs prune [<slug>] [--dry-run]` applies
   the retention by hand.
 - `--project <project ref>` on next, tree, check, candidates, fixup, end, rebuild,
-  pause, abandon and status is needed only when more than one project has an
+  pause, abandon, status and tracks is needed only when more than one project has an
   active run.
 
 ## Exit codes

@@ -173,7 +173,7 @@ test('a card started under --box 100, interrupted and resumed with no --box keep
 
 test('in a respike run a card cap of 1 over a replay and two spikes pauses after the first spiked card: the replay spends nothing', async () => {
   const C = 'CRM-5';
-  const f = R.respikeFixture({ issues: ([a, b]) => [a, { ...b, relations: { nodes: [{ type: 'blocks', relatedIssue: { identifier: C } }] } }, R.issue(C)] });
+  const f = R.respikeFixture({ issues: ([a, b]) => [a, b, R.issue(C)] });
   const pick = [R.PROJECT_URL, '--cards', `${R.B},${C}`];
   const plan = JSON.parse((await f.run('preflight', pick)).stdout);
   assert.deepEqual(plan.order, [{ key: R.A, mode: 'replay' }, { key: R.B, mode: 'spike' }, { key: C, mode: 'spike' }]);
@@ -181,18 +181,18 @@ test('in a respike run a card cap of 1 over a replay and two spikes pauses after
   const { runId } = JSON.parse((await f.run('begin', [...pick, '--approve', plan.approve, '--max-cards', '1'])).stdout);
   const dir = join(f.home, R.SLUG, 'runs', runId);
   f.at('2026-11-10T10:02:00.000Z');
-  const first = JSON.parse((await f.spike(['next'])).stdout);
+  const first = JSON.parse((await f.spike(['next', '--track', 't1'])).stdout);
   assert.deepEqual(first.replayed.map(r => r.card), [R.A]);
   assert.equal(first.card, R.B);
   assert.deepEqual(JSON.parse((await f.spike(['status'])).stdout).execution.spent.cards, 0);
-  const tree = JSON.parse((await f.spike(['tree', 'backend'])).stdout).path;
+  const tree = JSON.parse((await f.spike(['tree', 'backend', '--track', 't1'])).stdout).path;
   writeFileSync(join(tree, 'b.txt'), 'b\n');
   mkdirSync(join(dir, 'notes'), { recursive: true });
   writeFileSync(join(dir, 'notes', `${R.B}.json`), JSON.stringify(R.notes(R.B)));
   f.at('2026-11-10T10:05:00.000Z');
-  assert.equal((await f.spike(['end', R.B])).code, 0);
+  assert.equal((await f.spike(['end', R.B, '--track', 't1'])).code, 0);
   f.at('2026-11-10T10:06:00.000Z');
-  const paused = JSON.parse((await f.spike(['next'])).stdout);
+  const paused = JSON.parse((await f.spike(['next', '--track', 't2'])).stdout);
   assert.deepEqual([paused.action, paused.reason, paused.spent, paused.cap], ['pause', 'cards', 1, 1]);
   assert.equal(stateIn(dir).cards[C].status, 'pending');
   assert.deepEqual(stateIn(dir).cards[R.A].windows, []);

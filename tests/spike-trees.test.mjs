@@ -324,7 +324,7 @@ test('setup runs in the new tree one command at a time, repo by repo, before the
     { argv: ['yarn', 'build'], cwd: back.path, timeoutMs: 5000 },
     { argv: ['npm', 'ci'], cwd: front.path, timeoutMs: undefined },
   ]);
-  assert.ok(existsSync(join(home, SLUG, 'runs', runId, 'logs', 'setup-backend.log')));
+  assert.ok(existsSync(join(home, SLUG, 'runs', runId, 'logs', 't1', 'setup-backend.log')));
   assert.equal(worktrees(other.dir).length, 2);
 });
 
@@ -339,7 +339,7 @@ test('a failing setup command stops the open with exit 1 naming repo, command an
   await run(['next'], deps);
   const r = await run(['tree', 'backend'], { ...deps, runSetup: failing.run });
   assert.equal(r.code, 1);
-  assert.deepEqual(JSON.parse(r.stdout), { action: 'setup-failed', repo: 'backend', command: ['yarn', 'build'], exitCode: 1, log: join(home, SLUG, 'runs', runId, 'logs', 'setup-backend.log') });
+  assert.deepEqual(JSON.parse(r.stdout), { action: 'setup-failed', repo: 'backend', command: ['yarn', 'build'], exitCode: 1, log: join(home, SLUG, 'runs', runId, 'logs', 't1', 'setup-backend.log') });
   assert.match(r.stderr, /setup of backend failed: yarn build exited 1/);
   assert.deepEqual(failing.calls.map(c => c.argv.join(' ')), ['yarn install', 'yarn build']);
   const state = JSON.parse(readFileSync(join(home, SLUG, 'runs', runId, 'run.json'), 'utf8'));
@@ -368,7 +368,7 @@ test('setup output goes to the repo log, not to stdout; a command that cannot ru
     () => openTree(git, state, { trackId: 't1', repoDir: 'backend', repo: repoConfig({ checkout, setup: [['npm', 'ci'], ['slow']] }), dir, runSetup: noisy.run }),
     e => e.exitCode === 1 && e.setup.command.join(' ') === 'slow' && e.setup.exitCode === null && /ETIMEDOUT/.test(e.message),
   );
-  const log = readFileSync(join(dir, 'logs', 'setup-backend.log'), 'utf8');
+  const log = readFileSync(join(dir, 'logs', 't1', 'setup-backend.log'), 'utf8');
   assert.match(log, /^\$ npm ci$/m);
   assert.match(log, /installed 3 packages/);
   assert.match(log, /warn: peer dep/);

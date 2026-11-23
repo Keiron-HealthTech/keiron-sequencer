@@ -21,32 +21,33 @@ import { cardPatchName, fixupPatchName, overlapCandidates, snapshot, workingDiff
 import { scanPatch, SECRET_KINDS } from './lib/spike/secrets.mjs';
 import {
   activeRunFor, activeRuns, allRepos, capReached, closeOpenExecutions, createRun, executionSpend, issueMark, latestRun, noteStartTrees, openCardWindow,
-  openExecution, readState, saveState, timeBoxFor, trackIdOf, trackOf, unsettledWindows,
+  openExecution, readState, saveState, timeBoxFor, trackIdOf, trackOfCard, unsettledWindows, waitingOn,
 } from './lib/spike/state.mjs';
 import { applyPrDiff, assertLastTree, checkTree, discardTree, guardTree, openTree, rebuildTree, teardownTrees, touchedCheckouts } from './lib/spike/trees.mjs';
 import { bindSession, lastEntryAt, sessionFiles, transcriptsRoot, weighted, windowUsage } from './lib/spike/usage-window.mjs';
 
 const USAGE = [
   'usage: node scripts/spike.mjs begin <project ref> [--max-tokens <n>] [--max-cards <n>] [--box <n>] [--session-file <transcript.jsonl>]',
-  'usage: node scripts/spike.mjs next [--project <project ref>]',
-  'usage: node scripts/spike.mjs tree <repoDir> [--project <project ref>]',
-  'usage: node scripts/spike.mjs notes-template <CARD> [--project <project ref>]',
-  'usage: node scripts/spike.mjs end <CARD> [--notes <notes.json>] [--allow <kind>:<path>]... [--skip-typecheck <reason>] [--project <project ref>]',
+  'usage: node scripts/spike.mjs next [--track <id>] [--project <project ref>]',
+  'usage: node scripts/spike.mjs tree <repoDir> [--track <id>] [--project <project ref>]',
+  'usage: node scripts/spike.mjs notes-template <CARD> [--track <id>] [--project <project ref>]',
+  'usage: node scripts/spike.mjs end <CARD> [--track <id>] [--notes <notes.json>] [--allow <kind>:<path>]... [--skip-typecheck <reason>] [--project <project ref>]',
   'usage: node scripts/spike.mjs check [--track <id>] [--cwd <repoDir>] [--project <project ref>] -- <argv>...',
-  'usage: node scripts/spike.mjs candidates [--repo <repoDir>] [--project <project ref>]',
-  'usage: node scripts/spike.mjs fixup --fixes <CARD>[,<CARD>] --slug <kebab-slug> --note <text> --repo <repoDir> [--allow <kind>:<path>]... [--project <project ref>] -- <path>...',
-  'usage: node scripts/spike.mjs rebuild <repoDir> [--project <project ref>]',
+  'usage: node scripts/spike.mjs candidates [--track <id>] [--repo <repoDir>] [--project <project ref>]',
+  'usage: node scripts/spike.mjs fixup [--track <id>] --fixes <CARD>[,<CARD>] --slug <kebab-slug> --note <text> --repo <repoDir> [--allow <kind>:<path>]... [--project <project ref>] -- <path>...',
+  'usage: node scripts/spike.mjs rebuild <repoDir> [--track <id>] [--project <project ref>]',
   'usage: node scripts/spike.mjs pause [--project <project ref>]',
   'usage: node scripts/spike.mjs abandon [--discard] [--project <project ref>]',
   'usage: node scripts/spike.mjs prune [<slug>] [--dry-run]',
   'usage: node scripts/spike.mjs status [--project <project ref>]',
+  'usage: node scripts/spike.mjs tracks [--project <project ref>]',
   'usage: node scripts/spike.mjs config <project ref> --out <draft.json> [--root <dir>]...',
   'usage: node scripts/spike.mjs config --draft <draft.json> [--approve <hash>]',
 ];
 
 const cardNumber = key => Number(String(key).match(/(\d+)$/)?.[1] ?? 0);
 
-const COMMANDS = { begin, next, tree, check, candidates, 'notes-template': notesTemplateFor, end, fixup, rebuild, pause, abandon, prune, status, config };
+const COMMANDS = { begin, next, tree, check, candidates, 'notes-template': notesTemplateFor, end, fixup, rebuild, pause, abandon, prune, status, tracks, config };
 
 // transcripts: null means no session discovery, so only an explicit --session-file is ever read.
 export async function run(argv, {
@@ -242,7 +243,7 @@ async function startRun(ref, key, flags, { fetchImpl, now, home, dataDir, gh, gi
 const busy = extra => ({ ...ok({ action: 'busy', ...extra }), code: 75 });
 
 const isOpen = ([, r]) => r.status === 'open';
-const openRepos = state => Object.entries(trackOf(state).repos).filter(isOpen);
+const openRepos = (state, trackId) => Object.entries(state.tracks[trackId].repos).filter(isOpen);
 const anyRemoved = state => allRepos(state).some(([, r]) => r.status === 'removed');
 
 // The card in progress keeps its status; its open window closes at the last transcript line of its execution,
@@ -283,11 +284,11 @@ async function resumeRun({ dir, state }, flags, { now, git, dataDir }) {
   return begun(state, mark, true);
 }
 
-const openTrees = state => Object.fromEntries(openRepos(state).map(([d, r]) => [d, r.path]));
+const openTrees = (state, trackId) => Object.fromEntries(openRepos(state, trackId).map(([d, r]) => [d, r.path]));
 
 // The diff goes into the card's repo tree once: when the tree opens during the card, or at next if it is already open.
-function applyCardPr(state, repoDir, { config, gh, git, dir }) {
-  const track = trackOf(state);
+function applyCardPr(state, trackId, repoDir, { config, gh, git, dir }) {
+  const track = state.tracks[trackId];
   const card = track.current?.card;
   const planned = card && state.plan.cards[card];
   if (planned?.origin !== 'existing-pr' || planned.pr?.repoDir !== repoDir || state.cards[card].prDiff) return {};
@@ -302,17 +303,18 @@ function applyCardPr(state, repoDir, { config, gh, git, dir }) {
 }
 
 async function next(args, { home, now, gh, git, transcripts, dataDir, sleep, runSetup, lock, slot }) {
-  const a = parseArgs(args, ['--project']);
+  const a = parseArgs(args, ['--project', '--track']);
   if (!a || a.positional.length) return fail(2, ...USAGE);
   const deps = { home, now, config: () => loadConfig(home), gh, git, transcripts, dataDir, sleep, runSetup, slot };
-  const first = await onActiveRun(home, a.flags.project, async (dir, state) => (
-    refusedNext(state) || !replayAhead(state) ? { result: await nextCard(dir, state, deps) } : { dir, state }
-  ), lock);
+  const first = await onActiveRun(home, a.flags.project, async (dir, state) => {
+    const trackId = trackIdOf(state, a.flags.track);
+    return refusedNext(state, trackId) || !replayAhead(state, trackId) ? { result: await nextCard(dir, state, trackId, deps) } : { dir, state, trackId };
+  }, lock);
   if (first.result) return first.result;
-  const { dir } = first;
+  const { dir, trackId } = first;
   const replayed = [];
   for (let before = first.state; ;) {
-    const step = await replayStep(dir, before, replayed, { ...deps, lock });
+    const step = await replayStep(dir, trackId, before, replayed, { ...deps, lock });
     if (!step.state) return step.result ?? step;
     before = step.state;
   }
@@ -320,15 +322,14 @@ async function next(args, { home, now, gh, git, transcripts, dataDir, sleep, run
 
 // One replay entry: its tree work outside the lock, then a short locked section keeps it (state, patches, record) or, if the
 // run moved meanwhile, undoes it. Entries kept before a stale one stay kept.
-async function replayStep(dir, before, replayed, { lock, ...deps }) {
+async function replayStep(dir, trackId, before, replayed, { lock, ...deps }) {
   const { now, git, slot } = deps;
-  const trackId = trackIdOf(before);
   const work = structuredClone(before);
   let entry = null;
   let failure = null;
   const slotted = await withCheckSlot(dir, { slots: before.checks ?? 1, command: 'replay', ...slot }, () => {
     try {
-      entry = replayNext(dir, work, deps);
+      entry = replayNext(dir, work, trackId, deps);
     } catch (e) {
       failure = e;
     }
@@ -336,21 +337,26 @@ async function replayStep(dir, before, replayed, { lock, ...deps }) {
   if (slotted.busy) return { result: busy({ replayed }) };
   return relock(dir, lock, trackId, before, async fresh => {
     adoptReplay(fresh, before, work, trackId);
+    if (entry) fresh.tracks[trackId].status = 'active';
     for (const w of entry?.writes ?? []) writeAtomic(w.path, w.text);
     saveState(dir, fresh, now());
     if (entry) replayed.push(entry.outcome);
     if (failure && !failure.setup) throw failure;
     if (failure) return { result: { ...ok({ action: 'setup-failed', ...failure.setup, replayed }), code: 1, stderr: lines([failure.message]) } };
-    if (refusedNext(fresh) || !replayAhead(fresh)) return { result: await nextCard(dir, fresh, deps, replayed) };
+    if (refusedNext(fresh, trackId) || !replayAhead(fresh, trackId)) return { result: await nextCard(dir, fresh, trackId, deps, replayed) };
     return { state: fresh };
   }, () => rollBackTrees(git, before, work, trackId));
 }
 
-const pendingCard = state => state.plan.order.find(k => state.cards[k].status !== 'done');
-const replayAhead = state => state.plan.cards[pendingCard(state)]?.mode === 'replay';
+const pendingCard = (state, trackId) => state.tracks[trackId].cards.find(k => state.cards[k].status !== 'done');
 
-function refusedNext(state) {
-  const { current } = trackOf(state);
+function replayAhead(state, trackId) {
+  const card = pendingCard(state, trackId);
+  return state.plan.cards[card]?.mode === 'replay' && !waitingOn(state, card);
+}
+
+function refusedNext(state, trackId) {
+  const { current } = state.tracks[trackId];
   if (current) return fail(1, `${current.card} is still in progress: end it first`);
   const execution = state.executions.at(-1);
   if (execution.endedAt) return fail(1, `the run is paused (${execution.endReason}): run begin to resume it`);
@@ -367,15 +373,27 @@ function adoptReplay(fresh, before, work, trackId) {
   if (added.length) fresh.plan.respike.replans = [...(fresh.plan.respike.replans ?? []), ...added];
 }
 
-async function nextCard(dir, state, { now, ...deps }, replayed = []) {
-  const refused = refusedNext(state);
+async function nextCard(dir, state, trackId, { now, ...deps }, replayed = []) {
+  const refused = refusedNext(state, trackId);
   if (refused) return refused;
   const execution = state.executions.at(-1);
   await bindExecution(execution, { ...deps, now });
   const settled = await settleWindows(state, deps);
   const respike = state.plan.respike ? { replayed } : {};
-  const card = pendingCard(state);
-  if (!card) return completeRun(dir, state, settled, { now, ...deps }, respike);
+  const track = state.tracks[trackId];
+  const card = pendingCard(state, trackId);
+  if (!card) {
+    track.status = 'done';
+    if (Object.values(state.tracks).every(t => t.status === 'done' || t.status === 'merged')) return completeRun(dir, state, settled, { now, ...deps }, respike);
+    saveState(dir, state, now());
+    return ok({ action: 'track-done', track: trackId, ...respike });
+  }
+  const needed = waitingOn(state, card);
+  if (needed) {
+    track.status = 'waiting';
+    saveState(dir, state, now());
+    return ok({ action: 'waiting', track: trackId, card, waitingOn: needed, ...respike });
+  }
   const spend = executionSpend(state, execution);
   const stop = capReached(execution, spend);
   if (stop) return pauseRun(dir, state, execution, stop.reason, { now, out: { ...stop, ...respike } });
@@ -385,13 +403,13 @@ async function nextCard(dir, state, { now, ...deps }, replayed = []) {
   const window = openCardWindow(state, card, execution, at);
   noteStartTrees(state, card);
   const planned = state.plan.cards[card];
-  const pr = planned.pr ? applyCardPr(state, planned.pr.repoDir, { ...deps, dir }) : {};
+  const pr = planned.pr ? applyCardPr(state, trackId, planned.pr.repoDir, { ...deps, dir }) : {};
   const mark = issueMark(state, execution, at);
   saveState(dir, state, at);
   return ok({
-    mark, action: 'card', card, ...respike, ...replayContext(state.cards[card]), ...(resumed ? { resumed } : {}), title: planned.title, url: planned.url, description: planned.description,
+    mark, action: 'card', card, track: trackId, ...respike, ...replayContext(state.cards[card]), ...(resumed ? { resumed } : {}), title: planned.title, url: planned.url, description: planned.description,
     origin: planned.origin, pr: planned.pr, ...pr, offProject: planned.offProject, previous: previousOf(deps.dataDir, state.project.slug, card, state.runId),
-    trees: openTrees(state), window: { start: window.start },
+    trees: openTrees(state, trackId), window: { start: window.start },
   });
 }
 
@@ -423,8 +441,8 @@ function prunePendingWarnings(state, removed) {
 }
 
 // Replay entries take no window and no box: next applies them one at a time, in order, until a card to spike comes up.
-function replayNext(dir, state, { now, git, dataDir, runSetup, config }) {
-  const card = pendingCard(state);
+function replayNext(dir, state, trackId, { now, git, dataDir, runSetup, config }) {
+  const card = pendingCard(state, trackId);
   const entry = replayEntry(git, state, card, { dir, config: config(), runSetup, dataDir, now });
   if (state.plan.cards[card].mode === 'spike') replanAfterTurn(state, { dataDir }, card);
   return entry;
@@ -462,7 +480,7 @@ async function completeRun(dir, state, settled, { home, now, git, dataDir, sleep
 }
 
 async function tree(args, { home, now, git, gh, runSetup, lock, slot }) {
-  const a = parseArgs(args, ['--project']);
+  const a = parseArgs(args, ['--project', '--track']);
   if (!a || a.positional.length !== 1) return fail(2, ...USAGE);
   const [repoDir] = a.positional;
   const config = loadConfig(home);
@@ -470,11 +488,10 @@ async function tree(args, { home, now, git, gh, runSetup, lock, slot }) {
   const first = await onActiveRun(home, a.flags.project, (dir, state) => {
     const allowed = allowedRepos(config, state.project.slug);
     if (!allowed.includes(repoDir)) return { result: fail(1, `${repoDir} is not allowed for project ${state.project.slug}: its repos are ${allowed.join(', ')}`) };
-    return { dir, state };
+    return { dir, state, trackId: trackIdOf(state, a.flags.track) };
   }, lock);
   if (first.result) return first.result;
-  const { dir, state } = first;
-  const trackId = trackIdOf(state);
+  const { dir, state, trackId } = first;
   const work = structuredClone(state);
   let failure = null;
   const slotted = await withCheckSlot(dir, { slots: state.checks ?? 1, command: `tree ${repoDir}`, ...slot }, () => {
@@ -494,7 +511,7 @@ async function tree(args, { home, now, git, gh, runSetup, lock, slot }) {
       return { ...ok({ action: 'setup-failed', ...failure.setup }), code: 1, stderr: lines([failure.message]) };
     }
     if (track.current) noteStartTrees(fresh, track.current.card);
-    const pr = applyCardPr(fresh, repoDir, { config: () => config, gh, git, dir });
+    const pr = applyCardPr(fresh, trackId, repoDir, { config: () => config, gh, git, dir });
     saveState(dir, fresh, now());
     return ok({ repo: repoDir, path: track.repos[repoDir].path, ...pr, touchedCheckouts: touchedCheckouts(fresh) });
   }, () => rollBackTrees(git, state, work, trackId));
@@ -507,7 +524,7 @@ async function check(args, { home, runSetup, slot }) {
   const a = parseArgs(split < 0 ? args : args.slice(0, split), ['--track', '--cwd', '--project']);
   if (!a || a.positional.length || !argv.length) return fail(2, ...USAGE);
   const { dir, state } = activeRun(home, a.flags.project);
-  const repos = Object.entries(trackOf(state, a.flags.track).repos).filter(isOpen);
+  const repos = openRepos(state, trackIdOf(state, a.flags.track));
   const wanted = a.flags.cwd ? repos.filter(([d]) => d === a.flags.cwd) : repos.slice(0, 1);
   if (!wanted.length) return fail(1, a.flags.cwd ? `${a.flags.cwd} has no open tree in this track` : 'this track has no open tree: run tree <repoDir> first');
   const [[, { path }]] = wanted;
@@ -518,16 +535,17 @@ async function check(args, { home, runSetup, slot }) {
 }
 
 async function candidates(args, { home, git, lock }) {
-  const a = parseArgs(args, ['--repo', '--project']);
+  const a = parseArgs(args, ['--repo', '--project', '--track']);
   if (!a || a.positional.length) return fail(2, ...USAGE);
   return onActiveRun(home, a.flags.project, (dir, state) => {
-    const repos = openRepos(state).filter(([d]) => !a.flags.repo || d === a.flags.repo);
-    if (a.flags.repo && !repos.length) return fail(1, `${a.flags.repo} has no open tree in this run`);
+    const trackId = trackIdOf(state, a.flags.track);
+    const repos = openRepos(state, trackId).filter(([d]) => !a.flags.repo || d === a.flags.repo);
+    if (a.flags.repo && !repos.length) return fail(1, `${a.flags.repo} has no open tree in this track`);
     const found = [];
     for (const [repoDir, repo] of repos) {
       assertLastTree(git, repoDir, repo);
       const working = workingDiff(git, repo, { index: join(dir, 'tmp.index') });
-      const earlier = state.plan.order
+      const earlier = state.tracks[trackId].cards
         .filter(k => state.cards[k].status === 'done')
         .flatMap(card => state.cards[card].patches.filter(p => p.startsWith(`${repoDir}/`)).map(p => ({ card, patch: readFileSync(join(dir, 'patches', p), 'utf8') })));
       for (const c of overlapCandidates(working, earlier)) found.push({ card: c.card, repo: repoDir, path: c.path, ranges: c.ranges });
@@ -542,7 +560,7 @@ const CARD_KEY = /^[A-Z]+-\d+$/;
 async function fixup(args, { home, dataDir, now, git, lock }) {
   const split = args.indexOf('--');
   const paths = split === -1 ? [] : args.slice(split + 1);
-  const a = parseArgs(split === -1 ? args : args.slice(0, split), ['--fixes', '--slug', '--note', '--repo', '--project'], ['--allow']);
+  const a = parseArgs(split === -1 ? args : args.slice(0, split), ['--fixes', '--slug', '--note', '--repo', '--project', '--track'], ['--allow']);
   const allow = a && parseAllow(a.flags.allow);
   const fixes = [...new Set(a?.flags.fixes?.split(',') ?? [])].sort((x, y) => cardNumber(x) - cardNumber(y));
   const usable = a && !a.positional.length && allow && paths.length && fixes.length && fixes.every(k => CARD_KEY.test(k))
@@ -551,18 +569,21 @@ async function fixup(args, { home, dataDir, now, git, lock }) {
   return onActiveRun(home, a.flags.project, (dir, state) => fixupCard(dir, state, { ...a.flags, fixes, paths, allow }, { dataDir, now, git }), lock);
 }
 
-function fixupCard(dir, state, { fixes, paths, allow, slug, note, repo: repoDir }, { dataDir, now, git }) {
-  const { current } = trackOf(state);
+function fixupCard(dir, state, { fixes, paths, allow, slug, note, repo: repoDir, track: wanted }, { dataDir, now, git }) {
+  const trackId = trackIdOf(state, wanted);
+  const { current } = state.tracks[trackId];
   if (!current) return fail(1, 'no card is in progress: a fixup is recorded while working the card that caused it');
   const from = current.card;
   if (!note.trim()) return fail(1, 'a fixup needs a non-empty English --note saying what it fixes');
   for (const k of fixes) {
     if (k === from) return fail(1, `${k} is the card in progress: its own changes go in its card patch`);
     if (state.cards[k]?.status !== 'done') return fail(1, `${k} is not done in this run: only a done card can receive a fixup`);
+    const other = trackOfCard(state, k);
+    if (other !== trackId) return fail(1, `${k} is in track ${other}, not ${trackId}: a change to another track's card is a crossing, not a fixup`);
   }
   const after = structuredClone(state);
-  const repo = trackOf(after).repos[repoDir];
-  if (repo?.status !== 'open') return fail(1, `${repoDir} has no open tree in this run`);
+  const repo = after.tracks[trackId].repos[repoDir];
+  if (repo?.status !== 'open') return fail(1, `${repoDir} has no open tree in this track`);
   checkTree(git, repoDir, repo);
   const snap = snapshot(git, repo, { paths });
   if (!snap) return fail(1, `no change in ${paths.join(', ')} since the last snapshot of ${repoDir}`);
@@ -583,12 +604,12 @@ function fixupCard(dir, state, { fixes, paths, allow, slug, note, repo: repoDir 
 }
 
 async function rebuild(args, { home, git, lock }) {
-  const a = parseArgs(args, ['--project']);
+  const a = parseArgs(args, ['--project', '--track']);
   if (!a || a.positional.length !== 1) return fail(2, ...USAGE);
   const [repoDir] = a.positional;
   return onActiveRun(home, a.flags.project, (dir, state) => {
-    const repo = trackOf(state).repos[repoDir];
-    if (repo?.status !== 'open') return fail(1, `${repoDir} has no open tree in this run`);
+    const repo = state.tracks[trackIdOf(state, a.flags.track)].repos[repoDir];
+    if (repo?.status !== 'open') return fail(1, `${repoDir} has no open tree in this track`);
     guardTree(git, repoDir, repo);
     return ok({ repo: repoDir, tree: rebuildTree(git, repoDir, repo, { dir, patchRoot: join(dir, 'patches') }), rebuilt: true });
   }, lock);
@@ -630,11 +651,13 @@ const refusedForSecrets = hits => ({
 
 // The notes skeleton for a card of the active run; on a respike it lists the old findings that need an outcome.
 async function notesTemplateFor(args, { home, dataDir }) {
-  const a = parseArgs(args, ['--project']);
+  const a = parseArgs(args, ['--project', '--track']);
   if (!a || a.positional.length !== 1) return fail(2, ...USAGE);
   const [card] = a.positional;
   const { state } = activeRun(home, a.flags.project);
+  const trackId = trackIdOf(state, a.flags.track);
   if (!state.plan.cards[card]) return fail(1, `${card} is not a card of run ${state.runId}`);
+  if (!state.tracks[trackId].cards.includes(card)) return fail(1, `${card} is not a card of track ${trackId}`);
   const previous = previousOf(dataDir, state.project.slug, card, state.runId);
   return ok({ action: 'notes-template', card, notes: notesTemplate(previous), allowed: NOTES_ALLOWED });
 }
@@ -643,28 +666,28 @@ const notInProgress = card => fail(1, `${card} is not the card in progress`);
 
 async function end(args, { home, dataDir, now, git, transcripts, runSetup, lock, slot }) {
   const config = loadConfig(home);
-  const a = parseArgs(args, ['--notes', '--project', '--skip-typecheck'], ['--allow']);
+  const a = parseArgs(args, ['--notes', '--project', '--skip-typecheck', '--track'], ['--allow']);
   const allow = a && parseAllow(a.flags.allow);
   if (!a || a.positional.length !== 1 || !allow) return fail(2, ...USAGE);
   const [card] = a.positional;
   const flags = { ...a.flags, allow };
   const first = await onActiveRun(home, a.flags.project, (dir, state) => {
-    if (trackOf(state).current?.card !== card) return { result: notInProgress(card) };
+    const trackId = trackIdOf(state, a.flags.track);
+    if (state.tracks[trackId].current?.card !== card) return { result: notInProgress(card) };
     const notesFile = flags.notes ?? join(dir, 'notes', `${card}.json`);
     const notes = readNotes(notesFile);
     const noteErrors = checkNotes(notes);
     if (noteErrors.length) return { result: fail(1, `the notes for ${card} are invalid:`, ...noteErrors) };
-    return { dir, state, notesFile, notes };
+    return { dir, state, trackId, notesFile, notes };
   }, lock);
   if (first.result) return first.result;
-  const { dir, state } = first;
-  const trackId = trackIdOf(state);
-  const open = openRepos(state);
+  const { dir, state, trackId } = first;
+  const open = openRepos(state, trackId);
   for (const [repoDir, repo] of open) checkTree(git, repoDir, repo);
   if (flags['skip-typecheck'] === undefined) {
     const slotted = await withCheckSlot(dir, { slots: state.checks ?? 1, command: `typecheck ${card}`, ...slot }, () => {
       for (const [repoDir, repo] of open) {
-        const log = typecheckLog(dir, repoDir);
+        const log = typecheckLog(dir, trackId, repoDir);
         const check = repoTypecheck(runSetup, config.repos[repoDir], { treePath: repo.path, changed: changedSinceLast(git, repo), logPath: log });
         if (check.ran && !check.ok) return refusedForTypecheck(repoDir, log, check);
       }
@@ -673,14 +696,14 @@ async function end(args, { home, dataDir, now, git, transcripts, runSetup, lock,
     if (slotted.busy) return busy();
     if (slotted.value) return slotted.value;
   }
-  return relock(dir, lock, trackId, state, fresh => endCard(dir, fresh, card, first, flags, { config, dataDir, now, git, transcripts }));
+  return relock(dir, lock, trackId, state, fresh => endCard(dir, fresh, trackId, card, first, flags, { config, dataDir, now, git, transcripts }));
 }
 
-async function endCard(dir, state, card, { notesFile, notes }, flags, { config, dataDir, now, git, transcripts }) {
-  if (trackOf(state).current?.card !== card) return notInProgress(card);
+async function endCard(dir, state, trackId, card, { notesFile, notes }, flags, { config, dataDir, now, git, transcripts }) {
+  if (state.tracks[trackId].current?.card !== card) return notInProgress(card);
   const at = now();
   const after = structuredClone(state);
-  const track = trackOf(after);
+  const track = after.tracks[trackId];
   const execution = after.executions.find(e => e.id === track.current.execution);
   const cardState = after.cards[card];
   const window = cardState.windows.at(-1);
@@ -688,7 +711,7 @@ async function endCard(dir, state, card, { notesFile, notes }, flags, { config, 
   await bindExecution(execution, { transcripts, now });
   const usage = await measure(window, usageFiles(execution));
 
-  const open = openRepos(after);
+  const open = openRepos(after, trackId);
   const skip = flags['skip-typecheck'];
   if (skip !== undefined) cardState.typecheck = Object.fromEntries(open.map(([repoDir]) => [repoDir, { skipped: skip }]));
   const pending = [];
@@ -778,9 +801,11 @@ async function abandon(args, { home, now, git, transcripts, lock }) {
   }, lock);
 }
 
-// Read-only: a session found by its mark is used for this answer and not bound.
+// Read-only: a session found by its mark is used for this answer and not bound. A run with several live tracks reports
+// each track's card in its tracks list instead.
 async function currentSpend(state, { now, transcripts }) {
-  const { current } = trackOf(state);
+  const live = Object.values(state.tracks).filter(t => !t.mergedInto);
+  const current = live.length === 1 ? live[0].current : null;
   if (!current) return null;
   const cardState = state.cards[current.card];
   const execution = state.executions.find(e => e.id === current.execution);
@@ -802,6 +827,16 @@ async function currentSpend(state, { now, transcripts }) {
 const replayOutcomes = state => state.plan.order.filter(k => Object.hasOwn(state.plan.respike.replay ?? {}, k))
   .map(card => ({ card, mode: state.plan.cards[card].mode, status: state.cards[card].replay?.status ?? 'pending' }));
 
+const trackList = state => Object.entries(state.tracks).map(([id, t]) => ({
+  id, status: t.status, current: t.current?.card ?? null, done: t.cards.filter(k => state.cards[k].status === 'done').length, total: t.cards.length, mergedInto: t.mergedInto,
+}));
+
+async function tracks(args, { home }) {
+  const a = parseArgs(args, ['--project']);
+  if (!a || a.positional.length) return fail(2, ...USAGE);
+  return ok({ action: 'tracks', tracks: trackList(activeRun(home, a.flags.project).state) });
+}
+
 async function status(args, { home, now, transcripts }) {
   const a = parseArgs(args, ['--project']);
   if (!a || a.positional.length) return fail(2, ...USAGE);
@@ -820,6 +855,7 @@ async function status(args, { home, now, transcripts }) {
       sessions: execution.sessions.map(s => s.file),
     },
     current: await currentSpend(state, { now, transcripts }),
+    tracks: trackList(state),
     cards: { done: cardsIn('done'), inProgress: cardsIn('in-progress'), pending: cardsIn('pending') },
     ...(state.plan.respike ? { modes: Object.fromEntries(state.plan.order.map(k => [k, state.plan.cards[k].mode])), replays: replayOutcomes(state) } : {}),
     trees: allRepos(state).filter(([, r]) => r.status !== 'removed').map(([repo, r]) => ({ repo, kind: r.kind, status: r.status, path: r.path })),

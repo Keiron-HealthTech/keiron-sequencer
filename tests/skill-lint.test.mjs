@@ -154,7 +154,7 @@ test('spike: the skill holds no old name, in its front matter or its text', () =
 test('spike: every command the skill runs is a spike CLI command, and the skill runs all of them', async () => {
   const named = new Set([...spike.matchAll(/node \$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/spike\.mjs ([a-z-]+)/g)].map(m => m[1]));
   const commands = [...new Set([...(await spikeUsage()).matchAll(/^usage: node scripts\/spike\.mjs ([a-z-]+)/gm)].map(m => m[1]))].sort();
-  assert.deepEqual(commands, ['abandon', 'begin', 'candidates', 'check', 'config', 'end', 'fixup', 'next', 'notes-template', 'pause', 'prune', 'rebuild', 'status', 'tree']);
+  assert.deepEqual(commands, ['abandon', 'begin', 'candidates', 'check', 'config', 'end', 'fixup', 'next', 'notes-template', 'pause', 'prune', 'rebuild', 'status', 'tracks', 'tree']);
   assert.deepEqual([...named].sort(), commands);
 });
 

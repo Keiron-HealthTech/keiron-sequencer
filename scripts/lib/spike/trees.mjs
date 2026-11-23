@@ -99,9 +99,8 @@ function createClone(git, repo, path, dir) {
   return { kind: 'clone', source: repo.url, worktreeConfigSet: false, baseCommit: git(['rev-parse', 'HEAD'], { cwd: path }).trim() };
 }
 
-function runSetupCommands(runSetup, repoDir, repo, path, dir) {
-  const log = join(dir, 'logs', `setup-${repoDir}.log`);
-  mkdirSync(join(dir, 'logs'), { recursive: true });
+function runSetupCommands(runSetup, repoDir, repo, path, log) {
+  mkdirSync(dirname(log), { recursive: true });
   for (const command of repo.setup ?? []) {
     appendFileSync(log, `$ ${command.join(' ')}\n`);
     let r;
@@ -137,7 +136,7 @@ export function openTree(git, state, { trackId, repoDir, repo, dir, runSetup }) 
     };
   }
   const record = repos[repoDir];
-  runSetupCommands(runSetup, repoDir, repo, path, dir);
+  runSetupCommands(runSetup, repoDir, repo, path, join(dir, 'logs', trackId, `setup-${repoDir}.log`));
   git(['add', '-A'], { cwd: path });
   const baseTree = git(['write-tree'], { cwd: path }).trim();
   return Object.assign(record, { baseTree, last: baseTree, status: 'open' });

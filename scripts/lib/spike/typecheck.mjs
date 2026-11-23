@@ -20,7 +20,7 @@ export function changedSinceLast(git, repo) {
   return git(['diff', '--cached', '--name-only', '--diff-filter=d', repo.last], { cwd: repo.path }).split('\n').filter(Boolean);
 }
 
-export const typecheckLog = (dir, repoDir) => join(dir, 'logs', `typecheck-${repoDir}.log`);
+export const typecheckLog = (dir, trackId, repoDir) => join(dir, 'logs', trackId, `typecheck-${repoDir}.log`);
 
 // The check one repo's config asks for: its spikeTypecheck (auto when absent) and its timeout.
 export const repoTypecheck = (runner, repoConfig, { treePath, changed, logPath }) => runTypecheck(runner, {

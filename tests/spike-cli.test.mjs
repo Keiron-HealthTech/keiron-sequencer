@@ -241,7 +241,7 @@ test('end refuses with exit 8 on a failing typecheck and accepts --skip-typechec
   assert.equal(refused.code, 8, refused.stderr);
   const out = JSON.parse(refused.stdout);
   assert.deepEqual([out.action, out.repo, out.status, out.timedOut], ['typecheck', 'backend', 2, false]);
-  assert.equal(out.log, join(runDir, 'logs', 'typecheck-backend.log'));
+  assert.equal(out.log, join(runDir, 'logs', 't1', 'typecheck-backend.log'));
   assert.match(out.tail, /tc README\.md/);
   assert.match(refused.stderr, /--skip-typecheck/);
   assert.equal(readFileSync(join(runDir, 'run.json'), 'utf8'), before);

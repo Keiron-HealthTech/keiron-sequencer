@@ -40,6 +40,7 @@ test('status shows the run, the execution, the current card\'s live spend agains
       spent: { cards: 1, tokens: 30 }, sessions: [session],
     },
     current: { card: 'CRM-2', startedAt: '2026-11-10T10:06:00.000Z', box: 100, spent: 90, over: false },
+    tracks: [{ id: 't1', status: 'active', current: 'CRM-2', done: 1, total: 2, mergedInto: null }],
     cards: { done: ['CRM-1'], inProgress: ['CRM-2'], pending: [] },
     trees: [{ repo: 'backend', kind: 'worktree', status: 'open', path: join(dir, 'trees', 't1', 'backend') }],
     unsettled: [],

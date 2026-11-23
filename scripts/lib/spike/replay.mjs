@@ -8,7 +8,7 @@ import { deriveRepo } from './derive.mjs';
 import { runDir, trialPatchRoot } from './home.mjs';
 import { scanPatch } from './secrets.mjs';
 import { cardPatchName, DIFF, snapshot } from './snapshot.mjs';
-import { trackIdOf } from './state.mjs';
+import { trackOfCard } from './state.mjs';
 import { checkTree, openTree } from './trees.mjs';
 import { clearGenerated, repoTypecheck, typecheckLog } from './typecheck.mjs';
 
@@ -79,13 +79,14 @@ export function replayEntry(git, state, card, { dir, config, runSetup, dataDir, 
   const at = now().toISOString();
   const record = readRecord(dataDir, slug, card);
   const pathOf = patch => join(rootOf(state, entry.sources?.[patch] ?? entry.from), patch);
-  mkdirSync(join(dir, 'tmp'), { recursive: true });
+  const trackId = trackOfCard(state, card);
+  mkdirSync(join(dir, 'tmp', trackId), { recursive: true });
 
   const merged = [];
   for (const [repoDir, patches] of Object.entries(entry.units)) {
-    const repo = openTree(git, state, { trackId: trackIdOf(state), repoDir, repo: config.repos[repoDir], dir, runSetup });
+    const repo = openTree(git, state, { trackId, repoDir, repo: config.repos[repoDir], dir, runSetup });
     assertSnapshotted(git, repoDir, repo);
-    const result = mergedTree(git, repoDir, repo, patches, { index: join(dir, 'tmp', `replay-${repoDir}.index`), pathOf });
+    const result = mergedTree(git, repoDir, repo, patches, { index: join(dir, 'tmp', trackId, `replay-${repoDir}.index`), pathOf });
     if (result.conflict) return turn(state, card, at, 'conflict', { conflict: result.conflict });
     merged.push({ repoDir, repo, patches, tree: result.tree });
   }
@@ -103,7 +104,7 @@ export function replayEntry(git, state, card, { dir, config, runSetup, dataDir, 
     const changed = git(['diff', '--name-only', '--diff-filter=d', m.repo.last, m.tree], { cwd: m.repo.path }).split('\n').filter(Boolean);
     git(['read-tree', '-m', '-u', m.repo.last, m.tree], { cwd: m.repo.path });
     moved.push(m);
-    const log = typecheckLog(dir, m.repoDir);
+    const log = typecheckLog(dir, trackId, m.repoDir);
     const check = repoTypecheck(runSetup, config.repos[m.repoDir], { treePath: m.repo.path, changed, logPath: log });
     if (check.ran && !check.ok) {
       for (const x of moved) git(['read-tree', '-m', '-u', x.tree, x.repo.last], { cwd: x.repo.path });
@@ -146,7 +147,7 @@ export function replayEntry(git, state, card, { dir, config, runSetup, dataDir, 
 function measured(git, state, card, texts, { config }) {
   const fresh = [...texts.keys()];
   const dirs = [...new Set(fresh.map(n => n.split('/')[0]))];
-  const { repos } = state.tracks[trackIdOf(state)];
+  const { repos } = state.tracks[trackOfCard(state, card)];
   const patchMap = {
     cards: { [card]: {} },
     repos: Object.fromEntries(dirs.map(d => [d, repos[d].name])),
@@ -172,11 +173,13 @@ export function replayContext(cardState) {
   return hits ? { replaySecret: { hits } } : {};
 }
 
-// Run after an entry turned into a spike, before any other replay entry is processed; each change is logged in the plan.
+// Run after an entry turned into a spike, before any other replay entry of its track is processed; each change is logged in
+// the plan. Only the cause's track is replanned, so a replan never rewrites entries another track is replaying meanwhile.
 export function replanAfterTurn(state, { dataDir }, cause) {
   const respike = state.plan.respike;
   const { slug } = state.project;
-  const keys = state.plan.order.filter(k => Object.hasOwn(respike.replay, k));
+  const { cards } = state.tracks[trackOfCard(state, cause)];
+  const keys = cards.filter(k => Object.hasOwn(respike.replay, k));
   const pending = keys.filter(k => state.plan.cards[k].mode === 'replay' && state.cards[k].status !== 'done');
   const records = new Map(keys.map(k => [k, readRecord(dataDir, slug, k)]));
   const out = replanReplay({ replay: respike.replay, pending, isSpike: k => state.plan.cards[k]?.mode === 'spike', records, home: state.home, slug });
