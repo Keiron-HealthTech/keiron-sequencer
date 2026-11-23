@@ -9,7 +9,10 @@ export function tracksOf({ order, edges, links }) {
     if (parent.has(a) && parent.has(b)) parent.set(find(a), find(b));
   };
   for (const e of edges) join(e.from, e.to);
-  for (const [first, ...rest] of links) for (const k of rest) join(first, k);
+  for (const link of links) {
+    const [first, ...rest] = link.filter(k => parent.has(k));
+    for (const k of rest) join(first, k);
+  }
   const groups = new Map();
   for (const k of order) {
     const root = find(k);

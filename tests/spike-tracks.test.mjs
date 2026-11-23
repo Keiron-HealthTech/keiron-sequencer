@@ -19,3 +19,8 @@ test('edges and links to cards outside the run are ignored', () => {
   const t = tracksOf({ order: ['A', 'B'], edges: [{ from: 'Z', to: 'A' }, { from: 'Z', to: 'B' }], links: [['Z', 'B']] });
   assert.equal(t.length, 2);
 });
+
+test('a link whose first card is outside the run still joins its remaining cards', () => {
+  const t = tracksOf({ order: ['A', 'B', 'C'], edges: [], links: [['Z', 'B', 'C']] });
+  assert.deepEqual(t, [{ id: 't1', cards: ['A'] }, { id: 't2', cards: ['B', 'C'] }]);
+});
