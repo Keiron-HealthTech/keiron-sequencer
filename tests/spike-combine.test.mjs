@@ -267,6 +267,35 @@ test('combine skips dropped fixup rows and patches named by a card but held by n
   assert.deepEqual(tc.calls.map(c => c.changed), [['CRM-1.txt', 'CRM-3.txt']]);
 });
 
+test('combine answers busy with exit 75 when no check slot frees, and counts no round', async () => {
+  const { f, dir } = await doneTracks();
+  mkdirSync(join(dir, 'checks'), { recursive: true });
+  writeFileSync(join(dir, 'checks', '0.lock'), `${process.pid}\nother\n`);
+  const tc = checker();
+  const r = await run(['combine'], { ...f.deps, runSetup: tc.run, slot: { waitMs: 30, pollMs: 5 } });
+  assert.equal(r.code, 75);
+  assert.equal(json(r).action, 'busy');
+  const state = readState(dir);
+  assert.deepEqual([state.status, state.combine.rounds, state.combine.results, state.combine.running], ['active', 0, [], undefined]);
+  assert.deepEqual([tc.calls, existsSync(join(dir, 'trees', 'combined'))], [[], false]);
+});
+
+test('combine answers stale when a track moved during the check, and keeps the tree it built', async () => {
+  const { dir, spike } = await doneTracks();
+  const tc = checker(() => {
+    const state = readState(dir);
+    state.tracks.t1.generation += 1;
+    saveState(dir, state, new Date(at(45)));
+    return { status: 2, stdout: 'src/shared.ts(2,1): error TS1: x' };
+  });
+  const r = await spike(['combine'], tc.run);
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(json(r), { action: 'stale' });
+  const state = readState(dir);
+  assert.deepEqual([state.status, state.combine.rounds, state.combine.results, state.combine.running], ['active', 0, [], undefined]);
+  assert.equal(state.combine.repos.backend.path, join(dir, 'trees', 'combined', 'backend'));
+});
+
 test('a run that always had one track completes at next and refuses combine', async () => {
   const { spike, play } = await tracksRun([issue('CRM-1')], { t1: ['CRM-1'] });
   await play('CRM-1', 't1');
