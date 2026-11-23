@@ -36,8 +36,9 @@ prints one JSON object on stdout; read its `action`.
 
 Run `next`, `end`, `tree`, `check` and `cross` with the shell tool's longest
 timeout (600000 ms) or in the background: they take a check slot, and a
-replay, a merge or a type-check can take minutes. A command the shell kills
-mid-check reports nothing: run it again.
+replay, a merge or a type-check can take minutes. Run `cross` in the
+background: a merge can take longer than that timeout. A command the shell
+kills mid-check reports nothing: run it again.
 
 - A command that ends with exit code 75 and `action: 'busy'`: no check slot
   freed in time, or another track is `merging` into yours, or a track is
@@ -48,6 +49,9 @@ mid-check reports nothing: run it again.
   is no longer in progress: stop and return that answer. Never switch tracks
   yourself; the coordinator decides.
 - Exit 1 "the run is paused (…)": stop and return it.
+- Exit 1 saying a crossing `stopped mid-merge`: a `cross` was killed before
+  it finished. When it is your own `cross` (your card), run that same
+  `cross` again; otherwise stop and return it, and the coordinator runs it.
 
 ## The card loop
 

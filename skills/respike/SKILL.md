@@ -376,10 +376,12 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs cross --track <id> --card <CARD> --
 
 - Run `next`, `end`, `tree`, `check`, `cross` and `combine` with the shell
   tool's longest timeout (600000 ms) or in the background: they take a check
-  slot, and replays, merges and type-checks can take minutes. Run `combine`
-  in the background: it builds and checks every repo and can take longer
-  than that timeout. `next`, `end`, `tree`, `cross` and `combine` take a
-  check slot themselves.
+  slot, and replays, merges and type-checks can take minutes. Run `cross`
+  and `combine` in the background: a merge replays and type-checks cards and
+  `combine` builds and checks every repo, so either can take longer than
+  that timeout, and a `cross` killed mid-merge stops both its tracks until
+  it runs again. `next`, `end`, `tree`, `cross` and `combine` take a check
+  slot themselves.
 - `action: 'stale'` (a merge or a pause moved the track while the command
   ran) and Exit 75 with `action: 'busy'` (no check slot freed in time, or a
   track is `merging` or `replaying`): nothing was kept, and whoever ran the
@@ -494,6 +496,12 @@ lives in now (`tracks` shows `mergedInto`). The answers:
 - Exit 1 naming `wip/<CARD>.patch`: that card's saved work is not back in
   its tree. Ask its worker to put it back or delete it, then run `cross`
   again.
+- Exit 1 saying a crossing `stopped mid-merge`: a `cross` was killed between
+  its sections. Every command on its two tracks, and `combine`, refuses
+  until it runs again: run the `cross` the message names (with the
+  crossing's note from the report) before anything else. The rerun first
+  puts the target track's trees, and any parked card's work, back as they
+  were before that `cross` began.
 - **Exit 5** at `cross`: B → C closes a cycle among the cards. Nothing was
   merged. Report both cards to the user and ask which way the need goes.
 
@@ -581,7 +589,7 @@ again, and the coordinator runs `combine` again after its diagnosis.
 Deferred crossings live in the run, not in the coordinator's memory: a pause
 or a new session loses the coordinator's list, and `cross` refuses on a paused
 run. On resume, run the report (Step 8) and take every crossing whose `status`
-is `pending`. Run its `cross` again (its `from`, `to`, `kind` and `note`, with
+is `pending` (a crossing whose `cross` was killed mid-merge reads `pending` too). Run its `cross` again (its `from`, `to`, `kind` and `note`, with
 the track its card lives in now) before you start a worker for its track: a
 worker started first would reopen the stopped card and work it without the
 merge. A crossing whose card was parked (the card is pending again) is the

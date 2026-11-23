@@ -499,8 +499,8 @@ test('in a respike run a merge keeps a replayed card\'s record as replayed and a
 
 // t1 = CRM-1 -> CRM-2 and t2 = CRM-3 -> CRM-4, CRM-5; CRM-2 (changing CRM-3's code) and CRM-5 are mid-card, and CRM-2's
 // crossing into t2 is deferred, so CRM-5's cross merges t2 into t1 and parks CRM-2.
-async function mutualCrossing() {
-  const typecheck = config => ({ ...config, repos: { backend: { ...config.repos.backend, spikeTypecheck: ['tc', '{changed}'] } } });
+async function mutualCrossing({ check = ['tc', '{changed}'] } = {}) {
+  const typecheck = config => ({ ...config, repos: { backend: { ...config.repos.backend, spikeTypecheck: check } } });
   const run_ = await tracksRun(
     [issue('CRM-1', { relations: blocks('CRM-2') }), issue('CRM-2'), issue('CRM-3', { relations: blocks('CRM-4') }), issue('CRM-4'), issue('CRM-5')],
     { t1: ['CRM-1', 'CRM-2'], t2: ['CRM-3', 'CRM-4', 'CRM-5'] }, { config: typecheck },
@@ -591,4 +591,64 @@ test('an existing wip is never replaced while its work is not in the card\'s tre
   const wip = readFileSync(earlier, 'utf8');
   assert.match(wip, /\+earlier work/);
   assert.match(wip, /\+CRM-1/);
+});
+
+const gonePid = f => spawnSync(process.execPath, ['-e', ''], { env: { HOME: f.scratch } }).pid;
+
+test('a cross killed mid-merge refuses every command on both tracks until its rerun, which puts the target\'s trees and parked work back first', async () => {
+  const m = await mutualCrossing({ check: ['sh', '-c', 'kill -9 $PPID', '{changed}'] });
+  const { f, dir, spike, cross } = m;
+  const killed = spawnSync(process.execPath, [SPIKE, 'cross', '--track', 't2', '--card', 'CRM-5', '--needs', 'CRM-1', '--kind', 'depends', '--note', 'Needs CRM-1.'], {
+    env: { ...SANDBOX_ENV, HOME: f.scratch, KEIRON_SEQUENCER_HOME: f.home, KEIRON_SEQUENCER_TRANSCRIPTS: f.scratch }, encoding: 'utf8',
+  });
+  assert.equal(killed.signal, 'SIGKILL', killed.stderr);
+  assert.ok(readState(dir).crossings[1].merging);
+  assert.ok(!clean(dir, 't1'));
+
+  const refusal = /crossing 1 \(CRM-5 needs CRM-1\) stopped mid-merge: run cross --track t2 --card CRM-5 --needs CRM-1 --kind depends/;
+  for (const r of [await spike(['candidates', '--track', 't1']), await spike(['candidates', '--track', 't2']), await cross('t1', 'CRM-2', 'CRM-3', 'changes')]) {
+    assert.equal(r.code, 1, r.stderr);
+    assert.match(r.stderr, refusal);
+  }
+
+  const again = await m.crossT2();
+  assert.equal(again.code, 0, again.stderr);
+  assert.deepEqual([json(again).action, json(again).track, json(again).parked], ['merged', 't1', 'CRM-2']);
+  const wip = readFileSync(join(dir, 'wip', 'CRM-2.patch'), 'utf8');
+  assert.match(wip, /\+CRM-3 changed by CRM-2/);
+  assert.match(wip, /b\/backend\/CRM-2\.txt/);
+  assert.deepEqual(files(treeOf(dir, 't1')), ['CRM-1.txt', 'CRM-3.txt', 'CRM-4.txt']);
+  assert.ok(clean(dir, 't1'));
+  assert.equal(existsSync(join(dir, 'tmp', 't1', 'parked')), false);
+});
+
+test('a cross that died before its park leaves the target\'s card work in its tree, and its rerun parks that work', async () => {
+  const m = await mutualCrossing();
+  const { f, dir } = m;
+  const state = readState(dir);
+  state.crossings.push({ at: at(9), kind: 'depends', from: 'CRM-5', to: 'CRM-1', fromTrack: 't2', toTrack: 't1', note: 'Needs CRM-1.', respiked: [], merging: { pid: gonePid(f) } });
+  for (const id of ['t1', 't2']) state.tracks[id].generation += 1;
+  saveState(dir, state, f.deps.now());
+
+  const r = await m.crossT2();
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual([json(r).crossing, json(r).parked], [1, 'CRM-2']);
+  const wip = readFileSync(join(dir, 'wip', 'CRM-2.patch'), 'utf8');
+  assert.match(wip, /\+CRM-3 changed by CRM-2/);
+  assert.match(wip, /b\/backend\/CRM-2\.txt/);
+});
+
+test('combine refuses while a crossing whose cross died mid-merge is not applied', async () => {
+  const { f, dir, spike, open, end } = await tracksRun([issue('CRM-1'), issue('CRM-2')], { t1: ['CRM-1'], t2: ['CRM-2'] });
+  for (const [card, track] of [['CRM-1', 't1'], ['CRM-2', 't2']]) {
+    await open(card, track);
+    await end(card, track);
+    assert.equal(json(await spike(['next', '--track', track])).action, 'track-done');
+  }
+  const state = readState(dir);
+  state.crossings.push({ at: at(9), kind: 'depends', from: 'CRM-2', to: 'CRM-1', fromTrack: 't2', toTrack: 't1', note: 'n', respiked: [], merging: { pid: gonePid(f) } });
+  saveState(dir, state, f.deps.now());
+  const r = await spike(['combine']);
+  assert.equal(r.code, 1, r.stdout);
+  assert.match(r.stderr, /crossing 0 is pending: run cross again for it before combine/);
 });

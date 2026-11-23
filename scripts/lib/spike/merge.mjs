@@ -157,7 +157,7 @@ function assertAtLast(git, state, trackId) {
     try {
       assertSnapshotted(git, repoDir, repo);
     } catch (e) {
-      throw exitError(e.exitCode ?? 1, `${e.message}; a merge starts there too: if a replay of ${trackId} was running, run cross again once it ends`);
+      throw exitError(e.exitCode ?? 1, `${e.message}; a merge starts only from there, and that work belongs to no card in progress (a replay of ${trackId} killed mid-way leaves such work): report it before running cross again`);
     }
   }
 }

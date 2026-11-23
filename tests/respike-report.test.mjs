@@ -1,5 +1,6 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { run as respike } from '../scripts/respike.mjs';
@@ -502,6 +503,16 @@ test('the report lists tracks, each crossing with its re-spiked cards, and each 
       { at: '2026-11-10T12:00:00.000Z', round: 2, errors: [error('api/00004-new.patch does not apply on the combined tree (conflict)', ['CRM-4'])], fixups: [], crossings: [] },
     ],
   });
+});
+
+test('a crossing whose cross died mid-merge reads as pending; one whose cross is still running reads as merging', () => {
+  const state = runState([['CRM-1', 'spike'], ['CRM-2', 'spike']]);
+  const track = cards => ({ cards, status: 'active', mergedInto: null, current: null, generation: 1, repos: {} });
+  state.tracks = { t1: track(['CRM-1']), t2: track(['CRM-2']) };
+  const crossing = merging => ({ at: '2026-11-10T10:10:00.000Z', kind: 'depends', from: 'CRM-2', to: 'CRM-1', fromTrack: 't2', toTrack: 't1', note: 'n', respiked: [], merging });
+  const gone = spawnSync(process.execPath, ['-e', '']).pid;
+  state.crossings = [crossing({ pid: gone }), crossing({ pid: process.pid })];
+  assert.deepEqual(buildReport({ state, records: [], previous: new Map() }).crossings.map(c => c.status), ['pending', 'merging']);
 });
 
 test('a run read without tracks reports one track t1, no crossings and no combined check', () => {

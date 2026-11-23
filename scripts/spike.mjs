@@ -24,8 +24,8 @@ import { COMBINE_FIXUP } from './lib/record.mjs';
 import { cardPatchName, fixupPatchName, oldSideRanges, overlapCandidates, rangesOverlap, snapshot, wipDiff, workingDiff } from './lib/spike/snapshot.mjs';
 import { scanPatch, SECRET_KINDS } from './lib/spike/secrets.mjs';
 import {
-  activeRunFor, activeRuns, allRepos, capReached, closeOpenExecutions, createRun, executionSpend, issueMark, latestRun, mergingRefusal, noteStartTrees, openCardWindow,
-  liveMark, mergingCrossing, openExecution, readState, saveState, timeBoxFor, trackIdOf, trackOfCard, unsettledWindows, waitingOn,
+  activeRunFor, activeRuns, allRepos, capReached, closeOpenExecutions, createRun, executionSpend, interrupted, interruptedRefusal, issueMark, latestRun, mergingRefusal,
+  noteStartTrees, openCardWindow, liveMark, mergingCrossing, openExecution, readState, saveState, timeBoxFor, trackIdOf, trackOfCard, unsettledWindows, waitingOn,
 } from './lib/spike/state.mjs';
 import { applyPrDiff, assertLastTree, checkTree, discardTree, guardTree, openTree, rebuildTree, teardownTrees, touchedCheckouts } from './lib/spike/trees.mjs';
 import { bindSession, lastEntryAt, withoutMarked, sessionFiles, transcriptsRoot, weighted, windowUsage } from './lib/spike/usage-window.mjs';
@@ -779,11 +779,13 @@ async function cross(args, { home, now, git, lock, slot, runSetup, dataDir, tran
 
 function markCrossing(dir, state, { track, card: C, needs: B, kind, note }, { now, git }) {
   const refuse = (code, message) => ({ result: fail(code, message) });
-  const from = trackIdOf(state, track);
+  const from = trackIdOf(state, track, { rerun: true });
   if (!state.tracks[from].cards.includes(C)) return refuse(1, `${C} is not a card of track ${from}`);
   const into = trackOfCard(state, B);
   if (!into) return refuse(1, `${B} is not a card of run ${state.runId}`);
   const known = state.crossings.findIndex(c => c.from === C && c.to === B && (c.pending || c.merging));
+  const dead = state.crossings.findIndex((c, i) => i !== known && interrupted(c) && [c.fromTrack, c.toTrack].some(id => id === from || id === into));
+  if (dead !== -1) throw interruptedRefusal(state, dead);
   const inTrack = into === from;
   if (inTrack && known === -1) return refuse(1, `${B} is in track ${from} too: inside one track a need is a blocks edge and a change is a fixup`);
   if (!inTrack && state.cards[C].status === 'pending') return refuse(1, `${C} is neither in progress nor done: a crossing is found while working a card or at its end`);
@@ -796,6 +798,7 @@ function markCrossing(dir, state, { track, card: C, needs: B, kind, note }, { no
   if (closesCycle(state, B, C)) return refuse(5, `${B} -> ${C} closes a cycle: ${C} already leads to ${B}`);
   const merging = mergingCrossing(state, into);
   if (merging) throw mergingRefusal(merging);
+  if (known !== -1 && interrupted(state.crossings[known])) recoverMerge(git, state, into, dir);
 
   const at = now();
   const entry = { at: at.toISOString(), kind, from: C, to: B, fromTrack: from, toTrack: into, note, respiked: [] };
@@ -820,7 +823,7 @@ function markCrossing(dir, state, { track, card: C, needs: B, kind, note }, { no
 }
 
 // A card whose own crossing waits on another track has a stopped worker: it does not hold its track against a merge.
-const stopped = (state, card) => state.crossings.some(c => c.pending && c.from === card);
+const stopped = (state, card) => state.crossings.some(c => (c.pending || interrupted(c)) && c.from === card);
 
 // The target's card still in progress (a stopped one, or C itself inside one track) is set aside before the merge moves its
 // trees: its unsnapshotted work goes to its wip at once, and the trees go back to their last snapshot.
@@ -829,24 +832,43 @@ function parkTrack(git, state, trackId, dir) {
   if (!card) return null;
   const wip = wipOf(git, state, trackId, card, dir, { fromLast: true });
   if (wip) writeAtomic(wip.path, wip.text);
+  writeAtomic(parkedMarker(dir, trackId), `${card}\n`);
   for (const [, repo] of openRepos(state, trackId)) resetTree(git, repo);
   return { card, wip };
+}
+
+// Written once the park's wip is on disk and before any tree moves: a rerun of a cross that died finds it.
+const parkedMarker = (dir, trackId) => join(dir, 'tmp', trackId, 'parked');
+
+// A cross that died mid-merge may have moved the target's trees. Without a finished park they hold the in-progress card's
+// work and were never moved; otherwise the trees go back to their last snapshot and the parked card's wip back into them, as
+// before that cross began.
+function recoverMerge(git, state, trackId, dir) {
+  const card = state.tracks[trackId].cards.find(k => state.cards[k].status === 'in-progress');
+  if (card && !existsSync(parkedMarker(dir, trackId))) return;
+  for (const [, repo] of openRepos(state, trackId)) resetTree(git, repo);
+  const path = card && wipPath(dir, card);
+  const wip = path && existsSync(path) ? { path, parts: wipParts(readFileSync(path, 'utf8')) } : null;
+  unpark(git, state, trackId, { card, wip }, dir);
 }
 
 // A merge that was not kept gives the parked card its work back, in its trees, and drops the wip that held it meanwhile. A
 // part that no longer applies (a tree gone with an abandon) leaves the wip file in place.
 function unpark(git, state, trackId, parked, dir) {
-  if (!parked?.wip) return;
-  let all = true;
-  for (const { repoDir, text } of parked.wip.parts) {
-    const repo = state.tracks[trackId].repos[repoDir];
-    try {
-      applyWip(git, repo, text, join(dir, 'tmp', trackId, `unpark-${repoDir}.patch`));
-    } catch {
-      all = false;
+  if (parked?.wip) {
+    mkdirSync(join(dir, 'tmp', trackId), { recursive: true });
+    let all = true;
+    for (const { repoDir, text } of parked.wip.parts) {
+      const repo = state.tracks[trackId].repos[repoDir];
+      try {
+        applyWip(git, repo, text, join(dir, 'tmp', trackId, `unpark-${repoDir}.patch`));
+      } catch {
+        all = false;
+      }
     }
+    if (all) rmSync(parked.wip.path, { force: true });
   }
-  if (all) rmSync(parked.wip.path, { force: true });
+  rmSync(parkedMarker(dir, trackId), { force: true });
 }
 
 function applyWip(git, repo, text, file, args = []) {
@@ -936,6 +958,7 @@ async function adoptMerge(dir, fresh, before, work, { from, into, index, card, o
     if (record) writeAtomic(record.path, record.text);
   }
   if (from !== into) for (const [, repo] of Object.entries(fresh.tracks[from].repos).filter(isOpen)) resetTree(git, repo);
+  rmSync(parkedMarker(dir, into), { force: true });
   saveState(dir, fresh, now());
   const { kind } = fresh.crossings[index];
   const extra = { ...(wip ? { wip: wip.path } : {}), ...(parked ? { parked } : {}) };
@@ -953,7 +976,7 @@ function refusedCombine(state) {
   if (open.length) return fail(1, `combine runs once every track is done: ${open.map(([id, t]) => `${id} is ${t.status}`).join(', ')}`);
   const merging = state.crossings.find(c => liveMark(c.merging));
   if (merging) throw mergingRefusal(merging);
-  const pending = state.crossings.findIndex(c => c.pending);
+  const pending = state.crossings.findIndex(c => c.pending || c.merging);
   if (pending !== -1) return fail(1, `crossing ${pending} is pending: run cross again for it before combine`);
   return liveMark(state.combine.running) ? combining() : null;
 }

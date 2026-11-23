@@ -453,8 +453,9 @@ test('a worker reruns the same command on stale and on busy exit 75, and stops w
 
 test('heavy CLI calls run with the longest shell timeout or in the background, combine always in the background', () => {
   says('Run `next`, `end`, `tree`, `check`, `cross` and `combine` with the shell tool\'s longest timeout (600000 ms) or in the background');
-  step6Says('Run `combine` in the background');
+  step6Says('Run `cross` and `combine` in the background');
   workerSays('Run `next`, `end`, `tree`, `check` and `cross` with the shell tool\'s longest timeout (600000 ms) or in the background');
+  workerSays('Run `cross` in the background');
 });
 
 test('a wip patch goes back into the card\'s tree with git apply, never through an include pattern', () => {
@@ -477,6 +478,8 @@ test('deferred is not an error: cross runs again after the target track\'s card 
 test('cross answers merged, applied, deferred, parked, stale, busy with merging or replaying, a cycle and an unapplied wip', () => {
   for (const anchor of ['`merged`', '`applied`', '`deferred`', '`parked`', '`stale`', '`merging`', '`replaying`', 'Exit 75', '`wip/<CARD>.patch`']) step6Says(anchor);
   step6Says('**Exit 5** at `cross`');
+  step6Says('a crossing `stopped mid-merge`');
+  workerSays('a crossing `stopped mid-merge`');
   workerSays('a crossing, not a fixup');
   workerSays('`otherTrack`');
 });
@@ -508,7 +511,7 @@ test('the coordinator dispatches at most workers workers, continues each with Se
 test('a pending crossing survives a pause: on resume the coordinator reads it from the report and runs it again before that track gets a worker', () => {
   const step7 = sectionOf('Step 7: Pause and resume');
   for (const anchor of [
-    'every crossing whose `status` is `pending`', 'before you start a worker for its track', 'the card is pending again', 'once `next` hands it the card',
+    'every crossing whose `status` is `pending`', 'killed mid-merge reads `pending` too', 'before you start a worker for its track', 'the card is pending again', 'once `next` hands it the card',
   ]) stepSays(step7, anchor);
   workerSays('pass `--cwd` whenever more than one tree is open');
 });

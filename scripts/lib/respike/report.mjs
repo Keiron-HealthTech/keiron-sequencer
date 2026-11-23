@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { caseSource } from '../harvest.mjs';
 import { COMBINE_FIXUP, PRIOR_FINDING_OUTCOMES } from '../record.mjs';
 import { isLive, tiers, verdict } from '../records.mjs';
-import { upgradeState } from '../spike/state.mjs';
+import { interrupted, upgradeState } from '../spike/state.mjs';
 
 const compare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const cardNumber = key => Number(String(key).match(/(\d+)$/)?.[1] ?? 0);
@@ -159,7 +159,7 @@ function crossingList(state) {
   const { order } = state.plan;
   return state.crossings.map((c, i) => ({
     crossing: i, at: c.at, kind: c.kind, from: c.from, to: c.to, fromTrack: c.fromTrack, toTrack: c.toTrack,
-    status: c.pending ? 'pending' : c.merging ? 'merging' : 'applied',
+    status: c.pending || interrupted(c) ? 'pending' : c.merging ? 'merging' : 'applied',
     note: c.note,
     respiked: c.respiked ?? [],
     replayed: order.filter(k => state.cards[k].mergedFrom?.crossing === i),

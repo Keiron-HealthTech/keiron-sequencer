@@ -68,16 +68,32 @@ export const mergingRefusal = c => Object.assign(exitError(75, `${c.fromTrack} i
   output: { action: 'busy', merging: { from: c.fromTrack, into: c.toTrack } },
 });
 
-export function trackIdOf(state, id) {
+// A cross that died between its locked sections: the target's trees may be part-moved until that cross runs again.
+export const interrupted = (c, isAlive) => Boolean(c.merging) && !liveMark(c.merging, isAlive);
+
+export const interruptedRefusal = (state, i) => {
+  const c = state.crossings[i];
+  return exitError(1, `crossing ${i} (${c.from} needs ${c.to}) stopped mid-merge: run cross --track ${c.fromTrack} --card ${c.from} --needs ${c.to} --kind ${c.kind} --note "<its note>" again before any other command on ${c.fromTrack} or ${c.toTrack}`);
+};
+
+// `rerun` lets cross through a dead mark: cross itself decides whether it is that mark's rerun.
+function assertNotMerging(state, id, rerun) {
+  const merging = mergingCrossing(state, id);
+  if (merging) throw mergingRefusal(merging);
+  const dead = rerun ? -1 : state.crossings.findIndex(c => [c.fromTrack, c.toTrack].includes(id) && interrupted(c));
+  if (dead !== -1) throw interruptedRefusal(state, dead);
+}
+
+export function trackIdOf(state, id, { rerun = false } = {}) {
   if (id !== undefined) {
     if (!Object.hasOwn(state.tracks, id)) throw new Error(`${id} is not a track of run ${state.runId}`);
     if (state.tracks[id].mergedInto) throw new Error(`${id} was merged into ${liveTarget(state, id)}: pass --track ${liveTarget(state, id)}`);
-    const merging = mergingCrossing(state, id);
-    if (merging) throw mergingRefusal(merging);
+    assertNotMerging(state, id, rerun);
     return id;
   }
   const live = liveTracks(state);
   if (live.length !== 1) throw new Error(`pass --track <id>: this run has ${live.length} tracks: ${live.map(([k]) => k).join(', ')}`);
+  assertNotMerging(state, live[0][0], rerun);
   return live[0][0];
 }
 
