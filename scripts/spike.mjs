@@ -308,6 +308,7 @@ async function closeInterruptedCard(state, track, at, { transcripts, now }) {
 }
 
 async function resumeRun({ dir, state }, flags, { now, git, dataDir, transcripts }) {
+  if (state.executions.at(-1)?.endReason === 'combine') state.combine.rounds = 0;
   for (const [repoDir, repo] of allRepos(state).filter(isOpen)) checkTree(git, repoDir, repo);
   const at = now();
   for (const track of Object.values(state.tracks)) await closeInterruptedCard(state, track, at, { transcripts, now });

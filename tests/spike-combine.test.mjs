@@ -171,6 +171,31 @@ test('a combined fixup is credited to the clashing cards from combine', async ()
   assert.equal(readState(dir).status, 'complete');
 });
 
+test('a changes crossing after combine drops the combined fixup of the card it re-spikes', async () => {
+  const { dir, spike, play, record } = await doneTracks();
+  const failing = checker(() => ({ status: 2, stdout: 'src/shared.ts(8,14): error TS2322: x' }));
+  await spike(['combine'], failing.run);
+  editLine(8, 'export const v8 = 8 // fixed')(join(dir, 'trees', 'combined', 'backend'));
+  const fix = await spike(['fixup', '--combined', '--fixes', 'CRM-1,CRM-3', '--note', 'v8 keeps its number.', '--repo', 'backend', '--', 'src/shared.ts']);
+  assert.equal(fix.code, 0, fix.stderr);
+  const patch = 'backend/fixup-1-3-from-combine-1.patch';
+
+  const crossed = await spike(['cross', '--track', 't2', '--card', 'CRM-3', '--needs', 'CRM-1', '--kind', 'changes', '--note', 'CRM-3 must follow CRM-1.']);
+  assert.equal(crossed.code, 0, crossed.stderr);
+  assert.deepEqual(json(crossed).respiked, ['CRM-3']);
+  const row = readState(dir).fixups.find(f => f.patch === patch);
+  assert.deepEqual(row.droppedBy, { crossing: 0 });
+  assert.deepEqual(record('CRM-1').fixups.received, []);
+
+  await play('CRM-3', 't1', editLine(8, 'export const v8 = \'eight\''));
+  assert.deepEqual(json(await spike(['next', '--track', 't1'])), { action: 'track-done', track: 't1', combine: true });
+  const tc = checker();
+  const r = await spike(['combine'], tc.run);
+  assert.equal(json(r).action, 'combined-ok', r.stdout);
+  assert.doesNotMatch(tc.calls[0].shared, /fixed/);
+  assert.match(tc.calls[0].shared, /v8 = 'eight'/);
+});
+
 test('a combined fixup is refused without a combined tree, for a card not done, or with work left unrecorded', async () => {
   const { dir, spike } = await doneTracks();
   const args = ['fixup', '--combined', '--fixes', 'CRM-1', '--note', 'Fix.', '--repo', 'backend', '--', 'src/shared.ts'];
@@ -213,6 +238,18 @@ test('the third failed round pauses the run with reason combine', async () => {
   const again = await spike(['combine'], tc.run);
   assert.equal(again.code, 1);
   assert.match(again.stderr, /the run is paused \(combine\): run begin to resume it/);
+});
+
+test('resuming a run paused by combine gives combine three more rounds', async () => {
+  const { f, dir, spike } = await doneTracks();
+  const tc = checker(() => ({ status: 2, stdout: 'src/shared.ts(2,1): error TS2304: Cannot find name \'x\'.' }));
+  for (let i = 0; i < 3; i++) await spike(['combine'], tc.run);
+  assert.deepEqual([readState(dir).status, readState(dir).combine.rounds], ['paused', 3]);
+  const resumed = await run(['begin', PROJECT_URL], f.deps);
+  assert.equal(resumed.code, 0, resumed.stderr);
+  assert.deepEqual([readState(dir).status, readState(dir).combine.rounds], ['active', 0]);
+  const again = await spike(['combine'], tc.run);
+  assert.deepEqual([json(again).action, json(again).round], ['combined-failed', 1]);
 });
 
 test('a patch that does not apply on the combined tree is a failed round naming its cards', async () => {

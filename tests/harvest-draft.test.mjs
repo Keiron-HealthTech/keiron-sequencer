@@ -28,6 +28,15 @@ test('a fixup seen from both records becomes one code-edge draft: the receiver b
   assert.deepEqual(draftFromRecords([records[1]], HARVEST).edges.map(e => [e.from, e.to]), [['ABC-13', 'ABC-19']]);
 });
 
+test('a fixup made on the combined tree of every track drafts no edge', () => {
+  const patch = 'backend/fixup-13-19-from-combine-1.patch';
+  const records = [
+    record('ABC-13', { received: [{ from: 'combine', patch, note: 'The two tracks clash.' }] }),
+    record('ABC-19', { received: [{ from: 'combine', patch, note: 'The two tracks clash.' }] }),
+  ];
+  assert.deepEqual(draftFromRecords(records, HARVEST), { edges: [], splits: [] });
+});
+
 test('every patch behind a pair is named in the evidence, and the drafts come out sorted', () => {
   const records = [
     record('CRM-30', { caused: [{ to: 'CRM-20', patch: 'b/two.patch', note: null }, { to: 'CRM-20', patch: 'b/one.patch', note: null }] }),

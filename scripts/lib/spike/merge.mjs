@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { exitError } from '../cli.mjs';
+import { COMBINE_FIXUP } from '../record.mjs';
 import { spikeOrder } from './order.mjs';
 import { assertSnapshotted, mergedTree, replanAfterTurn } from './replay.mjs';
 import { DIFF } from './snapshot.mjs';
@@ -212,12 +213,14 @@ export function mergeTracks(state, { from, into, edge, kind, crossing, parked = 
   target.generation += 1;
   if (from !== into) Object.assign(state.tracks[from], { status: 'merged', mergedInto: into, current: null, generation: state.tracks[from].generation + 1 });
 
-  // A fixup belongs to the card that made it: when that card's entries left the trees, its fixups left with them.
+  // A fixup belongs to the card that made it: when that card's entries left the trees, its fixups left with them. A fix made on
+  // the combined tree fitted the cards as they were, so it leaves once any card it fixed is re-spiked.
   const live = new Set(Object.entries(target.repos).flatMap(([d, r]) => r.log.map(e => `${d}/${e.name}.patch`)));
-  const dropped = state.fixups.filter(f => !f.droppedBy && target.cards.includes(f.from) && !live.has(f.patch));
+  const orphaned = f => (f.from === COMBINE_FIXUP ? f.fixed.some(k => respiked.has(k)) : target.cards.includes(f.from) && !live.has(f.patch));
+  const dropped = state.fixups.filter(f => !f.droppedBy && orphaned(f));
   for (const f of dropped) f.droppedBy = { crossing };
 
   if (state.plan.respike) for (const k of turned) replanAfterTurn(state, { dataDir }, k);
-  const records = [...new Set([...respiked, ...replayed, ...dropped.flatMap(f => [f.from, ...f.fixed])])];
+  const records = [...new Set([...respiked, ...replayed, ...dropped.flatMap(f => [f.from, ...f.fixed])])].filter(k => k !== COMBINE_FIXUP);
   return { replayed, respiked: entry.respiked, dropped: dropped.map(f => f.patch), records, writes };
 }

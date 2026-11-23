@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { backwardMessage, buildCardMap, cycles, impliedChain, impliedEdges, isBackward } from './graph.mjs';
+import { COMBINE_FIXUP } from './record.mjs';
 import { isLive } from './records.mjs';
 
 export const HARVEST_SCHEMA = 1;
@@ -153,7 +154,7 @@ export function draftFromRecords(records, harvest) {
   const found = new Map();
   const add = (from, to, patch, note) => {
     const id = pairId(from, to);
-    if (!from || !to || from === to || decided.has(id)) return;
+    if (!from || !to || from === to || [from, to].includes(COMBINE_FIXUP) || decided.has(id)) return;
     if (!found.has(id)) found.set(id, { from, to, patches: new Map() });
     const patches = found.get(id).patches;
     if (!patches.get(patch)) patches.set(patch, note ?? null);
