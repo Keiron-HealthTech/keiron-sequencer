@@ -1,13 +1,15 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { run } from '../scripts/spike.mjs';
 import { withCheckSlot } from '../scripts/lib/spike/checks.mjs';
 import { setupRunner } from '../scripts/lib/spike/exec.mjs';
 import { tempDir } from './helpers/git-sandbox.mjs';
 import { guardNetwork } from './helpers/no-network.mjs';
-import { activeRunDir, PROJECT_URL, spikeFixture } from './helpers/spike-fixture.mjs';
+import { activeRunDir, notes, PROJECT_URL, spikeFixture, walk } from './helpers/spike-fixture.mjs';
+
+import { B, PROJECT_URL as RESPIKE_URL, respikeFixture, SLUG as RESPIKE_SLUG } from './helpers/respike-fixture.mjs';
 
 guardNetwork();
 
@@ -98,6 +100,59 @@ test('check answers busy when no slot frees in time', async () => {
   mkdirSync(join(dir, 'checks'), { recursive: true });
   writeFileSync(join(dir, 'checks', '0.lock'), `${process.pid}\nother\n`);
   const r = await run(['check', '--', 'sh', '-c', 'exit 3'], { ...deps, slot: { waitMs: 30, pollMs: 5 } });
-  assert.equal(r.code, 0);
+  assert.equal(r.code, 75);
   assert.equal(JSON.parse(r.stdout).action, 'busy');
+});
+
+const BUSY = { slot: { waitMs: 30, pollMs: 5 } };
+const hold = dir => {
+  mkdirSync(join(dir, 'checks'), { recursive: true });
+  writeFileSync(join(dir, 'checks', '0.lock'), `${process.pid}\nother\n`);
+};
+const stateText = dir => readFileSync(join(dir, 'run.json'), 'utf8');
+
+test('tree answers busy with exit 75 and changes nothing', async () => {
+  const fixture = spikeFixture();
+  fixture.at('2026-11-10T10:00:00.000Z');
+  await run(['begin', PROJECT_URL], fixture.deps);
+  await run(['next'], fixture.deps);
+  const dir = activeRunDir(fixture.home);
+  const before = stateText(dir);
+  hold(dir);
+  const r = await run(['tree', 'backend'], { ...fixture.deps, ...BUSY });
+  assert.equal(r.code, 75);
+  assert.equal(JSON.parse(r.stdout).action, 'busy');
+  assert.equal(stateText(dir), before);
+  assert.equal(existsSync(join(dir, 'trees')), false);
+});
+
+test('end answers busy with exit 75: the card stays in progress and nothing is written', async () => {
+  const { fixture, tree } = await openedFixture();
+  const dir = activeRunDir(fixture.home);
+  writeFileSync(join(tree, 'CRM-1.txt'), 'x\n');
+  mkdirSync(join(dir, 'notes'), { recursive: true });
+  writeFileSync(join(dir, 'notes', 'CRM-1.json'), JSON.stringify(notes));
+  const before = stateText(dir);
+  hold(dir);
+  const r = await run(['end', 'CRM-1'], { ...fixture.deps, ...BUSY });
+  assert.equal(r.code, 75);
+  assert.equal(JSON.parse(r.stdout).action, 'busy');
+  assert.equal(stateText(dir), before);
+  assert.deepEqual(walk(join(dir, 'patches')), []);
+  assert.deepEqual(walk(fixture.dataDir), []);
+});
+
+test('next answers busy with exit 75 when a replay entry cannot get a slot', async () => {
+  const f = respikeFixture();
+  const plan = JSON.parse((await f.run('preflight', [RESPIKE_URL, '--cards', B])).stdout);
+  f.at('2026-11-10T10:01:00.000Z');
+  const begun = JSON.parse((await f.run('begin', [RESPIKE_URL, '--cards', B, '--approve', plan.approve])).stdout);
+  const dir = join(f.home, RESPIKE_SLUG, 'runs', begun.runId);
+  const before = stateText(dir);
+  hold(dir);
+  const r = await f.spike(['next'], BUSY);
+  assert.equal(r.code, 75);
+  assert.equal(JSON.parse(r.stdout).action, 'busy');
+  assert.equal(stateText(dir), before);
+  assert.equal(existsSync(join(dir, 'trees')), false);
 });

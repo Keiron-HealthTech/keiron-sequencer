@@ -39,8 +39,9 @@ subagent per card, no headless runs.
   the target repo's own limits, through
   `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs check [--track <id>] [--cwd <repoDir>] [--project <project ref>] -- <argv>...`:
   it runs the argv in the track's first open tree (`--cwd` picks a repo), takes a
-  check slot first, and exits with the command's exit code. `action: 'busy'` means
-  no slot freed in time: run the same check again.
+  check slot first, and exits with the command's exit code. `next`, `tree`, `end` and `check` can
+  answer `action: 'busy'` with exit code 75: no slot freed in time, nothing was
+  changed, so run the same command again.
 - Patches and run state live in `~/.keiron-sequencer`, outside every repo: the run's
   folder is `~/.keiron-sequencer/<slug>/runs/<runId>/` (`patches/`, `trees/`, `notes/`,
   `logs/`, `run.json`). Never copy a patch into a repo. The per-card records

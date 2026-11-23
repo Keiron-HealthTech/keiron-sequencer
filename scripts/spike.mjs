@@ -238,6 +238,9 @@ async function startRun(ref, key, flags, { fetchImpl, now, home, dataDir, gh, gi
   return begun(state, mark, false);
 }
 
+// EX_TEMPFAIL: a wrapped command's own exit code is 0 for a pass, so busy must not look like one.
+const busy = extra => ({ ...ok({ action: 'busy', ...extra }), code: 75 });
+
 const isOpen = ([, r]) => r.status === 'open';
 const openRepos = state => Object.entries(trackOf(state).repos).filter(isOpen);
 const anyRemoved = state => allRepos(state).some(([, r]) => r.status === 'removed');
@@ -330,7 +333,7 @@ async function replayStep(dir, before, replayed, { lock, ...deps }) {
       failure = e;
     }
   });
-  if (slotted.busy) return { result: ok({ action: 'busy', replayed }) };
+  if (slotted.busy) return { result: busy({ replayed }) };
   return relock(dir, lock, trackId, before, async fresh => {
     adoptReplay(fresh, before, work, trackId);
     for (const w of entry?.writes ?? []) writeAtomic(w.path, w.text);
@@ -482,7 +485,7 @@ async function tree(args, { home, now, git, gh, runSetup, lock, slot }) {
       failure = e;
     }
   });
-  if (slotted.busy) return ok({ action: 'busy' });
+  if (slotted.busy) return busy();
   return relock(dir, lock, trackId, state, fresh => {
     const track = fresh.tracks[trackId];
     copyMoved(track.repos, work.tracks[trackId].repos, state.tracks[trackId].repos);
@@ -509,7 +512,7 @@ async function check(args, { home, runSetup, slot }) {
   if (!wanted.length) return fail(1, a.flags.cwd ? `${a.flags.cwd} has no open tree in this track` : 'this track has no open tree: run tree <repoDir> first');
   const [[, { path }]] = wanted;
   const slotted = await withCheckSlot(dir, { slots: state.checks ?? 1, command: argv.join(' '), ...slot }, () => runSetup(argv, { cwd: path }));
-  if (slotted.busy) return ok({ action: 'busy' });
+  if (slotted.busy) return busy();
   const { status, stdout, stderr } = slotted.value;
   return { code: status ?? 1, stdout: stdout ?? '', stderr: stderr ?? '' };
 }
@@ -667,7 +670,7 @@ async function end(args, { home, dataDir, now, git, transcripts, runSetup, lock,
       }
       return null;
     });
-    if (slotted.busy) return ok({ action: 'busy' });
+    if (slotted.busy) return busy();
     if (slotted.value) return slotted.value;
   }
   return relock(dir, lock, trackId, state, fresh => endCard(dir, fresh, card, first, flags, { config, dataDir, now, git, transcripts }));

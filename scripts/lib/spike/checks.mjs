@@ -3,8 +3,8 @@ import { join } from 'node:path';
 import { holderAlive, readHolder, takeOver } from './home.mjs';
 
 export const CHECKS_DIR = 'checks';
-// Under the 600 s the shell tool allows a command, so a busy answer comes back before the tool times out.
-export const CHECK_WAIT_MS = 540_000;
+// Half the 600 s the shell tool allows a command: a slot won late still leaves time for the work.
+export const CHECK_WAIT_MS = 300_000;
 
 const pause = ms => new Promise(r => setTimeout(r, ms));
 
