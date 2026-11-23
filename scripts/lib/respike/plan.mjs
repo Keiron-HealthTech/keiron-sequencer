@@ -9,6 +9,7 @@ import { dataInRepoWarning, isLive, readRecords } from '../records.mjs';
 import { allowedRepos, loadConfig } from '../spike/config.mjs';
 import { displayData, trialPatchRoot, trialReferenceDir } from '../spike/home.mjs';
 import { activeRunFor, latestRun } from '../spike/state.mjs';
+import { tracksOf } from '../spike/tracks.mjs';
 import { cardRepos } from '../start/checkout.mjs';
 import { classifyBuilt, decideBases, neededCandidates, pinBranch, readPrLists, readRefs, resolvePending } from './built.mjs';
 import { coverage, touchedRepos } from './coverage.mjs';
@@ -29,6 +30,7 @@ export function approveHash(plan, answers = { built: new Map(), unbuilt: new Set
       kind: b.kind, sha: b.sha, heads: b.heads?.map(h => ({ card: h.card, sha: h.sha })) ?? null, tree: b.tree,
     }])),
     order: plan.order,
+    tracks: plan.tracks,
     replay: plan.ancestors.map(a => ({ key: a.key, from: a.from, patches: a.patches, dropped: a.dropped })),
     answers: {
       built: [...answers.built].sort(([a], [b]) => compare(a, b)), unbuilt: [...answers.unbuilt].sort(), withDefault: [...(answers.withDefault ?? [])].sort(),
@@ -112,6 +114,8 @@ export async function buildRespikePlan(ref, key, {
   if (trialLogDir === undefined && ancestors.some(a => a.mode === 'replay' && a.from === 'trial')) assertTrialReference(home, slug, logDir);
   const modes = new Map([...ancestors.map(a => [a.key, a.mode]), ...selected.map(k => [k, 'spike'])]);
   const ordered = orderOf(modes);
+  const links = [...records.values()].flatMap(r => (r.fixups?.received ?? []).map(f => [f.from, r.card]));
+  const tracks = tracksOf({ order: ordered.order, edges: analysis.edges, links });
   const stops = ordered.cycles.map(members => ({ code: 'cycle', members, message: `cycle among the run's cards: ${members.join(', ')}` }));
 
   const spikeEntries = [...modes].filter(([, m]) => m === 'spike').map(([k]) => ({ card: cardOf(k), record: records.get(k) ?? null }));
@@ -141,6 +145,7 @@ export async function buildRespikePlan(ref, key, {
     ancestors,
     bases: {},
     order: ordered.order.map(k => ({ key: k, mode: modes.get(k) })),
+    tracks,
     asks: [],
     stops,
     missingConfig: covered.missingConfig,

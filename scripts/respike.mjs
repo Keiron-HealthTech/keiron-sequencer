@@ -121,6 +121,7 @@ function runPlan(built, at) {
   return {
     fetchedAt: at.toISOString(),
     order: plan.order.map(e => e.key),
+    tracks: plan.tracks,
     skipped: [],
     cards,
     respike: {
