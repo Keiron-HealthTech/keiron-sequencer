@@ -511,7 +511,7 @@ test('a crossing whose cross died mid-merge reads as pending; one whose cross is
   const track = cards => ({ cards, status: 'active', mergedInto: null, current: null, generation: 1, repos: {} });
   state.tracks = { t1: track(['CRM-1']), t2: track(['CRM-2']) };
   const crossing = merging => ({ at: '2026-11-10T10:10:00.000Z', kind: 'depends', from: 'CRM-2', to: 'CRM-1', fromTrack: 't2', toTrack: 't1', note: 'n', respiked: [], merging });
-  const gone = spawnSync(process.execPath, ['-e', '']).pid;
+  const gone = spawnSync(process.execPath, ['-e', ''], { env: { HOME: scratch('keiron-sequencer-report-gone-') } }).pid;
   state.crossings = [crossing({ pid: gone }), crossing({ pid: process.pid })];
   assert.deepEqual(buildReport({ state, records: [], previous: new Map() }).crossings.map(c => c.status), ['pending', 'merging']);
 });

@@ -91,7 +91,7 @@ test('the run lock is exclusive, holds the pid, and is gone once released', asyn
   const alive = { isAlive: () => true, waitMs: 0 };
   const release = await acquireLock(dir, { pid: 4242, ...alive });
   assert.equal(readFileSync(join(dir, 'run.lock'), 'utf8'), '4242\n');
-  await assert.rejects(acquireLock(dir, { pid: 4343, ...alive }), e => e.message.includes('4242') && e.message.includes(join(dir, 'run.lock')));
+  await assert.rejects(acquireLock(dir, { pid: 4343, ...alive }), e => e.message.includes('4242') && e.exitCode === 75 && !/remove/.test(e.message));
   assert.equal(readFileSync(join(dir, 'run.lock'), 'utf8'), '4242\n');
   release();
   assert.equal(existsSync(join(dir, 'run.lock')), false);
@@ -112,7 +112,7 @@ test('begin with a home inside a git work tree fails naming the problem, before 
   assert.equal(linear.sent.length, 0);
 });
 
-test('a command on a run locked past its wait fails naming the lock and changes nothing; every command releases its lock', async () => {
+test('a command on a run locked past its wait answers busy naming the lock and changes nothing; every command releases its lock', async () => {
   const { home, deps, at } = spikeFixture();
   const { runId } = JSON.parse((await run(['begin', PROJECT_URL], deps)).stdout);
   const dir = join(home, SLUG, 'runs', runId);
@@ -122,8 +122,9 @@ test('a command on a run locked past its wait fails naming the lock and changes 
   at('2026-11-10T10:01:00.000Z');
   for (const argv of [['next'], ['tree', 'backend'], ['end', 'CRM-1'], ['begin', PROJECT_URL]]) {
     const r = await run(argv, { ...deps, lock: { isAlive: () => true, waitMs: 0 } });
-    assert.equal(r.code, 1, argv.join(' '));
+    assert.equal(r.code, 75, argv.join(' '));
     assert.match(r.stderr, /locked by pid 999999/, argv.join(' '));
+    assert.deepEqual(JSON.parse(r.stdout), { action: 'busy', lock: { pid: 999999 } }, argv.join(' '));
   }
   assert.equal(readFileSync(join(dir, 'run.json'), 'utf8'), before);
   release();
