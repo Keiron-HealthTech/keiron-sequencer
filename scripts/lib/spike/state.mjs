@@ -20,7 +20,7 @@ function refuseSharedNumbers(plan) {
   }
 }
 
-const newTrack = (cards, { current = null, repos = {} } = {}) => ({ cards, status: 'pending', mergedInto: null, current, generation: 0, repos });
+const newTrack = (cards, { status = 'pending', current = null, repos = {} } = {}) => ({ cards, status, mergedInto: null, current, generation: 0, repos });
 
 export function createRun({ runId, project, plan, home, dataDir, now }) {
   refuseSharedNumbers(plan);
@@ -48,7 +48,8 @@ export function createRun({ runId, project, plan, home, dataDir, now }) {
 export function upgradeState(state) {
   if (state.tracks) return state;
   const { current = null, repos = {}, ...rest } = state;
-  return { ...rest, schemaVersion: 2, tracks: { t1: newTrack(state.plan?.order ?? [], { current, repos }) }, crossings: [], combine: { rounds: 0, results: [] } };
+  const started = Object.values(state.cards ?? {}).some(c => c.status !== 'pending');
+  return { ...rest, schemaVersion: 2, tracks: { t1: newTrack(state.plan?.order ?? [], { status: started ? 'active' : 'pending', current, repos }) }, crossings: [], combine: { rounds: 0, results: [] } };
 }
 
 const liveTracks = state => Object.entries(state.tracks).filter(([, t]) => !t.mergedInto);
@@ -106,7 +107,9 @@ export function openCardWindow(state, card, execution, now) {
   if (cardState.status === 'pending') cardState.box = state.plan.cards[card].origin === 'existing-pr' ? null : execution.box ?? null;
   cardState.status = 'in-progress';
   cardState.windows.push(window);
-  state.tracks[trackOfCard(state, card)].current = { card, startedAt: window.start, execution: execution.id };
+  const track = state.tracks[trackOfCard(state, card)];
+  if (track.status === 'pending') track.status = 'active';
+  track.current = { card, startedAt: window.start, execution: execution.id };
   return window;
 }
 

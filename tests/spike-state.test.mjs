@@ -62,10 +62,26 @@ test('a schema-1 run reads as track t1 with its current card and trees', () => {
   const state = readState(dir);
   assert.equal(state.schemaVersion, 2);
   assert.equal(state.tracks.t1.current.card, 'CRM-2');
+  assert.equal(state.tracks.t1.status, 'active');
   assert.equal(state.tracks.t1.repos.backend.path, join(dir, 'trees', 'backend'));
   assert.deepEqual(state.tracks.t1.cards, ['CRM-1', 'CRM-2']);
   assert.equal('current' in state || 'repos' in state, false);
   assert.equal(trackOf(state), state.tracks.t1);
+});
+
+test('a track turns active when its first card window opens', () => {
+  const state = newRun();
+  assert.equal(state.tracks.t1.status, 'pending');
+  openCardWindow(state, 'CRM-1', openExecution(state, { now: NOW, sessions: [] }), NOW);
+  assert.equal(state.tracks.t1.status, 'active');
+});
+
+test('next on a fresh run makes its track active in run.json', async () => {
+  const { home, deps, at } = spikeFixture({ issues: [issue('CRM-1'), issue('CRM-2')] });
+  const { runId } = JSON.parse((await run(['begin', PROJECT_URL], deps)).stdout);
+  at('2026-11-10T10:01:00.000Z');
+  assert.equal(JSON.parse((await run(['next'], deps)).stdout).card, 'CRM-1');
+  assert.equal(readState(runDir(home, SLUG, runId)).tracks.t1.status, 'active');
 });
 
 test('trackOf without an id refuses a run with two live tracks', () => {
