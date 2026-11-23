@@ -523,7 +523,10 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs fixup --combined --fixes <CARD>[,<C
 
 `combine` builds one tree per repo, `trees/combined/<repoDir>`, from the
 respike base with every track's patches and fixups, and type-checks it.
-Never type-check the combined tree by hand: `combine` checks it.
+Never type-check the combined tree by hand: `combine` checks it. It judges
+errors as `end` does: an error in a file no card changed is ignored, so a
+clash that only shows in a file no card touched passes `combine`. Say so
+when you report `combined-ok`.
 
 - `combined-ok`: the run is complete; report it as `complete` below, then
   Step 8. When it lists `skipped` (`{ repo, reason }`: `off`,
@@ -558,8 +561,9 @@ Never type-check the combined tree by hand: `combine` checks it.
 
 ### Errors and the end
 
-- `action: 'setup-failed'` (Exit 1), at a replay, at `tree` or at `combine`:
-  fix the cause or report it; the next call retries.
+- `action: 'setup-failed'` (Exit 1), at a replay, at `tree`, at `cross` or
+  at `combine`: fix the cause or report it; the next call retries. At
+  `cross` nothing was merged and the crossing stays pending.
 - A tree that refuses (Exit 1) because its pinned base is gone or its
   combined base differs from the plan: report it; abandon only when the user
   asks, then preflight again. A repo with only a `url` is refused too: the
@@ -647,7 +651,8 @@ blocks nothing and changes no record. Show:
   `replayed` onto the merged track, and its `droppedFixups`.
 - Under `## Combined check`, `combined`: `passed` (when the check passed),
   the `skipped` repos where that passing check never ran, with their reason,
-  and each of the `failures` with its errors, the `fixups` recorded for it
+  the limit that errors in files no card changed are not judged, and each of
+  the `failures` with its errors, the `fixups` recorded for it
   (the note is the diagnosis; a dropped one is shown as dropped) and the
   crossings recorded for it.
 

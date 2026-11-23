@@ -1184,10 +1184,17 @@ async function endCard(dir, state, trackId, card, { notesFile, notes }, flags, {
   const mark = issueMark(after, execution, at);
   saveState(dir, after, at);
   rmSync(wipPath(dir, card), { force: true });
-  const crossingSuspects = crossingSuspectsOf(dir, after, trackId, pending);
+  let crossingSuspects = [];
+  let unread = null;
+  try {
+    crossingSuspects = crossingSuspectsOf(dir, after, trackId, pending);
+  } catch (e) {
+    unread = e.message;
+  }
   const cases = notes.cases?.length ?? 0;
   const box = timeBoxFor(cardState);
   const warnings = [
+    ...(unread ? [`crossing suspects were not read (${unread}); the card is ended`] : []),
     ...(cases < 3 || cases > 6 ? [`${cases} case(s) written; 3 to 6 are expected`] : []),
     ...(box?.over ? [`${card} spent ${box.spent} of its box ${box.budget}; the box is a warning only`] : []),
   ];

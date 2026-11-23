@@ -483,6 +483,8 @@ test('cross answers merged, applied, deferred, parked, stale, busy with merging 
   step6Says('**Exit 5** at `cross`');
   step6Says('a crossing `stopped mid-merge`');
   workerSays('a crossing `stopped mid-merge`');
+  workerSays('`setup-failed` (Exit 1) names the setup command and its log');
+  step6Says('at `cross` or at `combine`');
   workerSays('a crossing, not a fixup');
   workerSays('`otherTrack`');
 });
@@ -523,4 +525,6 @@ test('the report step shows the tracks, the crossings and the combined check', (
   const step8 = sectionOf('Step 8: Report');
   for (const anchor of ['`## Tracks`', '`## Crossings`', '`## Combined check`', '`tracks`', '`crossings`', '`combined`', '`respiked`', '`failures`', '`skipped`']) stepSays(step8, anchor);
   step6Says('the combined check never ran in those repos');
+  step6Says('a clash that only shows in a file no card touched passes `combine`');
+  stepSays(step8, 'errors in files no card changed are not judged');
 });

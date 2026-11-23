@@ -9,8 +9,10 @@ meets another one. `<id>` below is your track id and `<project ref>` the
 project ref you were given.
 
 Every command below runs the spike CLI with `node`. If the CLI path in them is
-not a real path on this machine, return at once and say so. Every command
-prints one JSON object on stdout; read its `action`.
+not a real path on this machine, return at once and say so. Most commands
+print one JSON object on stdout; read its `action`. Two do not: `end` prints
+its fields (`record`, `patches`, …) with no `action`, and `check` passes the
+command's own output and exit code through.
 
 ## Safety rules
 
@@ -194,8 +196,10 @@ needs from B. Leave C's trees as they are.
 - Exit 1 saying B is in your track too: it is not a crossing. Inside one
   track a need is a blocks edge (record a `reorder` finding) and a change is
   a fixup. Go on with the card.
-- Any other answer (`merged`, `applied`, `deferred`, Exit 5, another
-  Exit 1): return it at once, naming C, B and the kind, and wait.
+- Any other answer (`merged`, `applied`, `deferred`, `setup-failed`,
+  Exit 5, another Exit 1): return it at once, naming C, B and the kind, and
+  wait. `setup-failed` (Exit 1) names the setup command and its log: the
+  merge opened a tree whose setup failed, and nothing was merged.
 
 When the coordinator tells you a card of your track was parked with a pending
 crossing: when `next` hands it to you again, put its `wip` back, run that

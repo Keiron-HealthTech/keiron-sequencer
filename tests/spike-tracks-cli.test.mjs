@@ -245,3 +245,16 @@ test('end lists another track\'s card that changed the same path as a crossing s
   assert.deepEqual(ended.crossingSuspects, [{ card: 'CRM-1', track: 't1', repo: 'backend', path: 'src/index.js' }]);
   assert.equal(readState(dir).cards['CRM-3'].status, 'done');
 });
+
+test('an unreadable patch of another track gives no crossing suspects and never fails the end', async () => {
+  const { dir, open, end } = await twoTracks();
+  const t1 = await open('CRM-1', 't1', '2026-11-10T10:01:00.000Z');
+  edit(t1, 'export const one = 11\n');
+  await end('CRM-1', 't1', '2026-11-10T10:02:00.000Z');
+  rmSync(join(dir, 'patches', 'backend', '00001-new.patch'));
+  const t2 = await open('CRM-3', 't2', '2026-11-10T10:03:00.000Z');
+  edit(t2, 'export const one = 22\n');
+  const ended = await end('CRM-3', 't2', '2026-11-10T10:04:00.000Z');
+  assert.equal(ended.crossingSuspects, undefined);
+  assert.equal(readState(dir).cards['CRM-3'].status, 'done');
+});
