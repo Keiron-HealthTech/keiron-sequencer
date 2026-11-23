@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { globSync, readFileSync } from 'node:fs';
-import { basename } from 'node:path';
+import { globSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ghRunner, gitRunner, setupRunner } from '../scripts/lib/spike/exec.mjs';
 import { guardNetwork } from './helpers/no-network.mjs';
@@ -89,6 +90,18 @@ test('the default setup runner spawns one argv array with no shell and refuses a
   assert.equal(spawned[0].opts.shell, false);
   assert.equal(spawned[0].opts.cwd, '/t');
   assert.equal(spawned[0].opts.timeout, 5000);
+});
+
+test('with a child pid file the setup runner records the pid of the command itself, which replaces the shell that wrote it', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'keiron-sequencer-child-'));
+  try {
+    const file = join(dir, 'slot with space.lock.child');
+    const r = setupRunner()(['sh', '-c', 'echo $$'], { cwd: dir, childPidFile: file });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(readFileSync(file, 'utf8').trim(), r.stdout.trim());
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('the git runner refuses a command-line alias, which could rename a refused subcommand', () => {

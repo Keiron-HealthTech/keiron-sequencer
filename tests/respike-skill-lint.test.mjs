@@ -391,7 +391,7 @@ const step6 = sectionOf('Step 6: The card loop');
 const step6Says = text => stepSays(step6, text);
 
 test('the respike skill sends heavy commands through check', () => {
-  const CHECK = `${SPIKE}check --track <id> [--cwd <repoDir>] [--project <project ref>] -- <argv>...`;
+  const CHECK = `${SPIKE}check --track <id> [--cwd <repoDir>] [--timeout-ms <n>] [--project <project ref>] -- <argv>...`;
   assert.ok([...bashLines, ...inlineCode].includes(CHECK), 'SKILL.md does not show the check command');
   stepSays(sectionOf('Safety rules'), 'only through `check`');
   says('take a check slot');

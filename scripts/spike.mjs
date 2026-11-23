@@ -18,7 +18,7 @@ import { LIMIT_FLAGS, limitsFrom, sessionsFrom } from './lib/spike/limits.mjs';
 import { closesCycle, mergeTracks } from './lib/spike/merge.mjs';
 import { isSlug, prunableSlugs, pruneRuns } from './lib/spike/prune.mjs';
 import { previousOf, replanAfterTurn, replayContext, replayEntry } from './lib/spike/replay.mjs';
-import { changedSinceLast, clearGenerated, repoTypecheck, typecheckLog } from './lib/spike/typecheck.mjs';
+import { changedSinceLast, clearGenerated, repoTypecheck, SPIKE_TYPECHECK_TIMEOUT_MS, typecheckLog } from './lib/spike/typecheck.mjs';
 import { buildCombined, COMBINE_ROUNDS, combinedFixupName } from './lib/spike/combined.mjs';
 import { COMBINE_FIXUP } from './lib/record.mjs';
 import { cardPatchName, fixupPatchName, oldSideRanges, overlapCandidates, rangesOverlap, snapshot, wipDiff, workingDiff } from './lib/spike/snapshot.mjs';
@@ -36,7 +36,7 @@ const USAGE = [
   'usage: node scripts/spike.mjs tree <repoDir> [--track <id>] [--project <project ref>]',
   'usage: node scripts/spike.mjs notes-template <CARD> [--track <id>] [--project <project ref>]',
   'usage: node scripts/spike.mjs end <CARD> [--track <id>] [--notes <notes.json>] [--allow <kind>:<path>]... [--skip-typecheck <reason>] [--project <project ref>]',
-  'usage: node scripts/spike.mjs check [--track <id>] [--cwd <repoDir>] [--project <project ref>] -- <argv>...',
+  'usage: node scripts/spike.mjs check [--track <id>] [--cwd <repoDir>] [--timeout-ms <n>] [--project <project ref>] -- <argv>...',
   'usage: node scripts/spike.mjs candidates [--track <id>] [--repo <repoDir>] [--project <project ref>]',
   'usage: node scripts/spike.mjs fixup [--track <id>] --fixes <CARD>[,<CARD>] --slug <kebab-slug> --note <text> --repo <repoDir> [--allow <kind>:<path>]... [--project <project ref>] -- <path>...',
   'usage: node scripts/spike.mjs fixup --combined --fixes <CARD>[,<CARD>] --note <text> --repo <repoDir> [--allow <kind>:<path>]... [--project <project ref>] -- <path>...',
@@ -375,9 +375,9 @@ async function replayStep(dir, trackId, before, replayed, { lock, ...deps }) {
   const work = structuredClone(before);
   let entry = null;
   let failure = null;
-  const slotted = await withCheckSlot(dir, { slots: before.checks ?? 1, command: 'replay', ...slot }, () => {
+  const slotted = await withCheckSlot(dir, { slots: before.checks ?? 1, command: 'replay', ...slot }, held => {
     try {
-      entry = replayNext(dir, work, trackId, deps);
+      entry = replayNext(dir, work, trackId, { ...deps, runSetup: asChild(deps.runSetup, held) });
     } catch (e) {
       failure = e;
     }
@@ -561,9 +561,9 @@ async function tree(args, { home, now, git, gh, runSetup, lock, slot }) {
   const { dir, state, trackId } = first;
   const work = structuredClone(state);
   let failure = null;
-  const slotted = await withCheckSlot(dir, { slots: state.checks ?? 1, command: `tree ${repoDir}`, ...slot }, () => {
+  const slotted = await withCheckSlot(dir, { slots: state.checks ?? 1, command: `tree ${repoDir}`, ...slot }, held => {
     try {
-      openTree(git, work, { trackId, repoDir, repo: config.repos[repoDir], dir, runSetup });
+      openTree(git, work, { trackId, repoDir, repo: config.repos[repoDir], dir, runSetup: asChild(runSetup, held) });
     } catch (e) {
       if (!e.setup) throw e;
       failure = e;
@@ -588,18 +588,31 @@ async function tree(args, { home, now, git, gh, runSetup, lock, slot }) {
 async function check(args, { home, runSetup, slot }) {
   const split = args.indexOf('--');
   const argv = split < 0 ? [] : args.slice(split + 1);
-  const a = parseArgs(split < 0 ? args : args.slice(0, split), ['--track', '--cwd', '--project']);
-  if (!a || a.positional.length || !argv.length) return fail(2, ...USAGE);
+  const a = parseArgs(split < 0 ? args : args.slice(0, split), ['--track', '--cwd', '--project', '--timeout-ms']);
+  const timeoutMs = a?.flags['timeout-ms'] === undefined ? SPIKE_TYPECHECK_TIMEOUT_MS : Number(a.flags['timeout-ms']);
+  if (!a || a.positional.length || !argv.length || !Number.isInteger(timeoutMs) || timeoutMs <= 0) return fail(2, ...USAGE);
   const { dir, state } = activeRun(home, a.flags.project);
   const repos = openRepos(state, trackIdOf(state, a.flags.track));
   const wanted = a.flags.cwd ? repos.filter(([d]) => d === a.flags.cwd) : repos.slice(0, 1);
   if (!wanted.length) return fail(1, a.flags.cwd ? `${a.flags.cwd} has no open tree in this track` : 'this track has no open tree: run tree <repoDir> first');
   const [[, { path }]] = wanted;
-  const slotted = await withCheckSlot(dir, { slots: state.checks ?? 1, command: argv.join(' '), ...slot }, () => runSetup(argv, { cwd: path }));
+  const slotted = await withCheckSlot(dir, { slots: state.checks ?? 1, command: argv.join(' '), ...slot }, held => {
+    try {
+      return asChild(runSetup, held)(argv, { cwd: path, timeoutMs });
+    } catch (e) {
+      if (e.code !== 'ETIMEDOUT') throw e;
+      return { status: CHECK_TIMED_OUT, stdout: '', stderr: lines([`the command timed out after ${timeoutMs} ms and was stopped`]) };
+    }
+  });
   if (slotted.busy) return busy();
   const { status, stdout, stderr } = slotted.value;
   return { code: status ?? 1, stdout: stdout ?? '', stderr: stderr ?? '' };
 }
+
+// timeout(1)'s exit code, so a stopped command reads as neither a pass nor the command's own failure.
+const CHECK_TIMED_OUT = 124;
+
+const asChild = (runSetup, held) => (argv, options = {}) => runSetup(argv, { ...options, childPidFile: held.child });
 
 // Done cards' patches in the other live tracks: their trees are separate, so these are hints, never blockers.
 function otherTrackPatches(dir, state, trackId) {
@@ -747,12 +760,12 @@ async function cross(args, { home, now, git, lock, slot, runSetup, dataDir, tran
   let outcome = null;
   let failure = null;
   let parked = null;
-  const slotted = await withCheckSlot(dir, { slots: state.checks ?? 1, command: `cross ${f.card}`, ...slot }, () => {
+  const slotted = await withCheckSlot(dir, { slots: state.checks ?? 1, command: `cross ${f.card}`, ...slot }, held => {
     try {
       parked = parkTrack(git, work, into, dir);
       const wip = from === into ? null : wipOf(git, work, from, f.card, dir);
       const edge = { from: f.needs, to: f.card };
-      outcome = { wip, parked: parked?.card ?? null, ...mergeTracks(work, { from, into, edge, kind: f.kind, crossing: index, parked: parked?.card }, { git, dir, config, runSetup, dataDir }) };
+      outcome = { wip, parked: parked?.card ?? null, ...mergeTracks(work, { from, into, edge, kind: f.kind, crossing: index, parked: parked?.card }, { git, dir, config, runSetup: asChild(runSetup, held), dataDir }) };
     } catch (e) {
       failure = e;
     }
@@ -1000,9 +1013,9 @@ async function combine(args, { home, now, git, lock, slot, runSetup, transcripts
   const repos = structuredClone(state.combine.repos ?? {});
   let errors = null;
   let failure = null;
-  const slotted = await withCheckSlot(dir, { slots: state.checks ?? 1, command: 'combine', ...slot }, () => {
+  const slotted = await withCheckSlot(dir, { slots: state.checks ?? 1, command: 'combine', ...slot }, held => {
     try {
-      errors = buildCombined(git, state, repos, { config, dir, runSetup });
+      errors = buildCombined(git, state, repos, { config, dir, runSetup: asChild(runSetup, held) });
     } catch (e) {
       failure = e;
     }
@@ -1107,10 +1120,10 @@ async function end(args, { home, dataDir, now, git, transcripts, runSetup, lock,
   const open = openRepos(state, trackId);
   for (const [repoDir, repo] of open) checkTree(git, repoDir, repo);
   if (flags['skip-typecheck'] === undefined) {
-    const slotted = await withCheckSlot(dir, { slots: state.checks ?? 1, command: `typecheck ${card}`, ...slot }, () => {
+    const slotted = await withCheckSlot(dir, { slots: state.checks ?? 1, command: `typecheck ${card}`, ...slot }, held => {
       for (const [repoDir, repo] of open) {
         const log = typecheckLog(dir, trackId, repoDir);
-        const check = repoTypecheck(runSetup, config.repos[repoDir], { treePath: repo.path, changed: changedSinceLast(git, repo), logPath: log });
+        const check = repoTypecheck(asChild(runSetup, held), config.repos[repoDir], { treePath: repo.path, changed: changedSinceLast(git, repo), logPath: log });
         if (check.ran && !check.ok) return refusedForTypecheck(repoDir, log, check);
       }
       return null;

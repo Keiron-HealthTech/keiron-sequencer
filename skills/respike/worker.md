@@ -28,7 +28,9 @@ prints one JSON object on stdout; read its `action`.
   Other workers share this machine, and `check` waits for a free slot. It
   runs the argv in your track's first open tree unless `--cwd <repoDir>`
   names the repo, so pass `--cwd` whenever more than one tree is open; it
-  exits with the command's own exit code.
+  exits with the command's own exit code. It stops a command that runs past
+  `--timeout-ms` (600000 by default) and exits 124; the command runs as the
+  slot's child, so the slot stays held while it runs.
 - Work only your track: never switch tracks yourself, never start a card the
   CLI did not hand you, never run another track's commands.
 
@@ -58,7 +60,7 @@ kills mid-check reports nothing: run it again.
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs next --track <id> --project <project ref>
 node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs tree <repoDir> --track <id> --project <project ref>
-node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs check --track <id> [--cwd <repoDir>] --project <project ref> -- <argv>...
+node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs check --track <id> [--cwd <repoDir>] [--timeout-ms <n>] --project <project ref> -- <argv>...
 node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs candidates --track <id> [--repo <repoDir>] --project <project ref>
 node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs fixup --track <id> --fixes <CARD>[,<CARD>] --slug <kebab-slug> --note "<English>" --repo <repoDir> [--allow <kind>:<path>]... --project <project ref> -- <path>...
 node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs notes-template <CARD> --track <id> --project <project ref>
@@ -235,3 +237,6 @@ before it says so:
 - **Exit 7**: usage unmeasured while a token cap is set.
 - **Exit 8**: the typecheck failed at `end`; nothing was written.
 - **Exit 75**: busy; run the same command again.
+- **Exit 124**: at `check`, the command ran past `--timeout-ms` and was
+  stopped. Report it; rerun with a larger `--timeout-ms` only when the
+  command is known to need it.

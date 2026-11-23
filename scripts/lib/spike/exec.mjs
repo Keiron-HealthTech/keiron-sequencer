@@ -53,9 +53,14 @@ export function ghRunner({ spawn = spawnSync, env = process.env } = {}) {
 
 const isArgv = argv => Array.isArray(argv) && argv.length > 0 && argv.every(a => typeof a === 'string' && a.length > 0);
 
+// The shell writes its own pid, then exec makes the command that very process: the pid file names the command itself.
+const RECORD_PID = 'echo $$ > "$0"; exec "$@"';
+
+// childPidFile: a check slot's pid file, so the slot stays held while the command runs even if the caller is killed.
 export function setupRunner({ spawn = spawnSync, env = process.env } = {}) {
-  return (argv, { cwd, timeoutMs } = {}) => {
-    if (!isArgv(argv)) throw new Error('a setup command must be a non-empty argv array of strings');
+  return (given, { cwd, timeoutMs, childPidFile } = {}) => {
+    if (!isArgv(given)) throw new Error('a setup command must be a non-empty argv array of strings');
+    const argv = childPidFile ? ['sh', '-c', RECORD_PID, childPidFile, ...given] : given;
     const r = spawn(argv[0], argv.slice(1), { cwd, env, encoding: 'utf8', shell: false, timeout: timeoutMs, maxBuffer: MAX_BUFFER });
     if (r.error) throw r.error;
     return { status: r.status, stdout: r.stdout, stderr: r.stderr };

@@ -60,9 +60,10 @@ subagent per track. Never a subagent per card, no headless runs.
 - No production DB writes. No patient data in logs, not even masked.
 - Run heavy commands (install, build, type-check, lint, tests) one at a time,
   with the target repo's own limits, and only through `check`:
-  `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs check --track <id> [--cwd <repoDir>] [--project <project ref>] -- <argv>...`
+  `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs check --track <id> [--cwd <repoDir>] [--timeout-ms <n>] [--project <project ref>] -- <argv>...`
   runs the argv in the track's first open tree (`--cwd` picks a repo) once a
-  check slot is free, and exits with the command's exit code. Workers share
+  check slot is free, and exits with the command's exit code, or 124 when the
+  command ran past `--timeout-ms` (600000 by default) and was stopped. Workers share
   the machine: never run a heavy command directly.
 - Every bash fence below runs only `node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs …`
   or `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs …`.

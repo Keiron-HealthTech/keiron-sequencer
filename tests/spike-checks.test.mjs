@@ -53,6 +53,20 @@ test('a slot held by a dead pid is free', async () => {
   assert.equal(existsSync(join(dir, 'checks', '0.lock')), false);
 });
 
+test('a slot whose holder died while its heavy command still runs stays held; once both are gone it is free and the old pid file goes', async () => {
+  const dir = slotDir();
+  mkdirSync(join(dir, 'checks'));
+  writeFileSync(join(dir, 'checks', '0.lock'), '4242\nold command\n');
+  writeFileSync(join(dir, 'checks', '0.lock.child'), '4343\n');
+  let ran = false;
+  const held = await withCheckSlot(dir, { slots: 1, command: 'new', pid: 7, pollMs: 5, waitMs: 30, isAlive: p => p !== 4242 }, () => { ran = true; });
+  assert.equal(held.busy, true);
+  assert.equal(ran, false);
+  const freed = await withCheckSlot(dir, { slots: 1, command: 'new', pid: 7, waitMs: 0, isAlive: p => ![4242, 4343].includes(p) }, ({ child }) => existsSync(child));
+  assert.deepEqual(freed, { busy: false, value: false });
+  assert.deepEqual(readdirSync(join(dir, 'checks')), []);
+});
+
 test('a wait past waitMs returns busy and runs nothing', async () => {
   const dir = slotDir();
   mkdirSync(join(dir, 'checks'));
@@ -155,4 +169,22 @@ test('next answers busy with exit 75 when a replay entry cannot get a slot', asy
   assert.equal(JSON.parse(r.stdout).action, 'busy');
   assert.equal(stateText(dir), before);
   assert.equal(existsSync(join(dir, 'trees')), false);
+});
+
+test('check runs its command as the slot\'s child: the pid file next to the slot names it while it runs and goes after', async () => {
+  const { fixture, deps } = await openedFixture();
+  const child = join(activeRunDir(fixture.home), 'checks', '0.lock.child');
+  const r = await run(['check', '--', 'sh', '-c', 'cat "$0"; echo $$', child], deps);
+  assert.equal(r.code, 0, r.stderr);
+  const [recorded, own] = r.stdout.trim().split('\n');
+  assert.equal(recorded, own);
+  assert.equal(existsSync(child), false);
+});
+
+test('check stops a command that runs past --timeout-ms and exits 124', async () => {
+  const { deps } = await openedFixture();
+  const r = await run(['check', '--timeout-ms', '200', '--', 'sleep', '5'], deps);
+  assert.equal(r.code, 124);
+  assert.match(r.stderr, /timed out after 200 ms/);
+  assert.equal((await run(['check', '--timeout-ms', 'soon', '--', 'true'], deps)).code, 2);
 });
