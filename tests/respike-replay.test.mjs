@@ -1,13 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { cardSizes } from '../scripts/lib/patch-stats.mjs';
 import { serializeRecord, validateRecord } from '../scripts/lib/record.mjs';
 import { TRIAL_DIR } from '../scripts/lib/spike/home.mjs';
 import { verdict } from '../scripts/lib/records.mjs';
 import { parseCardPatchName } from '../scripts/lib/spike/snapshot.mjs';
-import { fakeSetup, makeBareOrigin, makeRepo, sandboxGit } from './helpers/git-sandbox.mjs';
+import { fakeSetup, makeBareOrigin, makeRepo, SANDBOX_ENV, sandboxGit } from './helpers/git-sandbox.mjs';
 import { guardNetwork } from './helpers/no-network.mjs';
 import { appendTranscript, usageEntry } from './helpers/spike-fixture.mjs';
 import { A, B, issue, linePatch, notes, OLD_RUN, oldRecord, PATCH_A, PROJECT_URL, SLUG, respikeFixture, walk } from './helpers/respike-fixture.mjs';
@@ -534,4 +536,84 @@ test('a replay that fails typecheck turns into a spike with reason typecheck', a
   assert.deepEqual(walk(join(dir, 'patches')), []);
   assert.equal(recordText(f, A), before);
   assert.match(readFileSync(join(dir, 'logs', 'typecheck-backend.log'), 'utf8'), /tc src\/list\.js/);
+});
+
+const F = 'CRM-8';
+const PATCH_F = 'backend/00008-new.patch';
+const SPIKE = fileURLToPath(new URL('../scripts/spike.mjs', import.meta.url));
+
+// Three ancestors of B replay in order, A then D then F, each type-checked over the paths it changed.
+async function threeReplays() {
+  const blocksB = { relations: { nodes: [{ type: 'blocks', relatedIssue: { identifier: B } }] } };
+  const f = respikeFixture({ issues: ([a, b]) => [a, b, issue(D, blocksB), issue(F, blocksB)] });
+  for (const [card, patch, file, at] of [[D, PATCH_D, 'd', '10:40'], [F, PATCH_F, 'f', '10:45']]) {
+    writeFileSync(join(f.home, SLUG, 'runs', OLD_RUN, 'patches', patch), NEW_FILE(`src/${file}.js`, `export const ${file} = 1`));
+    writeFileSync(join(f.dataDir, SLUG, `${card}.json`), serializeRecord(oldRecord(card, { spikedAt: `2026-11-01T${at}:00.000Z`, patches: [patch] })));
+  }
+  const config = JSON.parse(readFileSync(join(f.home, 'config.json'), 'utf8'));
+  config.repos.backend.spikeTypecheck = ['tc', '{changed}'];
+  writeFileSync(join(f.home, 'config.json'), JSON.stringify(config));
+  const { runId, dir, plan } = await begin(f, [PROJECT_URL, '--cards', B]);
+  assert.deepEqual(plan.order.map(o => [o.key, o.mode]), [[A, 'replay'], [D, 'replay'], [F, 'replay'], [B, 'spike']]);
+  return { f, runId, dir, records: { [D]: recordText(f, D), [F]: recordText(f, F) } };
+}
+
+// During D's check: the run moved, so next is stale; A stays adopted, D's tree change is undone and nothing of D is written.
+function assertRolledBackAtD({ f, runId, dir, records }, r) {
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(json(r), { action: 'stale', track: 't1' });
+  const state = readState(dir);
+  assert.deepEqual([state.cards[A].status, state.cards[A].replay.status], ['done', 'replayed']);
+  assert.equal(JSON.parse(recordText(f, A)).replayed.runId, runId);
+  assert.deepEqual([D, F].map(k => state.cards[k].status), ['pending', 'pending']);
+  assert.deepEqual([recordText(f, D), recordText(f, F)], [records[D], records[F]]);
+  assert.deepEqual(walk(join(dir, 'patches')), [PATCH_A]);
+  const repo = state.tracks.t1.repos.backend;
+  assertTreeClean(f, repo);
+  assert.equal(existsSync(join(repo.path, 'src', 'd.js')), false);
+}
+
+const checkAt = (changed, act) => (argv, { cwd } = {}) => {
+  if (argv.join(' ') === `tc ${changed}`) act(cwd);
+  return { status: 0, stdout: '', stderr: '' };
+};
+
+test('a pause that lands during the second of three replays keeps the first, rolls the second back, and next finishes the replay after begin', async () => {
+  const fx = await threeReplays();
+  const { f, dir } = fx;
+  let paused = null;
+  const pausing = checkAt('src/d.js', () => {
+    paused ??= spawnSync(process.execPath, [SPIKE, 'pause'], {
+      env: { ...SANDBOX_ENV, HOME: f.userHome, KEIRON_SEQUENCER_HOME: f.home, KEIRON_SEQUENCER_TRANSCRIPTS: f.scratch }, encoding: 'utf8',
+    });
+  });
+  const r = await f.spike(['next'], { runSetup: pausing });
+  assert.equal(paused?.status, 0, paused?.stderr);
+  assertRolledBackAtD(fx, r);
+  assert.equal(readState(dir).status, 'paused');
+
+  assert.equal((await f.spike(['begin', PROJECT_URL])).code, 0);
+  const out = json(await f.spike(['next']));
+  assert.deepEqual(out.replayed, [{ card: D, status: 'replayed', patches: [PATCH_D] }, { card: F, status: 'replayed', patches: [PATCH_F] }]);
+  assert.equal(out.card, B);
+  assert.deepEqual(walk(join(dir, 'patches')), [PATCH_A, PATCH_D, PATCH_F]);
+  assertTreeClean(f, readState(dir).tracks.t1.repos.backend);
+});
+
+test('a generation bump during a replay entry\'s type-check rolls that entry back, and next replays it again', async () => {
+  const fx = await threeReplays();
+  const { f, dir } = fx;
+  let bumped = false;
+  const bumping = checkAt('src/d.js', () => {
+    if (bumped) return;
+    bumped = true;
+    const state = readState(dir);
+    state.tracks.t1.generation += 1;
+    writeFileSync(join(dir, 'run.json'), JSON.stringify(state));
+  });
+  assertRolledBackAtD(fx, await f.spike(['next'], { runSetup: bumping }));
+
+  const out = json(await f.spike(['next']));
+  assert.deepEqual(out.replayed.map(o => [o.card, o.status]), [[D, 'replayed'], [F, 'replayed']]);
+  assert.equal(out.card, B);
 });

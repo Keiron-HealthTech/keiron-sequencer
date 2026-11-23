@@ -10,7 +10,7 @@ import { deriveRepo, mergeRiskAreas } from './lib/spike/derive.mjs';
 import { allowedRepos, loadConfig } from './lib/spike/config.mjs';
 import { ghRunner, gitRunner, setupRunner } from './lib/spike/exec.mjs';
 import { dataInRepoWarnings, REPO_DATA_DIR } from './lib/records.mjs';
-import { assertHomeOutsideWorkTree, dataDirFor, displayData, runDir, runIdAt, sequencerHome, withLock, writeJsonAtomic } from './lib/spike/home.mjs';
+import { assertHomeOutsideWorkTree, dataDirFor, displayData, runDir, runIdAt, sequencerHome, withLock, writeAtomic, writeJsonAtomic } from './lib/spike/home.mjs';
 import { existingPrs, spikeOrder } from './lib/spike/order.mjs';
 import { LIMIT_FLAGS, limitsFrom, sessionsFrom } from './lib/spike/limits.mjs';
 import { isSlug, prunableSlugs, pruneRuns } from './lib/spike/prune.mjs';
@@ -22,7 +22,7 @@ import {
   activeRunFor, activeRuns, allRepos, capReached, closeOpenExecutions, createRun, executionSpend, issueMark, latestRun, noteStartTrees, openCardWindow,
   openExecution, readState, saveState, timeBoxFor, trackIdOf, trackOf, unsettledWindows,
 } from './lib/spike/state.mjs';
-import { applyPrDiff, assertLastTree, checkTree, guardTree, openTree, rebuildTree, teardownTrees, touchedCheckouts } from './lib/spike/trees.mjs';
+import { applyPrDiff, assertLastTree, checkTree, discardTree, guardTree, openTree, rebuildTree, teardownTrees, touchedCheckouts } from './lib/spike/trees.mjs';
 import { bindSession, lastEntryAt, sessionFiles, transcriptsRoot, weighted, windowUsage } from './lib/spike/usage-window.mjs';
 
 const USAGE = [
@@ -93,11 +93,23 @@ const movedSince = (state, before, trackId) => state.tracks[trackId].generation 
 
 // The second locked section of a command whose heavy work ran outside the lock: it writes onto the state read here, never
 // onto the copy the work started from, and nothing at all if the run or the track moved since section 1 read before.
-function relock(dir, lock, trackId, before, fn) {
+// onStale puts back what the heavy work did to the trees, so they match the state again.
+function relock(dir, lock, trackId, before, fn, onStale = () => {}) {
   return withLock(dir, () => {
     const state = readState(dir);
-    return movedSince(state, before, trackId) ? ok({ action: 'stale', track: trackId }) : fn(state);
+    if (!movedSince(state, before, trackId)) return fn(state);
+    onStale();
+    return ok({ action: 'stale', track: trackId });
   }, lock);
+}
+
+// A tree the work made is removed; a tree it moved past its last snapshot goes back to it.
+function rollBackTrees(git, before, work, trackId) {
+  const was = before.tracks[trackId].repos;
+  for (const [repoDir, repo] of Object.entries(work.tracks[trackId].repos)) {
+    if (!was[repoDir]) discardTree(git, repo);
+    else if (was[repoDir].last && repo.last !== was[repoDir].last) git(['read-tree', '-m', '-u', repo.last, was[repoDir].last], { cwd: repo.path });
+  }
 }
 
 // Only the entries the heavy work changed are copied: the others keep what the re-read state holds, which may be newer.
@@ -292,23 +304,38 @@ async function next(args, { home, now, gh, git, transcripts, dataDir, sleep, run
     refusedNext(state) || !replayAhead(state) ? { result: await nextCard(dir, state, deps) } : { dir, state }
   ), lock);
   if (first.result) return first.result;
-  const { dir, state } = first;
-  const trackId = trackIdOf(state);
-  const work = structuredClone(state);
+  const { dir } = first;
   const replayed = [];
+  for (let before = first.state; ;) {
+    const step = await replayStep(dir, before, replayed, { ...deps, lock });
+    if (!step.state) return step.result ?? step;
+    before = step.state;
+  }
+}
+
+// One replay entry: its tree work outside the lock, then a short locked section keeps it (state, patches, record) or, if the
+// run moved meanwhile, undoes it. Entries kept before a stale one stay kept.
+async function replayStep(dir, before, replayed, { lock, ...deps }) {
+  const { now, git } = deps;
+  const trackId = trackIdOf(before);
+  const work = structuredClone(before);
+  let entry = null;
   let failure = null;
   try {
-    replayPending(dir, work, deps, replayed);
+    entry = replayNext(dir, work, deps);
   } catch (e) {
     failure = e;
   }
-  return relock(dir, lock, trackId, state, fresh => {
-    adoptReplay(fresh, state, work, trackId);
+  return relock(dir, lock, trackId, before, async fresh => {
+    adoptReplay(fresh, before, work, trackId);
+    for (const w of entry?.writes ?? []) writeAtomic(w.path, w.text);
     saveState(dir, fresh, now());
+    if (entry) replayed.push(entry.outcome);
     if (failure && !failure.setup) throw failure;
-    if (failure) return { ...ok({ action: 'setup-failed', ...failure.setup, replayed }), code: 1, stderr: lines([failure.message]) };
-    return nextCard(dir, fresh, deps, replayed);
-  });
+    if (failure) return { result: { ...ok({ action: 'setup-failed', ...failure.setup, replayed }), code: 1, stderr: lines([failure.message]) } };
+    if (refusedNext(fresh) || !replayAhead(fresh)) return { result: await nextCard(dir, fresh, deps, replayed) };
+    return { state: fresh };
+  }, () => rollBackTrees(git, before, work, trackId));
 }
 
 const pendingCard = state => state.plan.order.find(k => state.cards[k].status !== 'done');
@@ -387,14 +414,12 @@ function prunePendingWarnings(state, removed) {
   return warnings.length ? { warnings } : {};
 }
 
-// Replay entries take no window and no box: each is applied in order until a card to spike comes up. The state is not
-// saved here: out collects the outcomes as they come, and the caller saves what the entries done before a throw changed.
-function replayPending(dir, state, { now, git, dataDir, runSetup, config }, out = []) {
-  for (let card = pendingCard(state); card && state.plan.cards[card].mode === 'replay'; card = pendingCard(state)) {
-    out.push(...replayEntry(git, state, card, { dir, config: config(), runSetup, dataDir, now }));
-    if (state.plan.cards[card].mode === 'spike') replanAfterTurn(state, { dataDir }, card);
-  }
-  return out;
+// Replay entries take no window and no box: next applies them one at a time, in order, until a card to spike comes up.
+function replayNext(dir, state, { now, git, dataDir, runSetup, config }) {
+  const card = pendingCard(state);
+  const entry = replayEntry(git, state, card, { dir, config: config(), runSetup, dataDir, now });
+  if (state.plan.cards[card].mode === 'spike') replanAfterTurn(state, { dataDir }, card);
+  return entry;
 }
 
 async function completeRun(dir, state, settled, { home, now, git, dataDir, sleep }, respike = {}) {
@@ -461,7 +486,7 @@ async function tree(args, { home, now, git, gh, runSetup, lock }) {
     const pr = applyCardPr(fresh, repoDir, { config: () => config, gh, git, dir });
     saveState(dir, fresh, now());
     return ok({ repo: repoDir, path: track.repos[repoDir].path, ...pr, touchedCheckouts: touchedCheckouts(fresh) });
-  });
+  }, () => rollBackTrees(git, state, work, trackId));
 }
 
 async function candidates(args, { home, git, lock }) {

@@ -3,9 +3,9 @@ import { basename, join } from 'node:path';
 import { exitError } from '../cli.mjs';
 import { replanReplay } from '../respike/replay-plan.mjs';
 import { cardSizes } from '../patch-stats.mjs';
-import { replayedRecord, writeReplayedRecord } from './build-record.mjs';
+import { replayedRecord, replayedRecordFile } from './build-record.mjs';
 import { deriveRepo } from './derive.mjs';
-import { runDir, trialPatchRoot, writeAtomic } from './home.mjs';
+import { runDir, trialPatchRoot } from './home.mjs';
 import { scanPatch } from './secrets.mjs';
 import { cardPatchName, DIFF, snapshot } from './snapshot.mjs';
 import { trackIdOf } from './state.mjs';
@@ -66,12 +66,13 @@ function mergedTree(git, repoDir, repo, patches, { index, pathOf }) {
 function turn(state, card, at, status, detail) {
   state.plan.cards[card].mode = 'spike';
   state.cards[card].replay = { status, at, applied: [], folded: [], ...detail };
-  return { card, status, patches: [] };
+  return { outcome: { card, status, patches: [] }, writes: [] };
 }
 
 const rootOf = (state, from) => (from === 'trial' ? trialPatchRoot(state.home, state.project.slug) : join(runDir(state.home, state.project.slug, from), 'patches'));
 
 // Every repo of the unit is merged before any is moved, so a unit that fails anywhere leaves every repo as it was.
+// No patch or record is written here: they come back as writes, for the caller to make once it keeps the entry.
 export function replayEntry(git, state, card, { dir, config, runSetup, dataDir, now }) {
   const entry = state.plan.respike.replay[card];
   const { slug } = state.project;
@@ -85,7 +86,7 @@ export function replayEntry(git, state, card, { dir, config, runSetup, dataDir, 
     const repo = openTree(git, state, { trackId: trackIdOf(state), repoDir, repo: config.repos[repoDir], dir, runSetup });
     assertSnapshotted(git, repoDir, repo);
     const result = mergedTree(git, repoDir, repo, patches, { index: join(dir, 'tmp', `replay-${repoDir}.index`), pathOf });
-    if (result.conflict) return [turn(state, card, at, 'conflict', { conflict: result.conflict })];
+    if (result.conflict) return turn(state, card, at, 'conflict', { conflict: result.conflict });
     merged.push({ repoDir, repo, patches, tree: result.tree });
   }
 
@@ -93,7 +94,7 @@ export function replayEntry(git, state, card, { dir, config, runSetup, dataDir, 
   const nameIn = repoDir => `${repoDir}/${cardPatchName(card, record.origin)}`;
   const hits = merged.filter(m => m.tree !== m.repo.last)
     .flatMap(({ repoDir, repo, tree }) => scanPatch(git([...DIFF, repo.last, tree], { cwd: repo.path })).map(h => ({ patch: nameIn(repoDir), ...h })));
-  if (hits.length) return [turn(state, card, at, 'secret', { hits })];
+  if (hits.length) return turn(state, card, at, 'secret', { hits });
 
   // Each moved tree is type-checked over the paths the replay changed; one failure puts every moved tree back and the
   // entry is spiked instead, so a replay never builds on an ancestor that no longer type-checks.
@@ -106,40 +107,44 @@ export function replayEntry(git, state, card, { dir, config, runSetup, dataDir, 
     const check = repoTypecheck(runSetup, config.repos[m.repoDir], { treePath: m.repo.path, changed, logPath: log });
     if (check.ran && !check.ok) {
       for (const x of moved) git(['read-tree', '-m', '-u', x.tree, x.repo.last], { cwd: x.repo.path });
-      return [turn(state, card, at, 'typecheck', { typecheck: { repo: m.repoDir, log } })];
+      return turn(state, card, at, 'typecheck', { typecheck: { repo: m.repoDir, log } });
     }
   }
 
   const applied = merged.flatMap(m => m.patches);
-  const fresh = [];
+  const texts = new Map();
   for (const { repoDir, repo } of moved) {
     const snap = snapshot(git, repo);
     if (!snap) continue;
     const name = nameIn(repoDir);
-    writeAtomic(join(dir, 'patches', name), snap.patch);
+    texts.set(name, snap.patch);
     repo.last = snap.tree;
     repo.log.push({ name: basename(name, '.patch'), tree: snap.tree, stat: snap.stat });
-    fresh.push(name);
   }
+  const fresh = [...texts.keys()];
 
   if (!fresh.length) {
     Object.assign(state.cards[card], { status: 'done', patches: [], replay: { status: 'empty', at, applied, folded: [] } });
-    return [{ card, status: 'empty', patches: [] }];
+    return { outcome: { card, status: 'empty', patches: [] }, writes: [] };
   }
   // Every name the record holds now is folded, so a later replay never looks one of them up again.
   const folded = [...new Set([...record.refs.patches, ...(record.fixups?.received ?? []).map(f => f.patch)])].sort(compare);
   const before = { size: record.size ?? null, riskAreas: record.riskAreas ?? null, newPaths: record.novelty?.newPaths ?? null };
-  writeReplayedRecord(dataDir, slug, replayedRecord(record, {
-    ...measured(git, state, card, fresh, { config, dir }),
+  const recordFile = replayedRecordFile(dataDir, slug, replayedRecord(record, {
+    ...measured(git, state, card, texts, { config }),
     patches: fresh,
     replayed: { at, runId: state.runId, fromRunId: entry.from === 'trial' ? null : entry.from, folded },
   }));
   Object.assign(state.cards[card], { status: 'done', patches: fresh, replay: { status: 'replayed', at, applied, folded, before } });
-  return [{ card, status: 'replayed', patches: fresh }];
+  return {
+    outcome: { card, status: 'replayed', patches: fresh },
+    writes: [...fresh.map(name => ({ path: join(dir, 'patches', name), text: texts.get(name) })), recordFile],
+  };
 }
 
 // Each fresh patch is measured between the tree before it and the tree it produced, as the repo's log records them.
-function measured(git, state, card, fresh, { config, dir }) {
+function measured(git, state, card, texts, { config }) {
+  const fresh = [...texts.keys()];
   const dirs = [...new Set(fresh.map(n => n.split('/')[0]))];
   const { repos } = state.tracks[trackIdOf(state)];
   const patchMap = {
@@ -147,7 +152,7 @@ function measured(git, state, card, fresh, { config, dir }) {
     repos: Object.fromEntries(dirs.map(d => [d, repos[d].name])),
     patches: Object.fromEntries(fresh.map(n => [n, { kind: 'card', cards: [card] }])),
   };
-  const size = cardSizes(patchMap, n => readFileSync(join(dir, 'patches', n), 'utf8'))[card];
+  const size = cardSizes(patchMap, n => texts.get(n))[card];
   const derived = fresh.map(name => {
     const [repoDir] = name.split('/');
     const repo = repos[repoDir];

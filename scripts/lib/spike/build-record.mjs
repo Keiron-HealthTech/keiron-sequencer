@@ -193,10 +193,15 @@ export function replayedRecord(record, { size, derived, patches, replayed }) {
 }
 
 // A replay keeps the card's record in place: it is the same spike, now pointing at the run that replayed it.
-export function writeReplayedRecord(dataDir, slug, record) {
+export function replayedRecordFile(dataDir, slug, record) {
   const errors = validateRecord(record);
   if (errors.length) throw new Error(`the replayed record for ${record.card} is invalid: ${errors.join('; ')}`);
-  writeAtomic(join(dataDir, slug, `${record.card}.json`), serializeRecord(record));
+  return { path: join(dataDir, slug, `${record.card}.json`), text: serializeRecord(record) };
+}
+
+export function writeReplayedRecord(dataDir, slug, record) {
+  const { path, text } = replayedRecordFile(dataDir, slug, record);
+  writeAtomic(path, text);
   return `${displayData(dataDir, slug)}/${record.card}.json`;
 }
 

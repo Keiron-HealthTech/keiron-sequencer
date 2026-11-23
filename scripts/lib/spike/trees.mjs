@@ -143,6 +143,12 @@ export function openTree(git, state, { trackId, repoDir, repo, dir, runSetup }) 
   return Object.assign(record, { baseTree, last: baseTree, status: 'open' });
 }
 
+// A tree no state records, made by a command that went stale: it is removed again, so the next open can make it.
+export function discardTree(git, repo) {
+  if (repo.kind === 'worktree') git(['worktree', 'remove', '--force', repo.path], { cwd: repo.source });
+  rmSync(repo.path, { recursive: true, force: true });
+}
+
 export const touchedCheckouts = state => allRepos(state)
   .filter(([, r]) => r.worktreeConfigSet)
   .map(([repo, r]) => ({ repo, checkout: r.source }));

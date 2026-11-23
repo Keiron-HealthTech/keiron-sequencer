@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run } from '../scripts/spike.mjs';
 import { acquireLock } from '../scripts/lib/spike/home.mjs';
-import { fakeSetup, SANDBOX_ENV, tempDir } from './helpers/git-sandbox.mjs';
+import { fakeSetup, SANDBOX_ENV, sandboxGit, tempDir } from './helpers/git-sandbox.mjs';
 import { guardNetwork } from './helpers/no-network.mjs';
 import { notes, PROJECT_URL, SLUG, spikeFixture, walk } from './helpers/spike-fixture.mjs';
 
@@ -21,6 +21,7 @@ function lockDir() {
 }
 
 const holder = dir => readFileSync(join(dir, 'run.lock'), 'utf8');
+const worktrees = cwd => sandboxGit(['worktree', 'list', '--porcelain'], { cwd }).split('\n').filter(l => l.startsWith('worktree ')).map(l => l.slice(9));
 
 test('a second caller waits for the lock and then gets it', async () => {
   const dir = lockDir();
@@ -176,4 +177,32 @@ test('an abandon that lands during tree\'s setup makes tree stale, and the tree 
   const state = stateOf(dir);
   assert.equal(state.status, 'abandoned');
   assert.equal(state.tracks.t1.repos.backend.status, 'removed');
+});
+
+test('a pause that lands during the first tree\'s setup makes tree stale and removes the worktree it made; tree works after begin', async () => {
+  const fixture = spikeFixture({ config: config => ({ ...config, repos: { backend: { ...config.repos.backend, setup: [['make', 'deps']] } } }) });
+  const { deps, home, scratch, repo } = fixture;
+  const { runId } = JSON.parse((await run(['begin', PROJECT_URL], deps)).stdout);
+  const dir = join(home, SLUG, 'runs', runId);
+  fixture.at('2026-11-10T10:01:00.000Z');
+  assert.equal((await run(['next'], deps)).code, 0);
+  let paused = null;
+  const pausing = () => {
+    paused ??= spawnSync(process.execPath, [SPIKE, 'pause'], {
+      env: { ...SANDBOX_ENV, HOME: scratch, KEIRON_SEQUENCER_HOME: home, KEIRON_SEQUENCER_TRANSCRIPTS: scratch }, encoding: 'utf8',
+    });
+    return { status: 0, stdout: '', stderr: '' };
+  };
+  const r = await run(['tree', 'backend'], { ...deps, runSetup: pausing });
+  assert.equal(paused?.status, 0, paused?.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), { action: 'stale', track: 't1' });
+  assert.deepEqual(worktrees(repo.dir), [repo.dir]);
+  assert.equal(existsSync(join(dir, 'trees', 't1', 'backend')), false);
+  assert.deepEqual(stateOf(dir).tracks.t1.repos, {});
+
+  assert.equal((await run(['begin', PROJECT_URL], deps)).code, 0);
+  const again = await run(['tree', 'backend'], deps);
+  assert.equal(again.code, 0, again.stderr);
+  assert.deepEqual(worktrees(repo.dir), [repo.dir, join(dir, 'trees', 't1', 'backend')]);
+  assert.equal(stateOf(dir).tracks.t1.repos.backend.status, 'open');
 });
