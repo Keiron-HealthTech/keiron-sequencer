@@ -259,14 +259,16 @@ them. Ask the user mid-card only on real conflicts.
 
 ### Several tracks
 
-A spike run begun with `--workers` above 1 is split into its tracks and is
-driven exactly like a respike run's tracks: the coordinator loop of
+A spike run begun with `--workers` above 1 is split into its connected
+tracks; check with `tracks`. Only when `tracks` lists more than one track is
+the run driven exactly like a respike run's tracks: the coordinator loop of
 /keiron-sequencer:respike Step 6: The card loop, with
 `${CLAUDE_PLUGIN_ROOT}/skills/respike/worker.md` as the worker brief (one
 worker subagent per track, crossings, then the combined check), and the run
-ends with `combine`, never at `next`. `--workers 1` (the default) keeps the
-inline card loop above: one track, worked by the main session, completed at
-`next`.
+ends with `combine`, never at `next`. A run with one track keeps the inline
+card loop above and completes at `next`, whatever `--workers` says: a
+connected map gives one track, and `combine` refuses it. `--workers 1` (the
+default) always gives one track.
 
 ## Step 3: Completion, pause and cleanup
 

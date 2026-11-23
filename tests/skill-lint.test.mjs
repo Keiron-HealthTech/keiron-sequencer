@@ -409,7 +409,8 @@ test('spike: a run begun with --workers above 1 is driven like a respike run\'s 
   const flatSection = section.replace(/\s+/g, ' ');
   for (const anchor of [
     'begun with `--workers` above 1', 'exactly like a respike run\'s tracks', '/keiron-sequencer:respike Step 6: The card loop',
-    '`${CLAUDE_PLUGIN_ROOT}/skills/respike/worker.md`', 'as the worker brief', 'ends with `combine`', '`--workers 1` (the default)', 'keeps the inline card loop above',
+    '`${CLAUDE_PLUGIN_ROOT}/skills/respike/worker.md`', 'as the worker brief', 'ends with `combine`', '`--workers 1` (the default)',
+    'when `tracks` lists more than one track', 'A run with one track keeps the inline card loop above and completes at `next`, whatever `--workers` says',
   ]) assert.ok(flatSection.includes(anchor), `the several-tracks section does not say ${JSON.stringify(anchor)}`);
   assert.ok(existsSync(new URL('skills/respike/worker.md', ROOT)), 'the worker brief it names does not exist');
   assert.ok(skills.respike.includes('\n## Step 6: The card loop\n'), 'the respike step it names does not exist');
