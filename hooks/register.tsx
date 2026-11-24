@@ -17,8 +17,10 @@ const snapshot = atom({ plugin: 'keiron-sequencer', key: 'snapshot' } as const, 
 // The card the last start plan showed, and the card this session is on once start's branch step ran.
 const planned = atom({ plugin: 'keiron-sequencer', key: 'planned' } as const, null, { shape: 'card-2' })
 const card = atom({ plugin: 'keiron-sequencer', key: 'card' } as const, null, { shape: 'card-2' })
+// Set once this session runs the spike CLI. The run state is shared by every session, so only its owner shows it unasked.
+const owner = atom({ plugin: 'keiron-sequencer', key: 'owner' } as const, null, { shape: 'owner-1' })
 
-type Dollar = Pick<CoreEngineInterface, 'state' | 'ui' | 'process' | 'fs' | 'env'>
+type Dollar = Pick<CoreEngineInterface, 'state' | 'ui' | 'process' | 'fs' | 'env' | 'plugin'>
 
 type StatusJson = {
   runId?: string
@@ -131,6 +133,8 @@ type PackJson = { questions?: { answer?: unknown }[] }
 
 const CARD = String.raw`([A-Z][A-Z0-9]*-\d+)`
 const START_CALL = new RegExp(String.raw`scripts/start\.mjs["']?\s+(?:(plan|branch|fetch|baseline|move)\s+)?` + CARD)
+const SPIKE_CALL = /scripts\/(?:re)?spike\.mjs["']?(?!\s+status\b)/
+export const isSpikeCall = (command: string) => SPIKE_CALL.test(command)
 const PACKS_CALL = /scripts\/packs\.mjs["']?\s+(answer|draft)\b/
 
 export function startCallOf(command: string) {
@@ -263,7 +267,8 @@ const parsed = <T,>(text: string | undefined): T | null => {
 async function paint($: Dollar) {
   const snap = await read($, snapshot)
   const on = await read($, card)
-  $.ui.status(snap?.isRunning ? `🚃 ${snap.done}/${snap.total} · ${snap.current ?? 'between stations'}` : on ? cardLine(on) : undefined)
+  const isOwner = (await read($, owner)) !== null
+  $.ui.status(isOwner && snap?.isRunning ? `🚃 ${snap.done}/${snap.total} · ${snap.current ?? 'between stations'}` : on ? cardLine(on) : undefined)
 }
 
 async function readPack($: Dollar, c: CardStatus) {
@@ -331,27 +336,28 @@ async function checkBranch($: Dollar) {
   }
 }
 
+async function refresh($: Dollar) {
+  const snap = await poll($.plugin.root, argv => $.process.run(argv, { timeoutMs: 20_000 }), new Date().toISOString())
+  await update($, snapshot, () => snap)
+  try {
+    await checkBranch($)
+    await paint($)
+    const own = await read($, owner)
+    if (snap.isRunning && own && !own.hasOpened) {
+      await update($, owner, () => ({ hasOpened: true }))
+      void $.ui.open(OPEN)
+    }
+  } catch {
+    // The session can end between ticks; the next tick, if any, paints again.
+  }
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     await $.command.register({ name: 'spike-metro', description: 'Show the running spike as a metro line' })
-    let hasOpened = false
-    const refresh = async () => {
-      const snap = await poll($.plugin.root, argv => $.process.run(argv, { timeoutMs: 20_000 }), new Date().toISOString())
-      await update($, snapshot, () => snap)
-      try {
-        await checkBranch($)
-        await paint($)
-      } catch {
-        // The session can end between ticks; the next tick, if any, paints again.
-      }
-      if (snap.isRunning && !hasOpened) {
-        hasOpened = true
-        void $.ui.open(OPEN)
-      }
-    }
-    void refresh()
-    $.clock.every(POLL_MS, refresh)
+    void refresh($)
+    $.clock.every(POLL_MS, () => refresh($))
     return started
   })
 
@@ -360,8 +366,16 @@ export const register: Register = on => {
     const start = startCallOf(e.command)
     const isPacks = isPacksCall(e.command)
     const isPr = isPrCreate(e.command)
-    if (!start && !isPacks && !isPr) return next(e)
+    const isSpike = isSpikeCall(e.command)
+    if (!start && !isPacks && !isPr && !isSpike) return next(e)
     const ran = await next(e)
+    if (isSpike) {
+      await quietly(async () => {
+        if (await read($, owner)) return
+        await update($, owner, () => ({ hasOpened: false }))
+        void quietly(() => refresh($))
+      })
+    }
     if (ran.deny !== undefined || ran.isError) return ran
     await quietly(async () => {
       const stdout = (ran.result as { stdout?: string } | undefined)?.stdout

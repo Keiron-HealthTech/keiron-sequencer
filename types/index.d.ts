@@ -50,6 +50,7 @@ declare module 'claude-code' {
       snapshot: Shaped<Snapshot | null>
       planned: Shaped<CardStatus | null>
       card: Shaped<CardStatus | null>
+      owner: Shaped<{ hasOpened: boolean } | null>
     }
   }
 }

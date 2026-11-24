@@ -22,13 +22,17 @@ const BRANCH = { action: 'created', branch: 'dev/abc-7-restriction', base: 'orig
 
 type Seen = { status: (string | undefined)[]; outputs: Record<string, string>; files: Record<string, string> }
 
-function engine(on: any, { isError = false } = {}): Seen {
+function engine(on: any, { isError = false, spikeStatus = '' } = {}): Seen {
   const seen: Seen = { status: [], outputs: {}, files: {} }
   on('ui.status', (_: unknown, e: { text: string | undefined }) => (seen.status.push(e.text), { value: undefined }))
   on('clock.every', () => ({ value: {} }))
   on('command.register', (_: unknown, e: { name: string }) => ({ value: { command: e.name } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('process.run', () => ({ value: { exitCode: 1, stdout: '', stderr: 'no active spike run\n', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('process.run', () => ({
+    value: spikeStatus
+      ? { exitCode: 0, stdout: spikeStatus, stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
+      : { exitCode: 1, stdout: '', stderr: 'no active spike run\n', isStdoutTruncated: false, isStderrTruncated: false },
+  }))
   on('env.get', (_: unknown, e: { name: string }) => ({ value: e.name === 'HOME' ? '/home/dev' : undefined }))
   on('fs.read', (_: unknown, e: { path: string }) =>
     e.path in seen.files ? { value: seen.files[e.path] } : { error: new Error(`missing ${e.path}`) })
@@ -184,4 +188,16 @@ test('only the development workflows count as phases', () => {
   expect(stepOf('superpowers:finishing-a-development-branch')).toEqual({ flow: 'superpowers', phase: 'done' })
   expect(stepOf('superpowers:brainstorming')).toBeNull()
   expect(stepOf('keiron-sequencer:next')).toBeNull()
+})
+
+test('a spike run by another session leaves this session on its card line', async ($, on) => {
+  const status = { runId: 'r1', status: 'active', cards: { done: ['XYZ-1'], inProgress: ['XYZ-2'], pending: [] } }
+  const seen = engine(on, { spikeStatus: JSON.stringify(status) })
+  seen.outputs[`start.mjs plan ABC-7`] = JSON.stringify(PLAN)
+  seen.outputs[`start.mjs branch ABC-7`] = JSON.stringify(BRANCH)
+  await begin($)
+
+  await run($, `${START} plan ABC-7`)
+  await run($, `${START} branch ABC-7 --approve 1234abcd`)
+  expect(seen.status.at(-1)).toBe('ABC-7 · sdd · stacked on ABC-6 · 2 open decisions')
 })

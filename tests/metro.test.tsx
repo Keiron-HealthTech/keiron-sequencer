@@ -36,19 +36,29 @@ const OLD_NAME = new RegExp('mi' + 'kado', 'i')
 type Run = { exitCode: number; stdout: string; stderr: string }
 
 function engine(on: any, run: Run) {
-  const seen = { argvs: [] as string[][], opened: [] as { id: string; title: string; columns?: number }[], commands: [] as { name: string; description: string }[] }
+  const seen = { status: [] as (string | undefined)[], argvs: [] as string[][], opened: [] as { id: string; title: string; columns?: number }[], commands: [] as { name: string; description: string }[] }
   on('command.register', (_: unknown, e: { name: string; description: string }) => (seen.commands.push(e), { value: { command: e.name } }))
   on('ui.open', (_: unknown, e: { id: string; title: string }) => (seen.opened.push(e), { value: { isPlaced: true } }))
-  on('ui.status', () => ({ value: undefined }))
   on('clock.every', () => ({ value: {} }))
   on('process.run', (_: unknown, e: { argv: string[] }) => (seen.argvs.push([...e.argv]), { value: { ...run, isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('ui.status', (_: unknown, e: { text: string | undefined }) => (seen.status.push(e.text), { value: undefined }))
+  on('tool.call', () => ({ result: { stdout: '', stderr: '' } }))
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   return seen
 }
 
+const flush = async () => {
+  for (let i = 0; i < 20; i++) await Promise.resolve()
+}
+
+const runSpike = async ($: any, command = 'node /p/keiron-sequencer/scripts/respike.mjs begin') => {
+  await $.tool.call({ tool: 'Bash', command })
+  await flush()
+}
+
 async function start($: any) {
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
-  for (let i = 0; i < 20; i++) await Promise.resolve()
+  await flush()
 }
 
 test('a running respike draws as a metro line with the car on the current card', async ($, on) => {
@@ -100,6 +110,7 @@ test('with no plugin root nothing runs and the snapshot says why the status is n
 test('a run with no project name is titled keiron-sequencer, under the spike-metro pane and command', async ($, on) => {
   const seen = engine(on, { exitCode: 0, stdout: JSON.stringify({ ...STATUS, project: {} }), stderr: '' })
   await start($)
+  await runSpike($)
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: /🚇 keiron-sequencer/ })).toBeTruthy()
@@ -114,6 +125,7 @@ test('a run with no project name is titled keiron-sequencer, under the spike-met
 test('the pane asks for a narrow dock, and every line it draws fits in it', async ($, on) => {
   const seen = engine(on, { exitCode: 0, stdout: JSON.stringify(STATUS), stderr: '' })
   await start($)
+  await runSpike($)
 
   const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 40 }, surface: 'desktop' })
   for (const legend of [/● spiked/, /↻ re-spiked/]) {
@@ -122,4 +134,31 @@ test('the pane asks for a narrow dock, and every line it draws fits in it', asyn
   }
   await ui.unmount()
   expect(seen.opened.map(o => o.columns)).toEqual([40])
+})
+
+test('a session that did not run the spike neither opens the metro nor shows the run on its status line', async ($, on) => {
+  const seen = engine(on, { exitCode: 0, stdout: JSON.stringify(STATUS), stderr: '' })
+  await start($)
+  await runSpike($, 'node /p/keiron-sequencer/scripts/spike.mjs status')
+
+  expect(seen.opened).toEqual([])
+  expect(seen.status.filter(t => t?.startsWith('🚃'))).toEqual([])
+})
+
+test('the session that runs the spike CLI opens the metro once and shows the run on its status line', async ($, on) => {
+  const seen = engine(on, { exitCode: 0, stdout: JSON.stringify(STATUS), stderr: '' })
+  await start($)
+  await runSpike($, 'node /p/keiron-sequencer/scripts/spike.mjs next')
+  await runSpike($, 'node /p/keiron-sequencer/scripts/spike.mjs next')
+
+  expect(seen.opened.map(o => o.id)).toEqual(['spike-metro'])
+  expect(seen.status.at(-1)).toBe('🚃 2/5 · ABC-3')
+})
+
+test('/spike-metro opens the metro in any session', async ($, on) => {
+  const seen = engine(on, { exitCode: 0, stdout: JSON.stringify(STATUS), stderr: '' })
+  await start($)
+  await $.command.run({ command: 'spike-metro' })
+
+  expect(seen.opened.map(o => o.id)).toEqual(['spike-metro'])
 })
