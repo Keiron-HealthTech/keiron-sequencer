@@ -9,6 +9,16 @@ export type StationKind =
 
 export type Station = { card: string; kind: StationKind }
 
+export type Track = {
+  id: string
+  status: string
+  current: string | null
+  done: number
+  total: number
+  mergedInto: string | null
+  stations: Station[]
+}
+
 export type Snapshot = {
   at: string
   isRunning: boolean
@@ -18,6 +28,7 @@ export type Snapshot = {
   project: string | null
   isRespike: boolean
   stations: Station[]
+  tracks: Track[]
   done: number
   total: number
   current: string | null

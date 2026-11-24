@@ -1297,7 +1297,7 @@ const replayOutcomes = state => state.plan.order.filter(k => Object.hasOwn(state
   .map(card => ({ card, mode: state.plan.cards[card].mode, status: state.cards[card].replay?.status ?? 'pending' }));
 
 const trackList = state => Object.entries(state.tracks).map(([id, t]) => ({
-  id, status: t.status, current: t.current?.card ?? null, done: t.cards.filter(k => state.cards[k].status === 'done').length, total: t.cards.length, mergedInto: t.mergedInto,
+  id, status: t.status, current: t.current?.card ?? null, done: t.cards.filter(k => state.cards[k].status === 'done').length, total: t.cards.length, mergedInto: t.mergedInto, cards: t.cards,
 }));
 
 async function tracks(args, { home }) {

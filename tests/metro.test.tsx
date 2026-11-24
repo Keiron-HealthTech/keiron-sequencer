@@ -31,6 +31,17 @@ const STATUS = {
   ],
 }
 
+const TRACKED = {
+  ...STATUS,
+  current: null,
+  cards: { done: ['ABC-1', 'ABC-2'], inProgress: ['ABC-3', 'ABC-6'], pending: ['ABC-4', 'ABC-5'] },
+  tracks: [
+    { id: 't1', status: 'active', current: 'ABC-3', done: 2, total: 4, mergedInto: null, cards: ['ABC-1', 'ABC-2', 'ABC-3', 'ABC-4'] },
+    { id: 't2', status: 'active', current: 'ABC-6', done: 0, total: 2, mergedInto: null, cards: ['ABC-6', 'ABC-5'] },
+    { id: 't3', status: 'merged', current: null, done: 1, total: 1, mergedInto: 't1', cards: [] },
+  ],
+}
+
 const OLD_NAME = new RegExp('mi' + 'kado', 'i')
 
 type Run = { exitCode: number; stdout: string; stderr: string }
@@ -161,4 +172,37 @@ test('/spike-metro opens the metro in any session', async ($, on) => {
   await $.command.run({ command: 'spike-metro' })
 
   expect(seen.opened.map(o => o.id)).toEqual(['spike-metro'])
+})
+
+test('a run with two tracks draws a line per track', async ($, on) => {
+  engine(on, { exitCode: 0, stdout: JSON.stringify(TRACKED), stderr: '' })
+  await start($)
+
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 40 }, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /t1 · 2\/4 · ABC-3/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /t2 · 0\/2 · ABC-6/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /🚃\s+ABC-6/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /○\s+ABC-5/ })).toBeTruthy()
+  const drawn = [...(await ui.findAll({ type: 'Text' }))].map(t => t.text ?? '')
+  expect(drawn.length).toBeGreaterThan(8)
+  for (const line of drawn) expect(line.length <= 40).toBe(true)
+  await ui.unmount()
+})
+
+test('a merged track draws as joining its target', async ($, on) => {
+  engine(on, { exitCode: 0, stdout: JSON.stringify(TRACKED), stderr: '' })
+  await start($)
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /t3 ⤳ t1/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /t3 · / })).toBeFalsy()
+  await ui.unmount()
+})
+
+test("the owner's status line counts tracks", async ($, on) => {
+  const seen = engine(on, { exitCode: 0, stdout: JSON.stringify(TRACKED), stderr: '' })
+  await start($)
+  await runSpike($, 'node /p/keiron-sequencer/scripts/respike.mjs begin')
+
+  expect(seen.status.at(-1)).toBe('🚃 2/6 · 2 tracks')
 })

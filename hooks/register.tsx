@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { CoreEngineInterface, Register } from 'claude-code'
 
-import type { CardStatus, Route, Snapshot, Station, StationKind } from '../types'
+import type { CardStatus, Route, Snapshot, Station, StationKind, Track } from '../types'
 
 const PANE = 'spike-metro'
 const TITLE = 'Spike metro'
@@ -31,11 +31,13 @@ type StatusJson = {
   cards?: { done?: string[]; inProgress?: string[]; pending?: string[] }
   modes?: Record<string, string>
   replays?: { card: string; mode: string; status: string }[]
+  tracks?: { id: string; status: string; current: string | null; done: number; total: number; mergedInto: string | null; cards?: string[] }[]
 }
 
 const TURNED = new Set(['conflict', 'no-preimage', 'secret'])
 
-export function stationsOf(s: StatusJson): Station[] {
+export function stationsOf(s: StatusJson, only?: string[]): Station[] {
+  const keep = (cards: string[] = []) => (only ? cards.filter(c => only.includes(c)) : cards)
   const outcome = new Map((s.replays ?? []).map(r => [r.card, r.status]))
   const kindOf = (card: string, phase: 'done' | 'current' | 'pending'): StationKind => {
     if (phase === 'current') return 'current'
@@ -49,16 +51,16 @@ export function stationsOf(s: StatusJson): Station[] {
     return s.modes?.[card] === 'replay' ? 'next-replay' : 'next-spike'
   }
   return [
-    ...(s.cards?.done ?? []).map(card => ({ card, kind: kindOf(card, 'done') })),
-    ...(s.cards?.inProgress ?? []).map(card => ({ card, kind: kindOf(card, 'current') })),
-    ...(s.cards?.pending ?? []).map(card => ({ card, kind: kindOf(card, 'pending') })),
+    ...keep(s.cards?.done).map(card => ({ card, kind: kindOf(card, 'done') })),
+    ...keep(s.cards?.inProgress).map(card => ({ card, kind: kindOf(card, 'current') })),
+    ...keep(s.cards?.pending).map(card => ({ card, kind: kindOf(card, 'pending') })),
   ]
 }
 
 export function snapshotOf(exitCode: number, stdout: string, stderr: string, at: string): Snapshot {
   const idle = (message: string): Snapshot => ({
     at, isRunning: false, message, runId: null, status: null, project: null, isRespike: false,
-    stations: [], done: 0, total: 0, current: null, currentTokens: null, runTokens: null, tokenCap: null, cardCap: null,
+    stations: [], tracks: [], done: 0, total: 0, current: null, currentTokens: null, runTokens: null, tokenCap: null, cardCap: null,
   })
   if (exitCode !== 0) return idle(stderr.trim().split('\n')[0] || 'No train on the line.')
   let s: StatusJson
@@ -69,6 +71,7 @@ export function snapshotOf(exitCode: number, stdout: string, stderr: string, at:
   }
   const stations = stationsOf(s)
   const spent = s.execution?.spent?.tokens
+  const tracks: Track[] = (s.tracks ?? []).map(({ cards, ...t }) => ({ ...t, stations: stationsOf(s, cards ?? []) }))
   return {
     at,
     isRunning: true,
@@ -78,6 +81,7 @@ export function snapshotOf(exitCode: number, stdout: string, stderr: string, at:
     project: s.project?.name ?? null,
     isRespike: Boolean(s.modes),
     stations,
+    tracks,
     done: s.cards?.done?.length ?? 0,
     total: stations.length,
     current: s.current?.card ?? s.cards?.inProgress?.[0] ?? null,
@@ -100,6 +104,8 @@ const LOOK: Record<StationKind, { glyph: string; color: string; label: string; i
   'next-spike': { glyph: '○', color: '#9CA3AF', label: '', isDim: true },
   'next-replay': { glyph: '◇', color: '#9CA3AF', label: 'express stop', isDim: true },
 }
+
+export const liveTracks = (snap: Snapshot) => (snap.tracks ?? []).filter(t => !t.mergedInto)
 
 export function windowOf(stations: Station[], rows: number) {
   const at = stations.findIndex(s => s.kind === 'current')
@@ -268,7 +274,9 @@ async function paint($: Dollar) {
   const snap = await read($, snapshot)
   const on = await read($, card)
   const isOwner = (await read($, owner)) !== null
-  $.ui.status(isOwner && snap?.isRunning ? `🚃 ${snap.done}/${snap.total} · ${snap.current ?? 'between stations'}` : on ? cardLine(on) : undefined)
+  const live = snap ? liveTracks(snap).length : 0
+  const where = live > 1 ? `${live} tracks` : snap?.current ?? 'between stations'
+  $.ui.status(isOwner && snap?.isRunning ? `🚃 ${snap.done}/${snap.total} · ${where}` : on ? cardLine(on) : undefined)
 }
 
 async function readPack($: Dollar, c: CardStatus) {
@@ -423,8 +431,36 @@ export const register: Register = on => {
         </Box>
       )
     }
-    const { before, shown, after } = windowOf(snap.stations, (e.viewport?.rows ?? 30) - 6)
     const passed = (kind: StationKind) => !kind.startsWith('next')
+    const draw = (stations: Station[], rows: number, isShort: boolean) => {
+      const { before, shown, after } = windowOf(stations, rows)
+      return (
+        <Box flexDirection="column">
+          {before > 0 && <Text dimColor>   ┃ {before} earlier stations</Text>}
+          {shown.map((station, i) => {
+            const look = LOOK[station.kind]
+            const tokensLabel = station.kind === 'current' && snap.currentTokens != null ? `${tokens(snap.currentTokens)} tokens` : ''
+            const label = isShort ? (tokensLabel ? `· ${tokens(snap.currentTokens)}` : '') : tokensLabel ? `${look.label} · ${tokensLabel}` : look.label
+            return (
+              <Box flexDirection="column">
+                <Text color={look.color} dimColor={look.isDim} bold={station.kind === 'current'}>
+                  {' '}{look.glyph}  {station.card}  {label}
+                </Text>
+                {i < shown.length - 1 && (
+                  <Text color={passed(station.kind) ? '#2E9E5B' : '#9CA3AF'} dimColor={!passed(station.kind)}>
+                    {passed(station.kind) ? '   ┃' : '   ┆'}
+                  </Text>
+                )}
+              </Box>
+            )
+          })}
+          {after > 0 && <Text dimColor>   ┆ {after} more stations ahead</Text>}
+        </Box>
+      )
+    }
+    const rows = (e.viewport?.rows ?? 30) - 6
+    const tracks = snap.tracks ?? []
+    const live = liveTracks(snap)
     return (
       <Box flexDirection="column">
         <Text bold>🚇 {snap.project ?? 'keiron-sequencer'}</Text>
@@ -437,27 +473,20 @@ export const register: Register = on => {
           {snap.tokenCap ? ` of ${tokens(snap.tokenCap)}` : ''} tokens
         </Text>
         <Text> </Text>
-        {before > 0 && <Text dimColor>   ┃ {before} earlier stations</Text>}
-        {shown.map((station, i) => {
-          const look = LOOK[station.kind]
-          const label =
-            station.kind === 'current' && snap.currentTokens != null
-              ? `${look.label} · ${tokens(snap.currentTokens)} tokens`
-              : look.label
-          return (
-            <Box flexDirection="column">
-              <Text color={look.color} dimColor={look.isDim} bold={station.kind === 'current'}>
-                {' '}{look.glyph}  {station.card}  {label}
-              </Text>
-              {i < shown.length - 1 && (
-                <Text color={passed(station.kind) ? '#2E9E5B' : '#9CA3AF'} dimColor={!passed(station.kind)}>
-                  {passed(station.kind) ? '   ┃' : '   ┆'}
-                </Text>
-              )}
-            </Box>
-          )
-        })}
-        {after > 0 && <Text dimColor>   ┆ {after} more stations ahead</Text>}
+        {tracks.length > 1
+          ? tracks.map(t =>
+              t.mergedInto ? (
+                <Text dimColor>{t.id} ⤳ {t.mergedInto}</Text>
+              ) : (
+                <Box flexDirection="column">
+                  <Text bold>
+                    {t.id} · {t.done}/{t.total}{t.current ? ` · ${t.current}` : ''}
+                  </Text>
+                  {draw(t.stations, Math.floor(rows / live.length), true)}
+                </Box>
+              ),
+            )
+          : draw(snap.stations, rows, false)}
         <Text> </Text>
         <Text dimColor>● spiked  ◆ express (no tokens)</Text>
         <Text dimColor>↻ re-spiked  ○ ahead</Text>

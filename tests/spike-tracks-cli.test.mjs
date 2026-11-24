@@ -106,8 +106,8 @@ test('tracks and status list each track with done/total', async () => {
   await end('CRM-1', 't1', '2026-11-10T10:02:00.000Z');
   await open('CRM-3', 't2', '2026-11-10T10:03:00.000Z');
   const expected = [
-    { id: 't1', status: 'active', current: null, done: 1, total: 2, mergedInto: null },
-    { id: 't2', status: 'active', current: 'CRM-3', done: 0, total: 1, mergedInto: null },
+    { id: 't1', status: 'active', current: null, done: 1, total: 2, mergedInto: null, cards: ['CRM-1', 'CRM-2'] },
+    { id: 't2', status: 'active', current: 'CRM-3', done: 0, total: 1, mergedInto: null, cards: ['CRM-3'] },
   ];
   const tracks = await spike(['tracks']);
   assert.equal(tracks.code, 0, tracks.stderr);
