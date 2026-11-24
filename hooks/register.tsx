@@ -7,6 +7,7 @@ const PANE = 'spike-metro'
 const TITLE = 'Spike metro'
 // The docked width it asks for; a width the person drags the dock to wins.
 const OPEN = { id: PANE, title: TITLE, columns: 40 }
+const DOCK = OPEN.columns
 const POLL_MS = 10_000
 // A login shell finds the same node the user runs the CLIs with. The root is passed as $1, never spliced into the script.
 export const statusArgv = (root: string) => ['/bin/sh', '-lc', 'exec node "$1/scripts/spike.mjs" status', 'sh', root]
@@ -461,17 +462,29 @@ export const register: Register = on => {
     const rows = (e.viewport?.rows ?? 30) - 6
     const tracks = snap.tracks ?? []
     const live = liveTracks(snap)
+    const fit = (text: string) => (text.length > DOCK ? `${text.slice(0, DOCK - 1)}…` : text)
+    const title = snap.project ?? 'keiron-sequencer'
+    const runLine = `${snap.isRespike ? 'respike' : 'spike'} · run ${snap.runId} · ${snap.status}`
     return (
       <Box flexDirection="column">
-        <Text bold>🚇 {snap.project ?? 'keiron-sequencer'}</Text>
-        <Text dimColor>
-          {snap.isRespike ? 'respike' : 'spike'} · run {snap.runId} · {snap.status}
-        </Text>
-        <Text>
-          Station {snap.done}/{snap.total}
-          {snap.cardCap ? ` (stop after ${snap.cardCap})` : ''} · run {tokens(snap.runTokens)}
-          {snap.tokenCap ? ` of ${tokens(snap.tokenCap)}` : ''} tokens
-        </Text>
+        {tracks.length > 1 ? (
+          <>
+            <Text bold>{fit(`🚇 ${title}`)}</Text>
+            <Text dimColor>{fit(runLine)}</Text>
+            <Text>{fit(`Station ${snap.done}/${snap.total}${snap.cardCap ? ` · stop after ${snap.cardCap}` : ''}`)}</Text>
+            <Text>{fit(`${tokens(snap.runTokens)}${snap.tokenCap ? ` of ${tokens(snap.tokenCap)}` : ''} tokens`)}</Text>
+          </>
+        ) : (
+          <>
+            <Text bold>🚇 {title}</Text>
+            <Text dimColor>{runLine}</Text>
+            <Text>
+              Station {snap.done}/{snap.total}
+              {snap.cardCap ? ` (stop after ${snap.cardCap})` : ''} · run {tokens(snap.runTokens)}
+              {snap.tokenCap ? ` of ${tokens(snap.tokenCap)}` : ''} tokens
+            </Text>
+          </>
+        )}
         <Text> </Text>
         {tracks.length > 1
           ? tracks.map(t =>

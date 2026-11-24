@@ -33,6 +33,8 @@ const STATUS = {
 
 const TRACKED = {
   ...STATUS,
+  project: { name: 'A very long project name that cannot fit the dock at all' },
+  execution: { caps: { tokens: 3_000_000, cards: 10 }, spent: { cards: 4, tokens: 2369236 } },
   current: null,
   cards: { done: ['ABC-1', 'ABC-2'], inProgress: ['ABC-3', 'ABC-6'], pending: ['ABC-4', 'ABC-5'] },
   tracks: [
