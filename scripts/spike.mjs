@@ -27,7 +27,7 @@ import {
   activeRunFor, activeRuns, allRepos, capReached, closeOpenExecutions, createRun, executionSpend, interrupted, interruptedRefusal, issueMark, latestRun, mergingRefusal,
   noteStartTrees, openCardWindow, liveMark, mergingCrossing, openExecution, readState, saveState, timeBoxFor, trackIdOf, trackOfCard, unsettledWindows, waitingOn,
 } from './lib/spike/state.mjs';
-import { applyPrDiff, assertLastTree, checkTree, discardTree, guardTree, openTree, rebuildTree, teardownTrees, touchedCheckouts } from './lib/spike/trees.mjs';
+import { applyPrDiff, assertLastTree, checkTree, discardStrayTrees, discardTree, guardTree, openTree, rebuildTree, teardownTrees, touchedCheckouts } from './lib/spike/trees.mjs';
 import { bindSession, lastEntryAt, withoutMarked, sessionFiles, transcriptsRoot, weighted, windowUsage } from './lib/spike/usage-window.mjs';
 
 const USAGE = [
@@ -758,7 +758,7 @@ async function cross(args, { home, now, git, lock, slot, runSetup, dataDir, tran
   if (!usable) return fail(2, ...USAGE);
   if (!f.note.trim()) return fail(1, 'a crossing needs a non-empty English --note saying what the card needs from the other');
   const config = loadConfig(home);
-  const first = await onActiveRun(home, f.project, (dir, state) => markCrossing(dir, state, f, { now, git }), lock);
+  const first = await onActiveRun(home, f.project, (dir, state) => markCrossing(dir, state, f, { now, git, config }), lock);
   if (first.result) return first.result;
   const { dir, state, from, into, index } = first;
   const work = structuredClone(state);
@@ -795,7 +795,7 @@ async function cross(args, { home, now, git, lock, slot, runSetup, dataDir, tran
   }, lock);
 }
 
-function markCrossing(dir, state, { track, card: C, needs: B, kind, note }, { now, git }) {
+function markCrossing(dir, state, { track, card: C, needs: B, kind, note }, { now, git, config }) {
   const refuse = (code, message) => ({ result: fail(code, message) });
   const from = trackIdOf(state, track, { rerun: true });
   if (!state.tracks[from].cards.includes(C)) return refuse(1, `${C} is not a card of track ${from}`);
@@ -816,7 +816,9 @@ function markCrossing(dir, state, { track, card: C, needs: B, kind, note }, { no
   if (closesCycle(state, B, C)) return refuse(5, `${B} -> ${C} closes a cycle: ${C} already leads to ${B}`);
   const merging = mergingCrossing(state, into);
   if (merging) throw mergingRefusal(merging);
-  if (known !== -1 && interrupted(state.crossings[known])) recoverMerge(git, state, into, dir);
+  // With no cross in flight on the target, a parked marker is one a kept merge died before removing.
+  if (known !== -1 && interrupted(state.crossings[known])) recoverMerge(git, state, into, dir, config);
+  else rmSync(parkedMarker(dir, into), { force: true });
 
   const at = now();
   const entry = { at: at.toISOString(), kind, from: C, to: B, fromTrack: from, toTrack: into, note, respiked: [] };
@@ -861,7 +863,8 @@ const parkedMarker = (dir, trackId) => join(dir, 'tmp', trackId, 'parked');
 // A cross that died mid-merge may have moved the target's trees. Without a finished park they hold the in-progress card's
 // work and were never moved; otherwise the trees go back to their last snapshot and the parked card's wip back into them, as
 // before that cross began.
-function recoverMerge(git, state, trackId, dir) {
+function recoverMerge(git, state, trackId, dir, config) {
+  discardStrayTrees(git, state, trackId, { dir, repos: config.repos });
   const card = state.tracks[trackId].cards.find(k => state.cards[k].status === 'in-progress');
   if (card && !existsSync(parkedMarker(dir, trackId))) return;
   for (const [, repo] of openRepos(state, trackId)) resetTree(git, repo);
@@ -976,8 +979,8 @@ async function adoptMerge(dir, fresh, before, work, { from, into, index, card, o
     if (record) writeAtomic(record.path, record.text);
   }
   if (from !== into) for (const [, repo] of Object.entries(fresh.tracks[from].repos).filter(isOpen)) resetTree(git, repo);
-  rmSync(parkedMarker(dir, into), { force: true });
   saveState(dir, fresh, now());
+  rmSync(parkedMarker(dir, into), { force: true });
   const { kind } = fresh.crossings[index];
   const extra = { ...(wip ? { wip: wip.path } : {}), ...(parked ? { parked } : {}) };
   if (from === into) return ok({ action: 'applied', crossing: index, track: into, kind, respiked, ...extra });

@@ -1,12 +1,12 @@
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run } from '../scripts/spike.mjs';
 import { readState, saveState, trackOfCard, waitingOn } from '../scripts/lib/spike/state.mjs';
-import { SANDBOX_ENV, sandboxGit } from './helpers/git-sandbox.mjs';
+import { makeRepo, SANDBOX_ENV, sandboxGit } from './helpers/git-sandbox.mjs';
 import { guardNetwork } from './helpers/no-network.mjs';
 import { activeRunDir, blocks, issue, notes, PROJECT_URL, SLUG, spikeFixture } from './helpers/spike-fixture.mjs';
 import * as R from './helpers/respike-fixture.mjs';
@@ -651,4 +651,114 @@ test('combine refuses while a crossing whose cross died mid-merge is not applied
   const r = await spike(['combine']);
   assert.equal(r.code, 1, r.stdout);
   assert.match(r.stderr, /crossing 0 is pending: run cross again for it before combine/);
+});
+
+const worktrees = checkout => sandboxGit(['worktree', 'list', '--porcelain'], { cwd: checkout }).split('\n')
+  .filter(l => l.startsWith('worktree ')).map(l => realpathSync(l.slice('worktree '.length))).sort();
+
+test('a cross killed after its merge opened a tree the target lacked discards that tree on rerun, and the run completes with no stray worktree', async () => {
+  const front = makeRepo();
+  after(front.dispose);
+  const withFrontend = config => ({
+    ...config,
+    repos: {
+      ...config.repos,
+      frontend: {
+        name: 'frontend-repo', github: 'acme/frontend', checkout: front.dir, url: null, remote: null, defaultBranch: 'main', setup: [],
+        spikeTypecheck: ['sh', '-c', 'kill -9 $PPID', '{changed}'],
+      },
+    },
+    projects: { [SLUG]: { repos: ['backend', 'frontend'] } },
+  });
+  const { f, dir, spike, open, end, cross } = await tracksRun([issue('CRM-1'), issue('CRM-2'), issue('CRM-3')], { t1: ['CRM-1', 'CRM-2'], t2: ['CRM-3'] }, { config: withFrontend });
+  await open('CRM-1', 't1', {});
+  writeFileSync(join(json(await spike(['tree', 'frontend', '--track', 't1'])).path, 'CRM-1.txt'), 'CRM-1\n');
+  await end('CRM-1', 't1');
+  await open('CRM-3', 't2');
+  await end('CRM-3', 't2');
+  await open('CRM-2', 't1');
+
+  const argv = ['cross', '--track', 't1', '--card', 'CRM-2', '--needs', 'CRM-3', '--kind', 'depends', '--note', 'CRM-2 needs CRM-3.'];
+  const killed = spawnSync(process.execPath, [SPIKE, ...argv], { env: { ...SANDBOX_ENV, HOME: f.scratch, KEIRON_SEQUENCER_HOME: f.home, KEIRON_SEQUENCER_TRANSCRIPTS: f.scratch }, encoding: 'utf8' });
+  assert.equal(killed.signal, 'SIGKILL', killed.stderr);
+  const stray = join(dir, 'trees', 't2', 'frontend');
+  assert.ok(readState(dir).crossings[0].merging);
+  assert.equal(readState(dir).tracks.t2.repos.frontend, undefined);
+  assert.ok(worktrees(front.dir).includes(realpathSync(stray)));
+
+  const again = await cross('t1', 'CRM-2', 'CRM-3', 'depends');
+  assert.equal(again.code, 0, again.stderr);
+  assert.deepEqual([json(again).action, json(again).track, json(again).replayed], ['merged', 't2', ['CRM-1']]);
+  assert.equal(readState(dir).tracks.t2.repos.frontend.path, stray);
+  assert.deepEqual(files(stray), ['CRM-1.txt']);
+  assert.deepEqual(worktrees(front.dir), [front.dir, join(dir, 'trees', 't1', 'frontend'), stray].map(p => realpathSync(p)).sort());
+
+  const c = await open('CRM-2', 't2', {});
+  sandboxGit(['apply', '-p2', c.brief.wip], { cwd: c.tree });
+  await end('CRM-2', 't2');
+  assert.deepEqual(json(await spike(['next', '--track', 't2'])), { action: 'track-done', track: 't2', combine: true });
+  const combined = await spike(['combine']);
+  assert.equal(json(combined).action, 'combined-ok', combined.stderr);
+  assert.deepEqual(worktrees(front.dir), [realpathSync(front.dir)]);
+  assert.deepEqual(worktrees(f.repo.dir), [realpathSync(f.repo.dir)]);
+  assert.equal(existsSync(stray), false);
+});
+
+test('a cross that dies before its merge is saved keeps the parked marker, so its rerun puts the parked card\'s work back', async () => {
+  const m = await mutualCrossing();
+  const { f, dir } = m;
+  const blocker = join(dir, `run.json.${process.pid}.tmp`);
+  const blockSave = (argv, { cwd } = {}) => {
+    if (argv[0] === 'tc' && cwd === treeOf(dir, 't1')) mkdirSync(blocker, { recursive: true });
+    return { status: 0, stdout: '', stderr: '' };
+  };
+  const r = await m.crossT2({ runSetup: blockSave });
+  assert.notEqual(r.code, 0);
+  assert.ok(existsSync(blocker));
+  rmSync(blocker, { recursive: true });
+  assert.ok(existsSync(join(dir, 'tmp', 't1', 'parked')));
+  const state = readState(dir);
+  state.crossings[1].merging = { pid: gonePid(f) };
+  saveState(dir, state, f.deps.now());
+
+  const refused = await m.crossT2();
+  assert.equal(refused.code, 1);
+  assert.match(refused.stderr, /wip\/CRM-5\.patch holds work that is not in CRM-5's tree/);
+  const tree = treeOf(dir, 't1');
+  assert.equal(readFileSync(join(tree, 'CRM-3.txt'), 'utf8'), 'CRM-3 changed by CRM-2\n');
+  assert.equal(readFileSync(join(tree, 'CRM-2.txt'), 'utf8'), 'CRM-2\n');
+  assert.equal(existsSync(join(dir, 'wip', 'CRM-2.patch')), false);
+
+  sandboxGit(['apply', '-p2', join(dir, 'wip', 'CRM-5.patch')], { cwd: treeOf(dir, 't2') });
+  const again = await m.crossT2();
+  assert.equal(again.code, 0, again.stderr);
+  assert.deepEqual([json(again).crossing, json(again).parked], [1, 'CRM-2']);
+  const wip = readFileSync(join(dir, 'wip', 'CRM-2.patch'), 'utf8');
+  assert.match(wip, /\+CRM-3 changed by CRM-2/);
+  assert.match(wip, /b\/backend\/CRM-2\.txt/);
+});
+
+test('a parked marker a kept merge left behind is cleared by the next cross, so that cross dying before its park keeps the card\'s work', async () => {
+  const m = await mutualCrossing();
+  const { f, dir } = m;
+  mkdirSync(join(dir, 'tmp', 't1'), { recursive: true });
+  writeFileSync(join(dir, 'tmp', 't1', 'parked'), 'CRM-2\n');
+  const slot = join(dir, 'checks', '0.lock');
+  mkdirSync(join(dir, 'checks'), { recursive: true });
+  writeFileSync(slot, `${process.pid}\nheld by the test\n`);
+  const child = spawn(process.execPath, [SPIKE, 'cross', '--track', 't2', '--card', 'CRM-5', '--needs', 'CRM-1', '--kind', 'depends', '--note', 'Needs CRM-1.'], { env: { ...SANDBOX_ENV, HOME: f.scratch, KEIRON_SEQUENCER_HOME: f.home, KEIRON_SEQUENCER_TRANSCRIPTS: f.scratch }, stdio: 'ignore' });
+  const exited = new Promise(resolve => child.on('exit', (code, signal) => resolve(signal)));
+  const deadline = Date.now() + 20_000;
+  while (!readState(dir).crossings[1]?.merging && Date.now() < deadline) await new Promise(r => setTimeout(r, 50));
+  child.kill('SIGKILL');
+  assert.equal(await exited, 'SIGKILL');
+  rmSync(slot);
+  assert.ok(readState(dir).crossings[1].merging);
+
+  const r = await m.crossT2();
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual([json(r).crossing, json(r).parked], [1, 'CRM-2']);
+  const wip = readFileSync(join(dir, 'wip', 'CRM-2.patch'), 'utf8');
+  assert.match(wip, /\+CRM-3 changed by CRM-2/);
+  assert.match(wip, /b\/backend\/CRM-2\.txt/);
 });

@@ -1,4 +1,4 @@
-import { appendFileSync, chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { exitError } from '../cli.mjs';
 import { combineTree } from './combine.mjs';
@@ -147,6 +147,28 @@ export function openTree(git, state, { trackId, repoDir, repo, dir, runSetup, ba
 export function discardTree(git, repo) {
   if (repo.kind === 'worktree') git(['worktree', 'remove', '--force', repo.path], { cwd: repo.source });
   rmSync(repo.path, { recursive: true, force: true });
+}
+
+// A merge opens target trees before the state records them: a cross killed in between leaves a tree, registered in its
+// checkout, that no state names. Only the track's own folder under trees/ is read.
+export function discardStrayTrees(git, state, trackId, { dir, repos }) {
+  const base = join(dir, 'trees', trackId);
+  if (!existsSync(base)) return;
+  const recorded = new Set(allRepos(state).map(([, r]) => resolve(r.path)));
+  for (const name of readdirSync(base)) {
+    const path = join(base, name);
+    if (state.tracks[trackId].repos[name] || recorded.has(resolve(path))) continue;
+    const checkout = repos[name]?.checkout;
+    if (checkout && existsSync(checkout)) {
+      try {
+        git(['worktree', 'remove', '--force', path], { cwd: checkout });
+      } catch {
+        rmSync(path, { recursive: true, force: true });
+        git(['worktree', 'prune'], { cwd: checkout });
+      }
+    }
+    rmSync(path, { recursive: true, force: true });
+  }
 }
 
 export const touchedCheckouts = state => allRepos(state)
