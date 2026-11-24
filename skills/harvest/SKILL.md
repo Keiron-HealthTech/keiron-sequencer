@@ -109,7 +109,21 @@ may be in the wrong milestone. Take it to the user like a
 - `hold: "<decision>"` on an entry lists it as held and never writes it.
 - `notes`: `"all"` or a list of card keys whose acceptance cases, decisions
   and open decisions go into the agent notes block. Linear is the only shared
-  surface, so a teammate with no record reads them there.
+  surface, so a teammate with no record reads them there. A card the respike
+  audited publishes only what holds: an item marked `moved`, `not-built` or
+  `dropped` is left out (an item with no audit mark holds), and a card where
+  nothing holds has its block removed. Linear says what each card builds now,
+  never where an item went: the card that owns a moved item publishes it in
+  its own notes, and the record keeps every item, marked.
+- `descriptions`: `{ "<CARD>": { "text", "evidence", "hold"? } }`, a new
+  text for the part of a card's description people wrote, usually the
+  respike audit's proposal (`description` in the record's `audits`). Add an
+  entry only on the user's yes to that text. `text` is Spanish and holds no
+  agent notes block and no `+++` line; the plan keeps the card's notes block
+  (the new one when the card is in `notes`) and any keiron-sequencer marker,
+  and writes the whole description in one `description.replace` op. Once
+  that op is applied, remove the entry: left in, it would undo a later hand
+  edit of the card on the next plan.
 
 A card outside the project may be one end of an edge when it exists and is not
 archived; the review marks it off-project.
@@ -121,7 +135,8 @@ lists every selected item whose Spanish text is `missing` or `stale`, with its
 `source` hash: `cases` with the English given/when/then, and the record's
 `decisions` and `openDecisions` with their English `text`. A decision's id is
 `d1`, `d2`… and an open decision's `o1`, `o2`…, by position in the record, so a
-reordered list shows the moved items as `stale`.
+reordered list shows the moved items as `stale`. An item the respike audit marked
+`moved`, `not-built` or `dropped` is not listed: it is not published.
 
 ## Step 4: Translate
 
@@ -158,13 +173,16 @@ stdout is one JSON line: `{status, plan, review, hash, counts, refusals}`.
 
 Show the user `plan.md`: the hash, warnings (`live-redundant` edges, untouched live
 cycles), new cards (they cannot be undone), splits, relations to add and
-remove, the agent notes blocks, the unchanged and held counts, and the exact
-apply command. Each notes block starts with `+++ Notas del agente` and holds
+remove, the agent notes blocks, the descriptions with their text before and
+after, the unchanged and held counts, and the exact apply command. Each notes block starts with `+++ Notas del agente` and holds
 up to three sections, in this order: «Casos de aceptación», «Decisiones» and
 «Decisiones abiertas». An open decision ends with `(abierta, la deciden
 personas)` when people own it, `(acotada)` when the code narrowed it, or both
 as `(acotada, la deciden personas)`. A block under the old title, `+++ Notas
-del agente (casos de aceptación)`, is replaced, not duplicated. Then STOP and wait. Do not apply on your own initiative, after a
+del agente (casos de aceptación)`, is replaced, not duplicated. For a card
+the respike audited, the review's evidence under its block names the items
+that moved and where, and the ones left out; none of that is written to
+Linear. Then STOP and wait. Do not apply on your own initiative, after a
 silence, or because an earlier message approved a different plan.
 
 ## Step 7: Apply or undo, only on the user's explicit command
@@ -173,8 +191,8 @@ Apply, when the user's message asks for it with the hash:
 `node ${CLAUDE_PLUGIN_ROOT}/scripts/harvest.mjs apply <project-ref> --plan <plan.json> --approve <hash>`
 
 It re-reads Linear, checks every op before the first write, writes in the order
-new cards, added relations, removed relations, notes, reads each change back,
-and appends one line per op to `applied.jsonl`.
+new cards, added relations, removed relations, notes, descriptions, reads each
+change back, and appends one line per op to `applied.jsonl`.
 
 - **Exit 0**: every op applied or already in place (`skipped`).
 - **Exit 1**: a write failed or did not show up when read back; it stopped
@@ -189,5 +207,6 @@ Undo, when the user asks for it:
 `node ${CLAUDE_PLUGIN_ROOT}/scripts/harvest.mjs undo <project-ref> --run <run id>`
 lists what it would do and writes nothing (an unknown run id exits 4). Adding `--approve <run id>`, with
 the user's command and the run id, deletes the relations that run created and
-recreates the ones it removed. New cards must be archived by hand, and agent
-notes are restored by hand from the block it prints.
+recreates the ones it removed. New cards must be archived by hand, agent
+notes are restored by hand from the block it prints, and a description from
+the `description` it prints.

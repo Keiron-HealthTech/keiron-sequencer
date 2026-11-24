@@ -475,12 +475,15 @@ async function nextCard(dir, state, trackId, { now, ...deps }, replayed = []) {
   noteStartTrees(state, card);
   const planned = state.plan.cards[card];
   const pr = planned.pr ? applyCardPr(state, trackId, planned.pr.repoDir, { ...deps, dir }) : {};
+  // What a built card's PR does not build, handed to this card at the plan: the spike covers it, or says why it cannot.
+  const handed = (state.plan.respike?.handoffs ?? []).filter(h => h.to === card).map(({ to: _, ...h }) => h);
   const mark = issueMark(state, execution, at);
   window.mark = { ...execution.mark };
   saveState(dir, state, at);
   return ok({
     mark, action: 'card', card, track: trackId, ...respike, ...replayContext(state.cards[card]), ...(resumed ? { resumed } : {}), title: planned.title, url: planned.url, description: planned.description,
     origin: planned.origin, pr: planned.pr, ...pr, offProject: planned.offProject, previous: previousOf(deps.dataDir, state.project.slug, card, state.runId, { sameRun: Boolean(state.cards[card].respikedBy) }),
+    ...(handed.length ? { handed } : {}),
     ...(existsSync(wipPath(dir, card)) ? { wip: wipPath(dir, card) } : {}), trees: openTrees(state, trackId), window: { start: window.start },
   });
 }

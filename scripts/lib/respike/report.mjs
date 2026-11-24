@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { caseSource } from '../harvest.mjs';
+import { auditReport } from './audit.mjs';
 import { COMBINE_FIXUP, PRIOR_FINDING_OUTCOMES } from '../record.mjs';
 import { isLive, tiers, verdict } from '../records.mjs';
 import { interrupted, upgradeState } from '../spike/state.mjs';
@@ -189,7 +190,8 @@ function combinedCheck(state) {
 
 const baseOf = b => ({ kind: b.kind, heads: b.heads ? b.heads.map(h => h.card) : null, behind: b.behind ?? null, ownCommits: b.ownCommits ?? null, warning: b.warning ?? null });
 
-export function buildReport({ state: read, records, previous }) {
+// audit: the inputs the run's audit gathered, or null; the verdicts are read from the records.
+export function buildReport({ state: read, records, previous, audit = null }) {
   const state = upgradeState(read);
   const { order, cards: planned, respike } = state.plan;
   const onMap = respike.map ? new Set([...respike.map.open, ...respike.map.completed]) : null;
@@ -213,5 +215,6 @@ export function buildReport({ state: read, records, previous }) {
     tracks: trackList(state),
     crossings: crossingList(state),
     combined: combinedCheck(state),
+    audit: auditReport(audit, records),
   };
 }

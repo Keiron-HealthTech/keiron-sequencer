@@ -59,11 +59,11 @@ test('the skill holds no old name, in its front matter or its text', () => {
   assert.doesNotMatch(skill, new RegExp('mi' + 'kado', 'i'));
 });
 
-test('the steps run preflight, show the plan, the asks, the approval, begin, the card loop, pause, the report and the harvest offer, in that order', () => {
+test('the steps run preflight, show the plan, the asks, the approval, begin, the card loop, pause, the audit, the report and the harvest offer, in that order', () => {
   const headings = [
     '## Preflight (before the first live run)', '## Step 1: Plan', '## Step 2: Show the plan', '## Step 3: Asks, one question per ask',
     '## Step 4: One approval, on the plan hash', '## Step 5: Begin', '## Step 6: The card loop', '## Step 7: Pause and resume',
-    '## Step 8: Report', '## Step 9: Offer /keiron-sequencer:harvest',
+    '## Step 8: Audit the cards the run did not re-spike', '## Step 9: Report', '## Step 10: Offer /keiron-sequencer:harvest',
   ];
   const at = headings.map(h => skill.indexOf(`\n${h}\n`));
   headings.forEach((h, i) => assert.ok(at[i] > 0, `missing heading ${JSON.stringify(h)}`));
@@ -74,7 +74,7 @@ test('the respike subcommands the skill names are exactly the ones the usage lis
   const usage = await respikeUsage();
   const fromUsage = new Set([...usage.matchAll(/^usage: node scripts\/respike\.mjs ([a-z-]+)/gm)].map(m => m[1]));
   const fromSkill = new Set([...skill.matchAll(RESPIKE_COMMAND)].map(m => m[1]));
-  assert.deepEqual([...fromUsage].sort(), ['begin', 'config', 'fast-forward', 'fetch', 'preflight', 'report']);
+  assert.deepEqual([...fromUsage].sort(), ['audit', 'begin', 'config', 'fast-forward', 'fetch', 'preflight', 'report']);
   assert.deepEqual([...fromSkill].sort(), [...fromUsage].sort());
 });
 
@@ -124,7 +124,7 @@ test('begin and fetch always carry an approve hash the CLI printed, after the us
 });
 
 test('every reason, ask, stop, block and warning code the plan emits is named, and the plan is shown in full', () => {
-  const sources = ['scripts/lib/respike/built.mjs', 'scripts/lib/respike/coverage.mjs', 'scripts/lib/respike/plan.mjs', 'scripts/lib/respike/replay-plan.mjs', 'scripts/lib/respike/selection.mjs'];
+  const sources = ['scripts/lib/respike/built.mjs', 'scripts/lib/respike/coverage.mjs', 'scripts/lib/respike/plan.mjs', 'scripts/lib/respike/pr-check.mjs', 'scripts/lib/respike/replay-plan.mjs', 'scripts/lib/respike/selection.mjs'];
   const codes = new Set();
   for (const file of sources) {
     const text = read(file);
@@ -261,7 +261,7 @@ test('the config rule: the skill never edits the file, and the CLI writes it onl
 });
 
 test('the config step runs its three forms in order: --out only on the draft, --draft only on the review and the write', () => {
-  const draftForm = `${RESPIKE}config <project ref> --out <draft.json> [--root <dir>]... [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]...`;
+  const draftForm = `${RESPIKE}config <project ref> --out <draft.json> [--root <dir>]... [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]... [--hand <CARD>:<item>=<CARD>]... [--drop <CARD>:<item>]... [--skip-check <CARD>]...`;
   const reviewForm = `${RESPIKE}config --draft <draft.json>`;
   const writeForm = `${RESPIKE}config --draft <draft.json> --approve <hash>`;
   const lines = commandLines('scripts/respike.mjs').filter(l => /respike\.mjs config\b/.test(l));
@@ -521,8 +521,34 @@ test('a pending crossing survives a pause: on resume the coordinator reads it fr
   workerSays('pass `--cwd` whenever more than one tree is open');
 });
 
+test('before the run, the PR check gathers, judges each item against the diff, stores, and each gap is answered in the plan', () => {
+  const step = sectionOf('Step 3: Asks, one question per ask');
+  const at = [
+    '`pr-unchecked`', '`not-built`', 'respike.mjs audit <project ref> --before [--cards', 'Show the user each card\'s verdicts, then store them and preflight again',
+    'respike.mjs audit <project ref> --before --verdicts <verdicts.json>',
+  ].map(text => step.indexOf(text));
+  at.forEach(i => assert.ok(i >= 0, step));
+  assert.deepEqual([...at].sort((a, b) => a - b), at, 'the PR check steps are out of order');
+  for (const text of ['`--hand <CARD>:<item>=<CARD>`', '`--drop <CARD>:<item>`', '`--skip-check <CARD>`', 'fix the PR first', '`handed`', '`missing`',
+    'A check never moves or drops an item: that is the user\'s answer']) stepSays(step, text);
+  stepSays(sectionOf('Step 2: Show the plan'), 'The PR checks in `prChecks`');
+});
+
+test('after the run, the audit holds every card left alone against the fresh records, shows the verdicts, then stores them', () => {
+  const step = sectionOf('Step 8: Audit the cards the run did not re-spike');
+  const at = [
+    'respike.mjs audit <project ref> [--run <runId>]', 'Read its `mentions` first', 'Show the user each card\'s verdicts',
+    'respike.mjs audit <project ref> --verdicts <verdicts.json> [--run <runId>]',
+  ].map(text => step.indexOf(text));
+  at.forEach(i => assert.ok(i >= 0, step));
+  assert.deepEqual([...at].sort((a, b) => a - b), at, 'the audit steps are out of order');
+  for (const text of ['`holds`', '`moved`', '`not-built`', '`dropped`', '`handed`', '`prCheck`', '`mentions`', '`fresh`', '`skipped`', 'reads no PR',
+    'never changes `spikedAt`', 'Harvest then publishes only the items that hold', 'it reaches Linear only through /keiron-sequencer:harvest, on the user\'s yes']) stepSays(step, text);
+  stepSays(sectionOf('Step 9: Report'), 'Under `## Audit`, next to the comparison, `audit`');
+});
+
 test('the report step shows the tracks, the crossings and the combined check', () => {
-  const step8 = sectionOf('Step 8: Report');
+  const step8 = sectionOf('Step 9: Report');
   for (const anchor of ['`## Tracks`', '`## Crossings`', '`## Combined check`', '`tracks`', '`crossings`', '`combined`', '`respiked`', '`failures`', '`skipped`']) stepSays(step8, anchor);
   step6Says('the combined check never ran in those repos');
   step6Says('a clash that only shows in a file no card touched passes `combine`');

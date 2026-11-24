@@ -14,6 +14,7 @@ import { tracksOf } from '../spike/tracks.mjs';
 import { cardRepos } from '../start/checkout.mjs';
 import { classifyBuilt, decideBases, neededCandidates, pinBranch, readPrLists, readRefs, resolvePending } from './built.mjs';
 import { coverage, touchedRepos } from './coverage.mjs';
+import { prCheckPlan } from './pr-check.mjs';
 import { replayPlans } from './replay-plan.mjs';
 import { ancestorsOf, cardStaleness, contractedEdges, entryOrder, selectCards } from './selection.mjs';
 
@@ -35,7 +36,11 @@ export function approveHash(plan, answers = { built: new Map(), unbuilt: new Set
     replay: plan.ancestors.map(a => ({ key: a.key, from: a.from, patches: a.patches, dropped: a.dropped })),
     answers: {
       built: [...answers.built].sort(([a], [b]) => compare(a, b)), unbuilt: [...answers.unbuilt].sort(), withDefault: [...(answers.withDefault ?? [])].sort(),
+      hand: [...(answers.hand ?? [])].sort(([a], [b]) => compare(a, b)), drop: [...(answers.drop ?? [])].sort(), skipCheck: [...(answers.skipCheck ?? [])].sort(),
     },
+    prChecks: plan.prChecks ?? [],
+    handoffs: plan.handoffs ?? [],
+    drops: plan.drops ?? [],
     action: plan.action,
     codes: [...plan.asks, ...plan.stops].map(x => x.code),
   };
@@ -162,6 +167,9 @@ export async function buildRespikePlan(ref, key, {
     order: ordered.order.map(k => ({ key: k, mode: modes.get(k) })),
     tracks,
     asks: [],
+    prChecks: [],
+    handoffs: [],
+    drops: [],
     stops,
     missingConfig: covered.missingConfig,
     warnings: [...classified.warnings, ...covered.warnings, ...noMilestone(analysis), ...dataInRepo(dataDir, repoDataDir, slug)],
@@ -173,7 +181,10 @@ export async function buildRespikePlan(ref, key, {
     const decided = decideBases(git, { config, built: needed, repos: touched.repos.map(r => r.repo), refs, tmpRoot, withDefault: answers.withDefault ?? new Set() });
     plan.built = [...needed, ...pending.built].sort((a, b) => cardNumber(a.key) - cardNumber(b.key) || compare(a.key, b.key) || compare(a.repoDir ?? '', b.repoDir ?? ''));
     plan.bases = decided.bases;
-    plan.asks = [...classified.asks, ...pending.asks, ...decided.asks];
+    const spiked = new Set(plan.order.filter(e => e.mode === 'spike').map(e => e.key));
+    const checked = prCheckPlan({ built: plan.built, records, answers, spiked });
+    Object.assign(plan, { prChecks: checked.checks, handoffs: checked.handoffs, drops: checked.drops });
+    plan.asks = [...classified.asks, ...pending.asks, ...decided.asks, ...checked.asks];
     plan.warnings.push(...decided.warnings);
   }
   plan.action = actionOf(plan);

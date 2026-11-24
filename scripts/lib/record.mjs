@@ -6,6 +6,13 @@ export const OPEN_DECISION_IMPACTS = ['design', 'detail'];
 export const OPEN_DECISION_STATUSES = ['open', 'narrowed'];
 export const OPEN_DECISION_OWNERS = ['people', 'code'];
 export const PRIOR_FINDING_OUTCOMES = ['holds', 'resolved', 'wrong'];
+// What a respike audit found for an old case or decision of a card it did not re-spike. The PR check, before the run, holds
+// a built card's record against its PR (holds or not-built); the fresh check, after the run, holds every such card against
+// the records the run spiked. Only a built card has not-built items.
+export const AUDIT_VERDICTS = ['holds', 'moved', 'not-built', 'dropped'];
+export const PR_CHECK_VERDICTS = ['holds', 'not-built'];
+export const AUDIT_CHECKS = ['pr', 'fresh'];
+export const AUDIT_KINDS = ['built', 'unbuilt'];
 export const TOKEN_KEYS = ['input', 'cacheCreation', 'cacheRead', 'output', 'thinking'];
 export const DELETION_WEIGHT = 0.25;
 export const EFFORT_BASES = ['transcript-window', 'card-run'];
@@ -101,7 +108,53 @@ function validateFixups(fixups, c) {
   }
 }
 
-function validateCases(cases, c) {
+function validateAuditMark(mark, card, path, c) {
+  if (!c.object(mark, path)) return;
+  if (c.has(mark, 'check', path)) c.oneOf(mark.check, AUDIT_CHECKS, `${path}.check`);
+  if (c.has(mark, 'verdict', path)) c.oneOf(mark.verdict, mark.check === 'pr' ? PR_CHECK_VERDICTS : AUDIT_VERDICTS, `${path}.verdict`);
+  if (mark.verdict === 'moved' && c.has(mark, 'card', path) && c.card(mark.card, `${path}.card`)) c.check(mark.card !== card, `${path}.card`, 'expected another card');
+  if (mark.verdict !== 'moved' && 'card' in mark) c.fail(`${path}.card`, 'only a moved item names a card');
+  if (c.has(mark, 'note', path)) c.text(mark.note, `${path}.note`);
+  if (mark.check === 'fresh' && c.has(mark, 'runId', path)) c.check(isRunId(mark.runId), `${path}.runId`, 'expected a run id like 20261110T100000Z');
+  if (mark.check === 'pr' && 'runId' in mark) c.fail(`${path}.runId`, 'a PR check runs before any run');
+  if (c.has(mark, 'at', path)) c.datetime(mark.at, `${path}.at`);
+}
+
+// One entry per audit run: what the card was checked against and each item's verdict at that run, so the history stays.
+function validateAudits(list, card, c) {
+  c.items(list, '$.audits', (entry, path) => {
+    if (!c.object(entry, path)) return;
+    if (c.has(entry, 'check', path)) c.oneOf(entry.check, AUDIT_CHECKS, `${path}.check`);
+    if (entry.check === 'fresh' && c.has(entry, 'runId', path)) c.check(isRunId(entry.runId), `${path}.runId`, 'expected a run id like 20261110T100000Z');
+    if (entry.check === 'pr' && 'runId' in entry) c.fail(`${path}.runId`, 'a PR check runs before any run');
+    if (c.has(entry, 'at', path)) c.datetime(entry.at, `${path}.at`);
+    if (c.has(entry, 'kind', path)) c.oneOf(entry.kind, AUDIT_KINDS, `${path}.kind`);
+    if (c.has(entry, 'against', path)) {
+      c.items(entry.against, `${path}.against`, (a, at) => {
+        if (!c.object(a, at)) return;
+        for (const key of ['repoDir', 'kind']) if (c.has(a, key, at)) c.text(a[key], `${at}.${key}`);
+        if (c.has(a, 'pr', at)) c.check(a.pr === null || isCount(a.pr), `${at}.pr`, 'expected a PR number or null');
+        for (const key of ['branch', 'sha']) if (c.has(a, key, at)) c.check(a[key] === null || isNonEmpty(a[key]), `${at}.${key}`, 'expected string or null');
+      });
+    }
+    if (c.has(entry, 'verdicts', path)) {
+      c.items(entry.verdicts, `${path}.verdicts`, (v, at) => {
+        if (!c.object(v, at)) return;
+        if (c.has(v, 'id', at)) c.check(typeof v.id === 'string' && /^[cd]\d+$/.test(v.id), `${at}.id`, 'expected an item id like c1 or d1');
+        if (c.has(v, 'verdict', at)) c.oneOf(v.verdict, entry.check === 'pr' ? PR_CHECK_VERDICTS : AUDIT_VERDICTS, `${at}.verdict`);
+        if (v.verdict === 'moved' && c.has(v, 'card', at) && c.card(v.card, `${at}.card`)) c.check(v.card !== card, `${at}.card`, 'expected another card');
+      });
+    }
+    if (entry.check === 'pr' && c.has(entry, 'missing', path)) c.items(entry.missing, `${path}.missing`, (m, at) => c.text(m, at));
+    if (entry.check === 'fresh' && 'missing' in entry) c.fail(`${path}.missing`, 'missing scope belongs to the PR check');
+    if (entry.check === 'pr' && 'description' in entry) c.fail(`${path}.description`, 'a description is proposed by the fresh check');
+    if (entry.check === 'fresh' && c.has(entry, 'description', path) && entry.description !== null && c.object(entry.description, `${path}.description`)) {
+      for (const key of ['text', 'why']) if (c.has(entry.description, key, `${path}.description`)) c.text(entry.description[key], `${path}.description.${key}`);
+    }
+  });
+}
+
+function validateCases(cases, c, card) {
   const seen = new Set();
   c.items(cases, '$.cases', (item, path) => {
     if (!c.object(item, path)) return;
@@ -114,15 +167,17 @@ function validateCases(cases, c) {
     if (c.has(item, 'ref', path) && c.ref(item.ref, `${path}.ref`) && source) {
       c.check(item.ref.startsWith(`${item.source}:`), `${path}.ref`, `expected a ${item.source}: ref to match the source`);
     }
+    if ('audit' in item) validateAuditMark(item.audit, card, `${path}.audit`, c);
   });
 }
 
-function validateNotes(list, name, c) {
+function validateNotes(list, name, c, card) {
   c.items(list, `$.${name}`, (item, path) => {
     if (!c.object(item, path)) return;
     if (name === 'findings' && c.has(item, 'kind', path)) c.oneOf(item.kind, FINDING_KINDS, `${path}.kind`);
     if (c.has(item, 'text', path)) c.text(item.text, `${path}.text`);
     if (c.has(item, 'ref', path)) c.ref(item.ref, `${path}.ref`);
+    if (name === 'decisions' && 'audit' in item) validateAuditMark(item.audit, card, `${path}.audit`, c);
   });
 }
 
@@ -259,12 +314,13 @@ export function validateRecord(value) {
   if (c.has(r, 'effort', '$')) validateEffort(r.effort, r.card, c);
   if (c.has(r, 'fixups', '$')) validateFixups(r.fixups, c);
   if (c.has(r, 'cases', '$')) {
-    validateCases(r.cases, c);
+    validateCases(r.cases, c, r.card);
     if (Array.isArray(r.cases) && !isSet(r.archived)) c.check(r.cases.length > 0, '$.cases', 'expected at least one case for a card that is not archived');
   }
-  for (const name of ['decisions', 'findings']) if (c.has(r, name, '$')) validateNotes(r[name], name, c);
+  for (const name of ['decisions', 'findings']) if (c.has(r, name, '$')) validateNotes(r[name], name, c, r.card);
   if ('priorFindings' in r) validatePriorFindings(r.priorFindings, c);
   if ('openDecisions' in r) validateOpenDecisions(r.openDecisions, c);
+  if ('audits' in r) validateAudits(r.audits, r.card, c);
   if ('riskAreas' in r) validateRiskAreas(r.riskAreas, c);
   if ('novelty' in r) validateNovelty(r.novelty, c);
   if ('timeBox' in r) validateTimeBox(r.timeBox, c);
@@ -300,7 +356,7 @@ export function validateNoteFields(notes) {
 
 const ORDER = {
   record: ['schemaVersion', 'card', 'title', 'project', 'origin', 'spikedAt', 'archived', 'supersededBy', 'alias', 'scope',
-    'size', 'effort', 'fixups', 'cases', 'decisions', 'findings', 'priorFindings', 'openDecisions', 'riskAreas', 'novelty', 'timeBox', 'replayed', 'mergedFrom', 'respikedBy', 'refs'],
+    'size', 'effort', 'fixups', 'cases', 'decisions', 'findings', 'priorFindings', 'openDecisions', 'audits', 'riskAreas', 'novelty', 'timeBox', 'replayed', 'mergedFrom', 'respikedBy', 'refs'],
   project: ['slug', 'name'],
   archived: ['at', 'reason'],
   supersededBy: ['card', 'spikedAt'],
@@ -313,8 +369,13 @@ const ORDER = {
   fixups: ['received', 'caused'],
   received: ['from', 'patch', 'note'],
   caused: ['to', 'patch', 'note'],
-  case: ['id', 'given', 'when', 'then', 'source', 'ref'],
-  decision: ['text', 'ref'],
+  case: ['id', 'given', 'when', 'then', 'source', 'ref', 'audit'],
+  decision: ['text', 'ref', 'audit'],
+  audit: ['check', 'verdict', 'card', 'note', 'runId', 'at'],
+  auditRun: ['check', 'runId', 'at', 'kind', 'against', 'verdicts', 'missing', 'description'],
+  against: ['repoDir', 'kind', 'pr', 'branch', 'sha'],
+  verdict: ['id', 'verdict', 'card'],
+  proposal: ['text', 'why'],
   openDecision: ['text', 'impact', 'status', 'owner', 'eliminated', 'ref'],
   eliminated: ['option', 'why'],
   finding: ['kind', 'text', 'ref'],
@@ -364,8 +425,13 @@ export function canonicalRecord(record) {
       received: x => list(x, f => ordered(f, ORDER.received), byKeys('patch', 'from')),
       caused: x => list(x, f => ordered(f, ORDER.caused), byKeys('patch', 'to')),
     }),
-    cases: v => list(v, x => ordered(x, ORDER.case)),
-    decisions: v => list(v, x => ordered(x, ORDER.decision)),
+    cases: v => list(v, x => ordered(x, ORDER.case, { audit: y => ordered(y, ORDER.audit) })),
+    decisions: v => list(v, x => ordered(x, ORDER.decision, { audit: y => ordered(y, ORDER.audit) })),
+    audits: v => list(v, x => ordered(x, ORDER.auditRun, {
+      against: y => list(y, a => ordered(a, ORDER.against)),
+      verdicts: y => list(y, a => ordered(a, ORDER.verdict)),
+      description: y => ordered(y, ORDER.proposal),
+    })),
     findings: v => list(v, x => ordered(x, ORDER.finding)),
     priorFindings: v => list(v, x => ordered(x, ORDER.priorFinding)),
     openDecisions: v => list(v, x => ordered(x, ORDER.openDecision, { eliminated: y => list(y, e => ordered(e, ORDER.eliminated)) })),

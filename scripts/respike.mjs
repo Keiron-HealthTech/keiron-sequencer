@@ -4,13 +4,16 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { exitError, fail, isEntry, lines, ok, parseArgs, redacted } from './lib/cli.mjs';
-import { parseProjectRef, readLinearKey } from './lib/linear-fetch.mjs';
+import { fetchDescriptions, parseProjectRef, readLinearKey } from './lib/linear-fetch.mjs';
 import { readRecords, REPO_DATA_DIR } from './lib/records.mjs';
 import { buildRespikePlan } from './lib/respike/plan.mjs';
 import { contractedEdges } from './lib/respike/selection.mjs';
 import { parseWorktrees } from './lib/start/checkout.mjs';
 import { gapLine } from './lib/respike/coverage.mjs';
 import { buildReport, previousRecords } from './lib/respike/report.mjs';
+import { gatherAudit, inputsPath, markRecord, readInputs, validateVerdicts, verdictSummary } from './lib/respike/audit.mjs';
+import { gatherPrCheck, markPrCheck, validatePrVerdicts } from './lib/respike/pr-check.mjs';
+import { serializeRecord } from './lib/record.mjs';
 import { findDiffText } from './lib/spike/build-record.mjs';
 import { configPath, expandHome, readConfigBytes, writeConfig } from './lib/spike/config.mjs';
 import { draftFacts, oldTrialDir, scanRoots, toolProber } from './lib/spike/config-detect.mjs';
@@ -28,7 +31,8 @@ const RISK_TEMPLATE = fileURLToPath(new URL('../docs/spike-config.example.json',
 // The draft only asks tools for their version; corepack must neither download one nor prompt for it to answer.
 const PROBE_ENV = { ...process.env, COREPACK_ENABLE_NETWORK: '0', COREPACK_ENABLE_DOWNLOAD_PROMPT: '0' };
 
-const SELECT = '[--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]...';
+const SELECT = '[--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]... '
+  + '[--hand <CARD>:<item>=<CARD>]... [--drop <CARD>:<item>]... [--skip-check <CARD>]...';
 const USAGE = [
   `usage: node scripts/respike.mjs preflight <project ref> ${SELECT}`,
   `usage: node scripts/respike.mjs fetch <project ref> --approve <hash> ${SELECT}`,
@@ -37,11 +41,15 @@ const USAGE = [
   `usage: node scripts/respike.mjs config <project ref> --out <draft.json> [--root <dir>]... ${SELECT}`,
   'usage: node scripts/respike.mjs config --draft <draft.json> [--approve <hash>]',
   'usage: node scripts/respike.mjs report <project ref> [--run <runId>]',
+  `usage: node scripts/respike.mjs audit <project ref> --before ${SELECT}`,
+  'usage: node scripts/respike.mjs audit <project ref> --before --verdicts <verdicts.json>',
+  'usage: node scripts/respike.mjs audit <project ref> [--run <runId>]',
+  'usage: node scripts/respike.mjs audit <project ref> --verdicts <verdicts.json> [--run <runId>]',
 ];
 
 const cardNumber = key => Number(String(key).match(/(\d+)$/)?.[1] ?? 0);
 
-const COMMANDS = { preflight, fetch: fetchHeads, 'fast-forward': fastForward, begin, config, report };
+const COMMANDS = { preflight, fetch: fetchHeads, 'fast-forward': fastForward, begin, config, report, audit };
 
 export async function run(argv, {
   env = process.env, fetchImpl = fetch, keyFile, now = () => new Date(), home, dataDir, repoDataDir, git = gitRunner(), gh = ghRunner(),
@@ -59,25 +67,37 @@ export async function run(argv, {
 }
 
 const BUILT_ANSWER = /^([A-Z]+-\d+)=(\S+)$/;
+const HAND_ANSWER = /^([A-Z]+-\d+:[cdm]\d+)=([A-Z]+-\d+)$/;
+const ITEM_KEY = /^[A-Z]+-\d+:[cdm]\d+$/;
 const CARD_KEY = /^[A-Z]+-\d+$/;
 
 // Selection and answer flags; null on a usage error. --stale and --all take no value, so they are taken out before parseArgs.
 // With no --cards and no --all the selection is the stale cards: a plain respike replays what is still fresh.
 function selectionArgs(args, flags = [], many = []) {
   const all = args.includes('--all');
-  const a = parseArgs(args.filter(x => x !== '--stale' && x !== '--all'), ['--cards', ...flags], ['--built', '--unbuilt', '--with-default', ...many]);
+  const a = parseArgs(args.filter(x => x !== '--stale' && x !== '--all' && x !== '--before'), ['--cards', ...flags],
+    ['--built', '--unbuilt', '--with-default', '--hand', '--drop', '--skip-check', ...many]);
   const parsed = a?.positional.length === 1 ? parseProjectRef(a.positional[0]) : null;
   if (!parsed) return null;
   const built = (a.flags.built ?? []).map(v => BUILT_ANSWER.exec(v));
   const unbuilt = a.flags.unbuilt ?? [];
   if (built.some(m => !m) || !unbuilt.every(k => CARD_KEY.test(k))) return { error: 'malformed --built <CARD>=<branch> or --unbuilt <CARD>' };
+  const hand = (a.flags.hand ?? []).map(v => HAND_ANSWER.exec(v));
+  const drop = a.flags.drop ?? [];
+  const skipCheck = a.flags['skip-check'] ?? [];
+  if (hand.some(m => !m) || !drop.every(k => ITEM_KEY.test(k)) || !skipCheck.every(k => CARD_KEY.test(k))) {
+    return { error: 'malformed --hand <CARD>:<item>=<CARD>, --drop <CARD>:<item> or --skip-check <CARD>' };
+  }
   return {
     ref: parsed.ref, flags: a.flags,
     options: {
       cards: a.flags.cards === undefined ? null : a.flags.cards.split(',').filter(Boolean),
       stale: !all && (args.includes('--stale') || a.flags.cards === undefined),
       all,
-      answers: { built: new Map(built.map(m => [m[1], m[2]])), unbuilt: new Set(unbuilt), withDefault: new Set(a.flags['with-default'] ?? []) },
+      answers: {
+        built: new Map(built.map(m => [m[1], m[2]])), unbuilt: new Set(unbuilt), withDefault: new Set(a.flags['with-default'] ?? []),
+        hand: new Map(hand.map(m => [m[1], m[2]])), drop: new Set(drop), skipCheck: new Set(skipCheck),
+      },
     },
   };
 }
@@ -136,6 +156,9 @@ function runPlan(built, at) {
       built: plan.built,
       ancestors: plan.ancestors.map(({ key, mode, reason, sharedWith, spikedAncestors }) => ({ key, mode, reason, sharedWith, ...(spikedAncestors ? { spikedAncestors } : {}) })),
       bases: plan.bases,
+      prChecks: plan.prChecks,
+      handoffs: plan.handoffs,
+      drops: plan.drops,
       replay,
       map: { open: keysWhere(c => c.statusType !== 'completed'), completed: keysWhere(c => c.statusType === 'completed') },
     },
@@ -419,12 +442,128 @@ async function report(args, { home, dataDir }) {
   if (!a || a.positional.length !== 1 || (a.flags.run !== undefined && !RUN_ID.test(a.flags.run))) return fail(2, ...USAGE);
   const state = respikeRun(home, a.positional[0], a.flags.run);
   const { slug } = state.project;
-  const value = buildReport({ state, records: readRecords(join(dataDir, slug)).records, previous: previousRecords(dataDir, state) });
+  const value = buildReport({
+    state, records: readRecords(join(dataDir, slug)).records, previous: previousRecords(dataDir, state), audit: readInputs(home, slug, state.runId),
+  });
   const diffText = findDiffText(value, 'report', 'a record field holds a diff');
   if (diffText.length) return fail(1, ...diffText);
   const name = `respike-${state.runId}.json`;
   writeAtomic(join(dataDir, slug, 'spike', name), `${JSON.stringify(value, null, 2)}\n`);
   return ok({ action: 'report', path: `${displayData(dataDir, slug)}/spike/${name}`, ...value });
+}
+
+// Without --verdicts it gathers what the audit needs and writes no record; with --verdicts it stores the skill's verdicts in the
+// records, offline. Both work on a complete respike run only, since the fresh records are what the other cards are checked against.
+async function audit(args, deps) {
+  if (args.includes('--before')) return auditBefore(args, deps);
+  const a = parseArgs(args, ['--run', '--verdicts']);
+  if (!a || a.positional.length !== 1 || (a.flags.run !== undefined && !RUN_ID.test(a.flags.run))) return fail(2, ...USAGE);
+  const state = respikeRun(deps.home, a.positional[0], a.flags.run);
+  if (state.status !== 'complete') return fail(5, `run ${state.runId} is ${state.status}: audit it once it completes`);
+  return a.flags.verdicts === undefined ? auditGather(state, deps) : auditStore(state, a.flags.verdicts, deps);
+}
+
+async function auditGather(state, deps) {
+  const { slug } = state.project;
+  return withKey(deps, async key => {
+    const descriptions = await fetchDescriptions(state.project.id, key, { fetchImpl: deps.fetchImpl });
+    const inputs = gatherAudit({ state, records: readRecords(join(deps.dataDir, slug)).records, descriptions, now: deps.now() });
+    writeAtomic(inputsPath(deps.home, slug, state.runId), `${JSON.stringify(inputs, null, 2)}\n`);
+    return ok({ action: 'audit-gathered', path: inputsPath(deps.home, slug, state.runId), ...inputs });
+  });
+}
+
+function readVerdicts(path) {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch (e) {
+    throw exitError(2, `cannot read the verdicts ${path}: ${e instanceof SyntaxError ? 'not valid JSON' : e.code ?? e.message}`);
+  }
+}
+
+// Every check runs before the first record is written, so a refusal leaves every record as it was.
+function auditStore(state, path, { home, dataDir, now }) {
+  const { slug } = state.project;
+  const inputs = readInputs(home, slug, state.runId);
+  if (!inputs) return fail(5, `no audit inputs for run ${state.runId}: gather the audit first`);
+  const value = readVerdicts(path);
+  const { open = [], completed = [] } = state.plan.respike.map ?? {};
+  const errors = validateVerdicts(value, inputs, { onMap: new Set([...open, ...completed]) });
+  if (errors.length) return fail(2, ...errors);
+  const live = new Map(readRecords(join(dataDir, slug)).records.filter(r => !r.archived && !r.supersededBy).map(r => [r.card, r]));
+  const at = now().toISOString();
+  const marked = [];
+  for (const [card, verdicts] of Object.entries(value.cards)) {
+    const gathered = inputs.cards.find(c => c.card === card);
+    const record = live.get(card);
+    if (!record || record.spikedAt !== gathered.record.spikedAt) return fail(5, `${card}'s record changed since the gather: gather the audit again`);
+    marked.push(markRecord(record, gathered, verdicts, { runId: state.runId, at }));
+  }
+  for (const r of marked) writeAtomic(join(dataDir, slug, `${r.card}.json`), serializeRecord(r));
+  const cards = marked.map(r => ({ card: r.card, ...verdictSummary(r.audits.find(x => x.check === 'fresh' && x.runId === state.runId)) }))
+    .sort((x, y) => cardNumber(x.card) - cardNumber(y.card));
+  return ok({ action: 'audit-stored', runId: state.runId, cards });
+}
+
+// The PR check, before a run: without --verdicts it reads the plan the selection flags make and gathers each built card whose
+// record is unchecked or stale, with its diff; with --verdicts it stores the skill's holds and not-built verdicts, offline.
+async function auditBefore(args, deps) {
+  if (args.includes('--verdicts')) {
+    const a = parseArgs(args.filter(x => x !== '--before'), ['--verdicts']);
+    if (!a || a.positional.length !== 1) return fail(2, ...USAGE);
+    return prCheckStore(a.positional[0], a.flags.verdicts, deps);
+  }
+  const a = selectionArgs(args);
+  if (!a) return fail(2, ...USAGE);
+  if (a.error) return fail(2, a.error, ...USAGE);
+  return withKey(deps, async key => {
+    const { plan, raw, descriptions, config } = await buildRespikePlan(a.ref, key, { ...a.options, answers: { ...a.options.answers, hand: new Map(), drop: new Set() } }, deps);
+    const { slug } = plan.project;
+    const dir = join(deps.home, slug, 'audit');
+    const inputs = gatherPrCheck({
+      project: { id: raw.project.id, slug, name: plan.project.name }, plan, descriptions, gh: deps.gh, git: deps.git, config, now: deps.now(),
+      records: new Map(readRecords(join(deps.dataDir, slug)).records.filter(r => !r.archived && !r.supersededBy).map(r => [r.card, r])),
+      writeDiff: (card, repoDir, text) => {
+        const path = join(dir, `${card}.${repoDir}.diff`);
+        writeAtomic(path, text);
+        return path;
+      },
+    });
+    writeAtomic(join(dir, 'before.json'), `${JSON.stringify(inputs, null, 2)}\n`);
+    return ok({ action: 'audit-before-gathered', path: join(dir, 'before.json'), ...inputs });
+  });
+}
+
+function prCheckInputs(home, ref) {
+  for (const slug of subdirs(home)) {
+    const path = join(home, slug, 'audit', 'before.json');
+    if (!existsSync(path)) continue;
+    const inputs = JSON.parse(readFileSync(path, 'utf8'));
+    if (isProject(inputs.project, ref)) return inputs;
+  }
+  return null;
+}
+
+function prCheckStore(ref, path, { home, dataDir, now }) {
+  const inputs = prCheckInputs(home, ref);
+  if (!inputs) return fail(5, `no PR check gathered for ${ref}: run audit --before first`);
+  const value = readVerdicts(path);
+  const errors = validatePrVerdicts(value, inputs);
+  if (errors.length) return fail(2, ...errors);
+  const { slug } = inputs.project;
+  const live = new Map(readRecords(join(dataDir, slug)).records.filter(r => !r.archived && !r.supersededBy).map(r => [r.card, r]));
+  const at = now().toISOString();
+  const marked = [];
+  for (const [card, verdicts] of Object.entries(value.cards)) {
+    const gathered = inputs.cards.find(c => c.card === card);
+    const record = live.get(card);
+    if (!record || record.spikedAt !== gathered.record.spikedAt) return fail(5, `${card}'s record changed since the gather: run audit --before again`);
+    marked.push(markPrCheck(record, gathered, verdicts, { at }));
+  }
+  for (const r of marked) writeAtomic(join(dataDir, slug, `${r.card}.json`), serializeRecord(r));
+  const cards = marked.map(r => ({ card: r.card, ...verdictSummary(r.audits.filter(x => x.check === 'pr').at(-1)) }))
+    .sort((x, y) => cardNumber(x.card) - cardNumber(y.card));
+  return ok({ action: 'audit-before-stored', cards });
 }
 
 if (isEntry(import.meta.url)) {

@@ -9,8 +9,8 @@ next card to start, starts it on the right base, and plans the next cycle.
 | Skill | What it does |
 |---|---|
 | `/keiron-sequencer:spike` | Runs a thin spike pass over every open execution card of a project, in dependency order, in throwaway trees, with no commits. Writes one record per card. |
-| `/keiron-sequencer:respike` | Spikes a project again: drops the cards already built, bases every repo on what is built, replays old patches at no token cost and re-spikes the rest. |
-| `/keiron-sequencer:harvest` | Turns the spike records into Linear: blocks relations, new cards, and agent notes with acceptance cases, decisions and order notes. Writes only on your command with the plan hash. |
+| `/keiron-sequencer:respike` | Spikes a project again: drops the cards already built, bases every repo on what is built, replays old patches at no token cost and re-spikes the rest. Before the run, it checks each built card's record against its PR or branch, and you hand each gap to a card the run spikes or drop it; after the run, it checks every card it left alone against the fresh records, marking each item as holding, moved to another card, not built or dropped. |
+| `/keiron-sequencer:harvest` | Turns the spike records into Linear: blocks relations, new cards, and agent notes with acceptance cases, decisions and order notes, publishing only what a card still builds. Rewrites a card's description only from a text you approved. Writes only on your command with the plan hash. |
 | `/keiron-sequencer:next` | Recommends the next card to start: the nearest deadline first, then milestones in order, from the first with writable work, checking GitHub PRs and local branches. Reports the startable cards whose decision pack is unanswered or stale, and asks none of its questions. |
 | `/keiron-sequencer:start` | Starts one card: reads its record and blockers, picks the base branch (stacking on a blocker's PR or branch when needed), creates the branch, then drafts the card's decision pack, asks its open questions and saves the answers. A card with no Linear project starts too, without the record and the pack. |
 | `/keiron-sequencer:cycle` | Plans the next Linear cycle: carry-over first, then cards in `/next` order, sized from the spike records and shared by availability. |
@@ -27,7 +27,10 @@ next card to start, starts it on the right base, and plans the next cycle.
 4. **Cycle.** At cycle planning, `/keiron-sequencer:cycle`.
 5. **Respike when the records go stale.** When start reports a card's record
    stale, or new cards were added to the project, run `/keiron-sequencer:respike`.
-   It re-spikes only what changed and replays the rest. Then harvest again.
+   It checks the built cards against their PRs first, re-spikes only what
+   changed and replays the rest, then audits the open cards it left alone, so
+   a card's notes stop claiming scope that moved elsewhere. Then harvest
+   again.
 
 Respike refreshes the records and never writes to Linear; harvest writes to
 Linear and never spikes.

@@ -281,7 +281,7 @@ test('each repo base is listed with its kind, the cards of a combine and how far
     api: { kind: 'combine', heads: ['CRM-20', 'CRM-22'], behind: 2, ownCommits: null, warning: 'base 2 commits behind default' },
     web: { kind: 'default', heads: null, behind: null, ownCommits: null, warning: null },
   });
-  assert.deepEqual(Object.keys(report), ['schemaVersion', 'runId', 'project', 'complete', 'cards', 'replayed', 'bases', 'tracks', 'crossings', 'combined']);
+  assert.deepEqual(Object.keys(report), ['schemaVersion', 'runId', 'project', 'complete', 'cards', 'replayed', 'bases', 'tracks', 'crossings', 'combined', 'audit']);
   assert.deepEqual(report.project.pending, []);
 });
 

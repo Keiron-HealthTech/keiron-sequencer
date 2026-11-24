@@ -21,7 +21,8 @@ const unknownFields = (value, allowed) => Object.keys(value).filter(k => !allowe
 
 const NEW_KEY = /^[a-z0-9][a-z0-9-]*$/;
 const PLACEHOLDER = /^new:([a-z0-9][a-z0-9-]*)$/;
-const TOP_FIELDS = ['schemaVersion', 'project', 'edges', 'removals', 'splits', 'newCards', 'rejected', 'notes'];
+const TOP_FIELDS = ['schemaVersion', 'project', 'edges', 'removals', 'splits', 'newCards', 'rejected', 'notes', 'descriptions'];
+const DESCRIPTION_FIELDS = ['text', 'evidence', 'hold', 'ref'];
 const ENTRY_FIELDS = {
   edges: ['from', 'to', 'kind', 'evidence', 'ref', 'hold'],
   removals: ['from', 'to', 'reason', 'ref', 'hold', 'order'],
@@ -115,6 +116,23 @@ export function validateHarvest(value) {
   const notesOk = notes === undefined || notes === 'all'
     || (Array.isArray(notes) && notes.every(k => typeof k === 'string' && CARD_KEY.test(k)) && new Set(notes).size === notes.length);
   if (!notesOk) err('notes must be "all" or a list of card keys');
+  if (value.descriptions !== undefined) {
+    if (!isObject(value.descriptions)) err('descriptions must be an object of card keys');
+    else {
+      for (const [card, e] of Object.entries(value.descriptions)) {
+        const path = `descriptions.${card}`;
+        if (!CARD_KEY.test(card)) { err(`descriptions: ${card} is not a card key like CRM-123`); continue; }
+        if (!isObject(e)) { err(`${path} must be an object`); continue; }
+        for (const k of unknownFields(e, DESCRIPTION_FIELDS)) err(`${path}: unknown field ${k}`);
+        if (text(e.text, `${path}.text`) && e.text.split('\n').some(line => HEADERS.has(line.trimEnd()) || line.trim() === '+++')) {
+          err(`${path}.text must hold no agent notes block and no +++ line`);
+        }
+        text(e.evidence, `${path}.evidence`);
+        hold(e, path);
+        ref(e, path);
+      }
+    }
+  }
   return errors;
 }
 
@@ -227,11 +245,41 @@ export const caseSource = c => sha256(canonicalJson({ given: c.given, when: c.wh
 export const textSource = item => sha256(canonicalJson({ text: item.text })).slice(0, 12);
 
 const NOTE_ITEMS = [['decisions', 'd', 'decision'], ['openDecisions', 'o', 'openDecision']];
-const itemsOf = r => [
-  ...(Array.isArray(r.cases) ? [...r.cases].sort(byCaseId).map(c => ({ id: c.id, kind: 'case', source: caseSource(c), given: c.given, when: c.when, then: c.then })) : []),
+// Every item with its respike audit mark, ids assigned before anything is left out: an item with no mark holds.
+const markedItemsOf = r => [
+  ...(Array.isArray(r.cases) ? [...r.cases].sort(byCaseId).map(c => ({
+    item: { id: c.id, kind: 'case', source: caseSource(c), given: c.given, when: c.when, then: c.then }, audit: c.audit ?? null,
+  })) : []),
   ...NOTE_ITEMS.flatMap(([field, prefix, kind]) => (Array.isArray(r[field]) ? r[field] : [])
-    .map((item, i) => ({ id: `${prefix}${i + 1}`, kind, source: textSource(item), text: item.text }))),
+    .map((item, i) => ({ item: { id: `${prefix}${i + 1}`, kind, source: textSource(item), text: item.text }, audit: item.audit ?? null }))),
 ];
+const holds = audit => !audit || audit.verdict === 'holds';
+// Only what holds is published: a moved item is named under the card that owns it now, a not-built or dropped one is left out.
+const itemsOf = r => markedItemsOf(r).filter(x => holds(x.audit)).map(x => x.item);
+
+// Linear says what a card builds now, never where an item went: a moved item is only named in the plan's evidence, and the
+// record keeps its mark.
+function movedOf(r) {
+  const by = new Map();
+  for (const { item, audit } of markedItemsOf(r)) if (audit?.verdict === 'moved') by.set(audit.card, [...(by.get(audit.card) ?? []), item.id]);
+  return [...by].map(([card, ids]) => ({ card, ids })).sort((a, b) => number(a.card) - number(b.card) || compare(a.card, b.card));
+}
+
+const isAudited = r => markedItemsOf(r).some(x => x.audit);
+
+const leftOutOf = r => markedItemsOf(r).filter(x => x.audit && !['holds', 'moved'].includes(x.audit.verdict)).map(x => ({ id: x.item.id, verdict: x.audit.verdict }));
+
+// What a notes block says about a record: the items it publishes, the moved ones and where, and the ones left out.
+function notesEvidence(record, orders = []) {
+  const kept = itemsOf(record);
+  const left = leftOutOf(record);
+  return [
+    ...(kept.length ? [`record ${record.card}: ${kept.map(i => i.id).join(', ')}`] : []),
+    ...movedOf(record).map(m => `moved to ${m.card}: ${m.ids.join(', ')}`),
+    ...(left.length ? [`left out: ${left.map(l => `${l.id} (${l.verdict})`).join(', ')}`] : []),
+    ...(orders.length ? [`order: ${orders.map(o => o.card).join(', ')}`] : []),
+  ].join('; ');
+}
 
 // Every case, decision and open decision of the selected live records whose Spanish text is missing or no longer matches.
 export function itemsToTranslate(records, notes, selection = 'all') {
@@ -281,6 +329,13 @@ export function renderNotesBlock(record, notesForCard, orders = []) {
     lines.push('');
   }
   return [...lines, '+++'].join('\n');
+}
+
+// The description with its one notes block cut out, and the block it had; the counts are those replaceNotesBlock reports.
+function withoutBlock(description) {
+  const found = replaceNotesBlock(description, '');
+  if (found.count !== 1 || found.unterminated) return found;
+  return { ...found, description: withoutNotesBlock(description).trimEnd() };
 }
 
 export function replaceNotesBlock(description, block) {
@@ -338,7 +393,7 @@ export function approvalError(plan, approve) {
   return null;
 }
 
-const TYPE_RANK = ['card.create', 'relation.create', 'relation.delete', 'notes.replace'];
+const TYPE_RANK = ['card.create', 'relation.create', 'relation.delete', 'notes.replace', 'description.replace'];
 const byTypeThenId = (a, b) => TYPE_RANK.indexOf(a.type) - TYPE_RANK.indexOf(b.type) || compare(a.id, b.id);
 const byId = (a, b) => compare(a.id, b.id);
 const byPair = (a, b) => compare(pairId(a.from, a.to), pairId(b.from, b.to));
@@ -346,7 +401,7 @@ const byWarning = (a, b) => compare(a.kind, b.kind) || compare(canonicalJson(a),
 
 const recordsHash = records => sha256(records
   .filter(isLive)
-  .flatMap(r => itemsOf(r).map(i => `${r.card}:${i.id}:${i.source}`))
+  .flatMap(r => markedItemsOf(r).map(({ item, audit }) => `${r.card}:${item.id}:${item.source}${audit ? `:${audit.verdict}:${audit.card ?? ''}` : ''}`))
   .sort(compare)
   .join('\n'));
 
@@ -369,8 +424,11 @@ function reaches(edges, from, to) {
 function mentionsOf(record, key) {
   if (!record) return [];
   const names = new RegExp(`${key}(?!\\d)`);
-  const listed = (list, prefix) => (Array.isArray(list) ? list : []).flatMap((item, i) =>
-    (names.test(JSON.stringify(item)) ? [prefix === 'c' ? item.id : `${prefix}${i + 1}`] : []));
+  // A moved, not-built or dropped item is no longer published, so it orders nothing; its mark is left out of the match.
+  const listed = (list, prefix) => (Array.isArray(list) ? list : []).flatMap((item, i) => {
+    const { audit, ...text } = item ?? {};
+    return holds(audit) && names.test(JSON.stringify(text)) ? [prefix === 'c' ? item.id : `${prefix}${i + 1}`] : [];
+  });
   return [...listed(record.cases, 'c'), ...listed(record.decisions, 'd'), ...listed(record.openDecisions, 'o'), ...listed(record.findings, 'f')];
 }
 
@@ -590,7 +648,11 @@ export function computePlan({ harvest, records = [], notes = null, raw, descript
     });
   }
 
-  const withCases = new Map(records.filter(r => isLive(r) && itemsOf(r).length).map(r => [r.card, r]));
+  const descriptionEntries = harvest.descriptions ?? {};
+  for (const [card, entry] of Object.entries(descriptionEntries)) if (entry.hold) held.push({ id: `description:${card}`, hold: entry.hold, entry });
+  const rewritten = new Set(Object.keys(descriptionEntries).filter(card => !descriptionEntries[card].hold));
+  const newBlocks = new Map();
+  const withCases = new Map(records.filter(r => isLive(r) && (itemsOf(r).length || isAudited(r))).map(r => [r.card, r]));
   const selection = harvest.notes ?? [];
   const selected = selection === 'all' ? [...withCases.keys()].filter(card => onMap.has(card)) : [];
   if (selection !== 'all') {
@@ -612,24 +674,49 @@ export function computePlan({ harvest, records = [], notes = null, raw, descript
       });
     }
     if (missing.length) continue;
-    const block = renderNotesBlock(record, notes?.cards?.[card], cardOrders);
+    // An audited card where nothing holds any more publishes no block: the one it has is removed, not left frozen.
+    const block = itemsOf(record).length || cardOrders.length ? renderNotesBlock(record, notes?.cards?.[card], cardOrders) : null;
     const current = live.descriptions.get(card)?.description ?? '';
-    const next = replaceNotesBlock(current, block);
+    const next = block === null ? withoutBlock(current) : replaceNotesBlock(current, block);
     const id = `notes:${card}`;
     if (next.count > 1) { conflict(`notes: ${card} has ${next.count} agent notes blocks in its description; leave one`); continue; }
     if (next.unterminated) { conflict(`notes: ${card} has an agent notes header with no closing +++; fix the description by hand`); continue; }
-    if (next.before !== null && normalizeDescription(next.before) === normalizeDescription(block)) {
+    const evidence = notesEvidence(record, cardOrders);
+    if (rewritten.has(card)) { newBlocks.set(card, { block, evidence }); continue; }
+    if (block === null && next.before === null) { noop.push({ id, reason: 'no notes block to remove' }); continue; }
+    if (block !== null && next.before !== null && normalizeDescription(next.before) === normalizeDescription(block)) {
       noop.push({ id, reason: 'notes already current' });
       continue;
     }
     ops.push({
       id, type: 'notes.replace', card, issueId: live.descriptions.get(card)?.id ?? live.byKey.get(card).id,
-      evidence: [
-        ...(itemsOf(record).length ? [`record ${card}: ${itemsOf(record).map(i => i.id).join(', ')}`] : []),
-        ...(cardOrders.length ? [`order: ${cardOrders.map(o => o.card).join(', ')}`] : []),
-      ].join('; '),
+      evidence,
       before: { descriptionHash: descriptionHash(current), block: next.before },
       after: { descriptionHash: descriptionHash(next.description), block, description: next.description },
+    });
+  }
+
+  // A new card text replaces the part people wrote; the notes block goes in the same op, so the card is written once and
+  // its before-hash is the one the plan read. The block is the new one when the card is in notes, else the one it has.
+  for (const card of [...rewritten].sort((a, b) => number(a) - number(b) || compare(a, b))) {
+    const entry = descriptionEntries[card];
+    const id = `description:${card}`;
+    if (!onMap.has(card)) { conflict(`descriptions: ${card} is not a card of the project`); continue; }
+    if (!live.descriptions.has(card)) { conflict(`descriptions: the description of ${card} was not read; plan again`); continue; }
+    if (selected.includes(card) && !newBlocks.has(card)) continue;
+    const current = live.descriptions.get(card).description ?? '';
+    const found = replaceNotesBlock(current, '');
+    if (found.count > 1) { conflict(`descriptions: ${card} has ${found.count} agent notes blocks in its description; leave one`); continue; }
+    if (found.unterminated) { conflict(`descriptions: ${card} has an agent notes header with no closing +++; fix the description by hand`); continue; }
+    const block = newBlocks.has(card) ? newBlocks.get(card).block : found.before;
+    const kept = [...withoutNotesBlock(current).matchAll(MARKER)].map(m => m[0]).filter(m => !entry.text.includes(m));
+    const description = [entry.text.trimEnd(), ...(kept.length ? [kept.join('\n')] : []), ...(block ? [block] : [])].join('\n\n');
+    if (normalizeDescription(description) === normalizeDescription(current)) { noop.push({ id, reason: 'description already current' }); continue; }
+    ops.push({
+      id, type: 'description.replace', card, issueId: live.descriptions.get(card).id ?? live.byKey.get(card).id,
+      evidence: entry.evidence,
+      before: { descriptionHash: descriptionHash(current), description: current },
+      after: { descriptionHash: descriptionHash(description), description, notes: newBlocks.get(card)?.evidence ?? null },
     });
   }
 
@@ -687,7 +774,8 @@ export function observe(op, live, resolved = new Map()) {
       const sameTitle = live.titles?.get(titleKey(op.title));
       return sameTitle ? { drift: `a card titled "${op.title}" exists without the keiron-sequencer marker: ${sameTitle.join(', ')}` } : 'pending';
     }
-    case 'notes.replace': {
+    case 'notes.replace':
+    case 'description.replace': {
       const current = live.descriptions?.get(op.card);
       if (!current) return { drift: `${op.card} is no longer in the project` };
       const hash = descriptionHash(current.description);
@@ -721,7 +809,13 @@ export function renderReview(plan, { refusals = [], approveCommand, project, war
   const of = type => plan.ops.filter(op => op.type === type);
   const cards = of('card.create');
   const notes = of('notes.replace').flatMap(op => [
-    `### ${op.card}: ${op.before.block === null ? 'add the block' : 'replace the block'}`, '', '```text', op.after.block, '```', '',
+    `### ${op.card}: ${op.after.block === null ? 'remove the block' : op.before.block === null ? 'add the block' : 'replace the block'}`, '', op.evidence, '',
+    ...(op.after.block === null ? [] : ['```text', op.after.block, '```', '']),
+  ]);
+  const text = description => ['```text', withoutNotesBlock(description).trimEnd(), '```'];
+  const descriptions = of('description.replace').flatMap(op => [
+    `### ${op.card}: replace the description`, '', op.evidence, '', 'Before:', '', ...text(op.before.description), '', 'After:', '', ...text(op.after.description), '',
+    ...(op.after.notes ? [`The notes block is written in the same op (${op.after.notes}):`, '', '```text', replaceNotesBlock(op.after.description, '').before, '```', ''] : []),
   ]);
   return [
     ...header,
@@ -737,6 +831,7 @@ export function renderReview(plan, { refusals = [], approveCommand, project, war
       `- ${op.from} blocks ${op.to} (${op.kind}${op.offProject ? `, ${op.offProject} is off-project` : ''}): ${op.evidence}`)),
     ...section('Relations to remove', of('relation.delete').map(op => `- ${op.from} no longer blocks ${op.to}: ${op.evidence}`)),
     ...(notes.length ? ['## Agent notes', '', ...notes] : []),
+    ...(descriptions.length ? ['## Descriptions', '', ...descriptions] : []),
     '## Unchanged',
     '',
     `${plan.keep.length} listed relation(s) already in Linear.`,

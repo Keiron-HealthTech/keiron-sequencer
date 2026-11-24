@@ -129,16 +129,18 @@ export async function applyPlan(plan, { apiKey, fetchImpl, now, appendLog, sleep
       const verified = shows(await readBack(() => issueState(ids.get(from)), shows, sleep));
       return { verified, extra };
     },
-    'notes.replace': async op => {
-      const extra = () => ({ card: op.card, issueId: op.issueId, before: { block: op.before.block } });
-      const seen = observe(op, stateIndex(await issueState(op.issueId)));
-      if (seen !== 'pending') return { seen, extra };
-      await updateDescription(op.issueId, op.after.description, ctx);
-      const shows = state => observe(op, stateIndex(state)) === 'applied';
-      const verified = shows(await readBack(() => issueState(op.issueId), shows, sleep));
-      return { verified, extra };
-    },
+    'notes.replace': async op => replaceDescription(op, () => ({ card: op.card, issueId: op.issueId, before: { block: op.before.block } })),
+    'description.replace': async op => replaceDescription(op, () => ({ card: op.card, issueId: op.issueId, before: { description: op.before.description } })),
   };
+  // Notes and description ops both write the whole description, checked against the hash the plan read.
+  async function replaceDescription(op, extra) {
+    const seen = observe(op, stateIndex(await issueState(op.issueId)));
+    if (seen !== 'pending') return { seen, extra };
+    await updateDescription(op.issueId, op.after.description, ctx);
+    const shows = state => observe(op, stateIndex(state)) === 'applied';
+    const verified = shows(await readBack(() => issueState(op.issueId), shows, sleep));
+    return { verified, extra };
+  }
 
   const results = [];
   let wrote = false;
@@ -149,6 +151,7 @@ export async function applyPlan(plan, { apiKey, fetchImpl, now, appendLog, sleep
   const describe = op => {
     if (op.type === 'card.create') return { key: op.key };
     if (op.type === 'notes.replace') return { card: op.card, issueId: op.issueId, before: { block: op.before.block } };
+    if (op.type === 'description.replace') return { card: op.card, issueId: op.issueId, before: { description: op.before.description } };
     return { from: card(op.from) ?? op.from, to: card(op.to) ?? op.to };
   };
   for (const op of plan.ops) {
@@ -187,6 +190,8 @@ function undoAction(line) {
       return line.before?.block == null
         ? { result: 'manual', action: `remove the agent notes block from ${line.card} by hand; it had none before this run` }
         : { result: 'manual', action: `restore the agent notes block of ${line.card} by hand from block`, block: line.before.block };
+    case 'description.replace':
+      return { result: 'manual', action: `restore the description of ${line.card} by hand from description`, description: line.before.description };
     default: return { result: 'manual', action: `unknown op type ${line.type}; check it by hand` };
   }
 }

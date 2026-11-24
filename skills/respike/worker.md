@@ -79,7 +79,7 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs cross --track <id> --card <CARD> --
 
 1. `next` answers one of:
    - `action: 'card'`: the brief: `card`, `track`, `title`, `url`,
-     `description`, `origin`, `pr`, `offProject`, `previous`, the open
+     `description`, `origin`, `pr`, `offProject`, `previous`, `handed`, the open
      `trees` (repo to path) and the `replayed` entries it ran first.
      `resumed: true` means work from an earlier execution is already in the
      trees: continue it. `wip` names work this card did before a crossing
@@ -114,6 +114,10 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs cross --track <id> --card <CARD> --
      `priorFindings`: `holds`, `resolved` or `wrong`, with its text and
      ref, instead of rewriting it. A finding goes in `findings` only when
      it is new.
+   - `handed` (when present) lists items a built card's PR does not build
+     that the user handed to this card at the plan: `from`, `id`, the case
+     or the text, and the PR check's `note`. Cover each in this card's
+     cases or decisions, or say in a finding why the card cannot.
 3. Work the card in its trees. Open a repo's tree the first time the card
    needs it with `tree`, and edit only under the `path` it prints. The
    repo's setup runs there once. `action: 'setup-failed'` (Exit 1) names

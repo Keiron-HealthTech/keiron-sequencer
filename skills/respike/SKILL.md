@@ -3,11 +3,13 @@ name: respike
 description: >
   Make a new spike pass over a Linear project that was spiked before: pick the
   cards to re-spike, drop the cards already built (merged, open PRs and drafts,
-  local branches the user accepts), base every repo on what is actually built,
+  local branches the user accepts), check each built card's record against
+  its PR before the run, base every repo on what is actually built,
   replay the old patches of unbuilt ancestors at no token cost, re-spike the
-  rest with the /keiron-sequencer:spike card loop, and compare the new records with the
-  old ones in a saved report. Nothing begins before the user approves the
-  plan's hash.
+  rest with the /keiron-sequencer:spike card loop, audit the built and unbuilt
+  cards it did not re-spike against their PR diffs and the fresh records, and
+  compare the new records with the old ones in a saved report. Nothing begins
+  before the user approves the plan's hash.
   Trigger: "sequencer respike", "respike the project", "re-spike", "refresh the spike", "volver a spikear".
 license: Apache-2.0
 metadata:
@@ -20,7 +22,10 @@ The CLI is `node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs`. `preflight` is
 read-only and prints one JSON plan with an `approve` hash; `fetch` and `begin`
 run only with the hash of the plan the user approved; `config` drafts the
 missing config entries and writes the spike config only with the hash of the
-draft the user approved; `report` is offline. The walk itself is the spike's
+draft the user approved; `report` is offline; `audit --before` gathers the
+PR check (the plan's reads and the PR diffs) before the run, `audit` gathers
+the check against the fresh records (one Linear read) after it, and each
+stores your verdicts in the records with `--verdicts`, offline. The walk itself is the spike's
 card loop, `node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs`, with the rules of
 /keiron-sequencer:spike, worked track by track (Step 6). With one worker the
 main session does the card work itself; with more, it coordinates one worker
@@ -99,7 +104,7 @@ Install: the user installs it as a plugin; do not run these yourself:
 ## Step 1: Plan
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs preflight <project ref> [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]...
+node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs preflight <project ref> [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]... [--hand <CARD>:<item>=<CARD>]... [--drop <CARD>:<item>]... [--skip-check <CARD>]...
 ```
 
 The ref is the project URL, slug, UUID or identifier. With no flags the
@@ -150,7 +155,7 @@ the CLI writes the spike config only with the hash of the draft the user
 approved. Three forms, in this order: the draft, the review and the write.
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs config <project ref> --out <draft.json> [--root <dir>]... [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]...
+node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs config <project ref> --out <draft.json> [--root <dir>]... [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]... [--hand <CARD>:<item>=<CARD>]... [--drop <CARD>:<item>]... [--skip-check <CARD>]...
 node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs config --draft <draft.json>
 node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs config --draft <draft.json> --approve <hash>
 ```
@@ -255,6 +260,10 @@ Show, in this order:
   PR or branch, the short sha, `needed`, and each warning. Open PRs and
   drafts count as built: a draft's head is real code, and /keiron-sequencer:start
   stacks on a draft too.
+- The PR checks in `prChecks`: each built card with a record, its PR or
+  branch and its `status` (`current`, `unchecked`, `stale` when the head
+  moved since the check, `skipped`), then the `handoffs` (each item a PR
+  does not build, handed to a card this run spikes) and the `drops`.
 - Each repo's base in `bases`: `default`, `pr`, `local`, or `combine` with its
   heads (card and short sha), and "base N commits behind default" from
   `behind` when the base misses default-branch commits.
@@ -301,7 +310,7 @@ On `action: 'ask'`: One question per ask, with its `message`, offering its
   `--unbuilt <CARD>`. On the user's yes, run with the ask plan's `approve`:
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs fetch <project ref> --approve <hash> [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]...
+node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs fetch <project ref> --approve <hash> [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]... [--hand <CARD>:<item>=<CARD>]... [--drop <CARD>:<item>]... [--skip-check <CARD>]...
 ```
 
   It prints `fetched` and `nextApprove`. Preflight again with the same flags
@@ -315,7 +324,7 @@ naming the repo, the base and how many commits it misses.
   `approve`:
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs fast-forward <project ref> --repo <repoDir> --approve <hash> [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]...
+node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs fast-forward <project ref> --repo <repoDir> --approve <hash> [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]... [--hand <CARD>:<item>=<CARD>]... [--drop <CARD>:<item>]... [--skip-check <CARD>]...
 ```
 
   It moves only that branch, refuses a checked-out one with uncommitted work,
@@ -327,6 +336,69 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs fast-forward <project ref> --repo
   user's moves and nothing is pushed. Add the flag to every later
   `preflight`, `fetch` and `begin`. When it does not merge, the plan asks
   `default-conflict`: drop the flag, or treat a card as unbuilt.
+
+### The PR check
+
+A built card the run builds on keeps the record of its last spike, which
+can claim more than its PR builds. Before the run, its record is checked
+against the PR, so a gap is settled before any card is spiked on top of it.
+
+- `pr-unchecked`: "<CARD>'s record has not been checked against its PR (or
+  its head moved since the check)." Run the check below, or answer
+  `--skip-check <CARD>` on the user's say-so to start without it.
+- `not-built`: "<CARD> <item> is in its record (or its description) but the
+  PR does not build it: fix the PR first, hand it to a card this run spikes,
+  or drop it." The answers are `--hand <CARD>:<item>=<CARD>` (the item goes
+  into that card's brief as `handed`), `--drop <CARD>:<item>`, or fixing the
+  PR, which ends this preflight: the user fixes it, and the next preflight
+  sees the new head as `stale`. One question per item.
+
+Gather with the same selection flags as the preflight:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs audit <project ref> --before [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]... [--hand <CARD>:<item>=<CARD>]... [--drop <CARD>:<item>]... [--skip-check <CARD>]...
+```
+
+It needs the key, writes no record, and saves `before.json` and one diff
+file per PR or branch under `~/.keiron-sequencer/<slug>/audit/`. Each of its
+`cards` is a built card whose check is unchecked or stale: what it is
+checked `against` (each with `diff.path` and the lines per file in
+`diff.files`, or an `error`), its `description` (the notes block cut out)
+and its old `items` (cases `c1`…, decisions `d1`…). Read each diff and judge
+each item: `holds` when the diff builds it, `not-built` when it does not,
+each with a one-line `note` naming the file or what is missing. What the
+description asks for and the diff does not build goes in `missing`, one line
+each (it is asked as `m1`, `m2`…). Write the verdicts next to the inputs as
+`before-verdicts.json`:
+
+```json
+{
+  "schemaVersion": 1,
+  "cards": {
+    "CRM-20": {
+      "items": {
+        "c3": { "verdict": "holds", "note": "src/letters/files.ts finds a file by position." },
+        "c4": { "verdict": "not-built", "note": "The PR has no lock check." }
+      },
+      "missing": []
+    }
+  }
+}
+```
+
+Show the user each card's verdicts, then store them and preflight again:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs audit <project ref> --before --verdicts <verdicts.json>
+```
+
+It is offline, checks every card before it writes any record, marks each
+item with its `audit` (`check: 'pr'`, `verdict`, `note`, `at`) and adds the
+check, with the heads it saw and the `missing` scope, to the record's
+`audits`. A check never moves or drops an item: that is the user's answer
+to `not-built`. Exit 2: the verdicts do not validate (a verdict other than
+`holds` or `not-built` included). Exit 5: nothing was gathered, or a record
+was re-spiked since the gather.
 
 On `action: 'stop'` (code `cycle`, with its `members`): A `stop` creates
 nothing. Name the members and stop; the blocks are fixed in Linear. On
@@ -342,7 +414,7 @@ the user wants. Anything other than an explicit yes is a no.
 ## Step 5: Begin
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs begin <project ref> --approve <hash> [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]... [--max-tokens <n>] [--max-cards <n>] [--box <n>] [--workers <n>] [--checks <n>] [--session-file <transcript.jsonl>]
+node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs begin <project ref> --approve <hash> [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]... [--hand <CARD>:<item>=<CARD>]... [--drop <CARD>:<item>]... [--skip-check <CARD>]... [--max-tokens <n>] [--max-cards <n>] [--box <n>] [--workers <n>] [--checks <n>] [--session-file <transcript.jsonl>]
 ```
 
 It recomputes the plan and creates the run only when the hash matches and
@@ -421,7 +493,11 @@ under a tree's `path`. Use `candidates` and `fixup` when the card changes
 code an earlier card wrote. Run the premise check first, as in
 /keiron-sequencer:spike. The brief's `previous` holds the card's old record:
 give each of its findings an outcome in `priorFindings` (`holds`, `resolved`
-or `wrong`) instead of rewriting it. Write the notes from `notes-template`:
+or `wrong`) instead of rewriting it. The brief's `handed` lists the items a
+built card's PR does not build that the user handed to this card at the
+plan (`from`, `id`, the case or text, the PR check's `note`): cover each in
+this card's cases or decisions, or say in a finding why the card cannot.
+Write the notes from `notes-template`:
 between 3 and 6 given/when/then cases in English (about 4), each open guess
 in `openDecisions` after its implication check, tagged with `impact` and
 `owner`, the attested `piiInLogs` paths (`[]` when none), no diff text. A
@@ -601,7 +677,7 @@ again, and the coordinator runs `combine` again after its diagnosis.
 
 Deferred crossings live in the run, not in the coordinator's memory: a pause
 or a new session loses the coordinator's list, and `cross` refuses on a paused
-run. On resume, run the report (Step 8) and take every crossing whose `status`
+run. On resume, run the report (Step 9) and take every crossing whose `status`
 is `pending` (a crossing whose `cross` was killed mid-merge reads `pending` too). Run its `cross` again (its `from`, `to`, `kind` and `note`, with
 the track its card lives in now) before you start a worker for its track: a
 worker started first would reopen the stopped card and work it without the
@@ -611,7 +687,102 @@ worker to run it again once `next` hands it the card. A rerun that answers
 `deferred` waits for the other track's worker to return from its `end`, as in
 Step 6.
 
-## Step 8: Report
+## Step 8: Audit the cards the run did not re-spike
+
+Once the run is complete. The PR check held each built card against its PR
+before the run (Step 3); this audit holds every open card the run left alone
+against the records the run spiked, since a fresh spike can take scope over
+from one of them. The CLI gathers and stores, you make the calls.
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs audit <project ref> [--run <runId>]
+```
+
+It needs the key, reads the project's card descriptions once, reads no PR,
+and writes no record: it saves `inputs.json` under
+`~/.keiron-sequencer/<slug>/runs/<runId>/audit/` and prints:
+
+- `cards`: every open card on the map the run did not spike (unselected or
+  replayed), with a live record. `kind` is `built` (an open PR, a draft or an
+  accepted local branch, in `against`) or `unbuilt`. A built card has its
+  `prCheck` (what held and what was not built before the run, and the
+  `missing` scope), and every card its `handed` items (each `id` with the
+  card the plan handed it `to`) and `dropped` items. Each card has its
+  `description` (the notes block cut out), its old `items` (cases `c1`… and
+  decisions `d1`…, each with its latest `audit` mark or null) and its
+  `mentions` (the fresh cases, decisions, open decisions and findings that
+  name it).
+- `fresh`: the cases and decisions of every record this run spiked.
+- `skipped`: `merged` cards (not audited: harvest leaves their notes alone)
+  and cards with `no-record`.
+
+Judge each card, item by item:
+
+- Read its `mentions` first: a fresh decision or case that names the card
+  says where its scope went. Then compare its items with the `fresh` items
+  of the other cards: two cards whose cases claim the same behavior, or a
+  fresh decision that contradicts one of its items.
+- An item a fresh card now owns is `moved`, with that `card`: a `handed`
+  item is moved when the card it went to covers it. One that no card should
+  build any more is `dropped`, a `dropped` item first. A built card's item
+  the PR check found `not-built` that no fresh card covers stays
+  `not-built`. The rest `holds`.
+- Judge every card in `cards`, or it stays `pending` in the report. An
+  unbuilt card that no mention names and no fresh item matches holds, item by
+  item, with the note that no fresh card claims it.
+- Every item gets exactly one verdict and a one-line `note` with the
+  evidence: the fresh card and item that claims the same behavior, or the PR
+  check. Never call an item moved from a title alone. `not-built` is for a
+  built card only, and `missing` scope belongs to the PR check.
+- When the description no longer says what the card builds (scope moved out,
+  dropped, or the PR check's `missing`), propose a new text in Spanish under
+  `description`, with `why`. It is a proposal: it reaches Linear only through
+  /keiron-sequencer:harvest, on the user's yes.
+
+Write the verdicts next to the inputs, as `verdicts.json` in the same folder:
+
+```json
+{
+  "schemaVersion": 1,
+  "runId": "<runId>",
+  "cards": {
+    "CRM-20": {
+      "items": {
+        "c1": { "verdict": "moved", "card": "CRM-30", "note": "CRM-30 c1 opens the same pictures." },
+        "c3": { "verdict": "holds", "note": "The PR check found it built; no fresh card claims it." }
+      },
+      "description": { "text": "<nuevo texto>", "why": "<why>" }
+    }
+  }
+}
+```
+
+Show the user each card's verdicts (what holds, what moved and to which
+card, what is not built or dropped, and the proposed description), then
+store them:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs audit <project ref> --verdicts <verdicts.json> [--run <runId>]
+```
+
+It is offline and checks every card before it writes any record: each card
+was gathered, each item of its record has one verdict, a moved item names
+another card of the map. It marks each item with `audit` (`check: 'fresh'`,
+`verdict`, the `card` of a moved one, `note`, `runId`, `at`) and adds the
+audit to the record's `audits`, with what it was checked against, every
+verdict and the proposed description. It never removes or renumbers an item
+and never changes `spikedAt`, so the record keeps the history: the PR check
+and each run's audit have their own entry, and storing the same run again
+replaces that run's marks. It prints each card's `holds`, `moved`,
+`notBuilt` and `dropped`. Harvest then publishes only the items that hold;
+where an item went stays in the record and the harvest review, never in
+Linear.
+
+Exit 2: the verdicts do not validate; show the errors, fix the file and store
+again. Exit 5: the run is not complete, the audit was not gathered, or a
+record was re-spiked since the gather: gather again.
+
+## Step 9: Report
 
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs report <project ref> [--run <runId>]
@@ -643,6 +814,13 @@ blocks nothing and changes no record. Show:
   `spikedAncestors`), `project.replanned` (each fixup dropped from a
   pending replay after a turn, with its card, patch, reason and cause),
   `project.unselected`, and `project.pending` when `complete` is false.
+- Under `## Audit`, next to the comparison, `audit`: whether it was
+  `gathered`; for each card judged, its `kind`, what it was checked
+  `against`, the items that hold, the `moved` ones with the card that owns
+  each now, the `notBuilt` and `dropped` ones, the proposed `description`
+  and, for a built card, its `prCheck` (what held, what was not built and
+  the `missing` scope before the run); the `pending` cards gathered but not
+  judged yet; and the `skipped` ones (`merged`, `no-record`).
 - Under `## Tracks`, each entry of `tracks`: its id, status, `mergedInto` and
   cards. A one-track run shows its one track, and no `## Crossings` or
   `## Combined check`.
@@ -660,10 +838,10 @@ Name the saved file for the user to review, with the records in
 `~/.keiron-sequencer/<slug>/`. Exit 1 means a record field holds diff text and nothing was
 written, or there is no respike run for the project.
 
-## Step 9: Offer /keiron-sequencer:harvest
+## Step 10: Offer /keiron-sequencer:harvest
 
-Offer /keiron-sequencer:harvest to review the new cases and notes; never run it unless
-the user asks.
+Offer /keiron-sequencer:harvest to review the new cases and notes, and the
+audit's description proposals; never run it unless the user asks.
 
 ## Exit codes
 
@@ -679,14 +857,19 @@ the user asks.
   repo, or an existing `--out`; a `--root <dir>` that is relative or not a
   folder; a config.json that is not JSON (never replaced); a draft that is
   not JSON, or at the write one that does not validate or holds a URL with
-  credentials.
-- **Exit 3**: no Linear key found (the config draft too; its review and
-  write need none).
+  credentials. A `--hand` or `--drop` that answers no not-built item of a
+  checked card, or hands an item to a card this run does not spike. From
+  `audit --verdicts` and `audit --before --verdicts`: verdicts that do not
+  validate; no record was written.
+- **Exit 3**: no Linear key found (the config draft and both audit gathers
+  too; the config review and write and the audit stores need none).
 - **Exit 4**: secret-like content in a card patch at `end`; nothing written.
 - **Exit 5**: refused, nothing ran: an open run, a hash that does not match,
   `begin` on a plan that is not `ready`, `fetch` with no `bases-unknown`
   ask, or a config draft or config.json changed since its hash was shown.
-  At `cross`: the need closes a cycle.
+  At `cross`: the need closes a cycle. At `audit`: the run is not complete,
+  the store found no gathered audit or PR check, or a record was re-spiked
+  since the gather.
 - **Exit 6**: a tree guard failed; nothing written.
 - **Exit 7**: usage unmeasured while a token cap is set.
 - **Exit 8**: the typecheck failed at `end`; nothing written.
