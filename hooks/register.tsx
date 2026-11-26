@@ -340,8 +340,12 @@ async function sync($: Dollar) {
     return
   }
   const pack = started.slug ? parsed<PackJson>(await readText($, `${home}/${started.slug}/packs/${started.card}.json`)) : null
-  const next = cardOfStart(started, pack, prev)
-  if (next && JSON.stringify(next) !== JSON.stringify(prev)) await update($, card, () => next)
+  // Merged against the value at write time, so a phase step that landed during the reads above is kept.
+  const merged = (c: CardStatus | null) => {
+    const next = cardOfStart(started, pack, c)
+    return next && JSON.stringify(next) !== JSON.stringify(c) ? next : c
+  }
+  if (merged(prev) !== prev) await update($, card, merged)
 }
 
 async function onStep($: Dollar, step: Step | null) {

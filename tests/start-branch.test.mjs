@@ -2,9 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { draftPack, writePack } from '../scripts/lib/packs.mjs';
 import { readStarted, startedKey, startedPath } from '../scripts/lib/start/started.mjs';
 import { guardNetwork } from './helpers/no-network.mjs';
-import { appRepo, CARD, FAKE_CHECKOUT, fakeStartFixture, GIT_BRANCH_NAME, HEAD_SHA, SENTINEL, startIssue } from './helpers/start-fixture.mjs';
+import { appRepo, CARD, FAKE_CHECKOUT, fakeStartFixture, GIT_BRANCH_NAME, HEAD_SHA, SENTINEL, SLUG, startIssue, startRecord } from './helpers/start-fixture.mjs';
 
 guardNetwork();
 
@@ -334,4 +335,25 @@ test('a started file that cannot be written leaves the branch made and the outpu
   const r = await branch(f);
   assert.equal(r.code, 0, r.stderr);
   assert.equal(JSON.parse(r.stdout).action, 'created');
+});
+
+test('the started entry carries the plan facts and the pack stamp the status line reads', async t => {
+  const f = fixture(t);
+  const pack = draftPack(startRecord(CARD, { openDecisions: [{ text: 'Who may see it.', impact: 'design', owner: 'people' }] }), { description: card.description }, {});
+  writePack(f.dataDir, SLUG, pack);
+  const shown = await plan(f);
+  assert.equal((await branch(f, [], shown.approve)).code, 0);
+  const entry = readStarted(f.home, FAKE_CHECKOUT).branches[GIT_BRANCH_NAME];
+  assert.deepEqual(entry.packStamp, pack.stamp);
+  assert.deepEqual(entry.plan.card, { key: CARD, project: { slug: SLUG } });
+  assert.deepEqual(entry.plan.brief.pack, { stale: shown.brief.pack.stale, answered: shown.brief.pack.answered, open: shown.brief.pack.open });
+  assert.deepEqual(Object.keys(entry).sort(), ['action', 'at', 'branch', 'card', 'packStamp', 'plan', 'slug']);
+});
+
+test('resuming the branch the checkout is already on is written too', async t => {
+  const f = fixture(t, { live: liveCheckout({ local: ['main', GIT_BRANCH_NAME], current: GIT_BRANCH_NAME }) });
+  const r = await branch(f, ['--resume', GIT_BRANCH_NAME]);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).action, 'already-on');
+  assert.equal(readStarted(f.home, FAKE_CHECKOUT).branches[GIT_BRANCH_NAME].action, 'already-on');
 });
