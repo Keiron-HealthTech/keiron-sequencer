@@ -84,7 +84,8 @@ function spikeRecords(raw, { dataDir, repoDataDir }) {
   }));
   const moved = dataInRepoWarning({ dataDir, repoDataDir, slug: raw.project.slug, display: dir });
   if (moved) warnings.push(moved);
-  return { sizes: sizesFor(live), summary: { dir, count: live.length, invalid: invalid.length }, warnings };
+  const gates = new Map(live.map(r => [r.card, (r.openDecisions ?? []).filter(d => d?.impact === 'gate').map(d => d.text)]).filter(([, texts]) => texts.length));
+  return { sizes: sizesFor(live), gates, summary: { dir, count: live.length, invalid: invalid.length }, warnings };
 }
 
 function analyze({ raw, descriptions }, data) {
@@ -140,7 +141,7 @@ function render({ read, analyzed: a, offMap, now, config, gh, git, listDir }) {
   const prs = pullRequests(gh, { repos, known, keys: open.map(c => c.key), offMapKeys: [...offMap.keys()], attachments });
   const work = localWork(git, { config, repoDirs, ...(listDir ? { listDir } : {}) });
   const result = classify({
-    cards, edges: a.edges, critical: a.critical, criticalTies: a.criticalTies, offMap, descriptions, viewer, prs, work, config,
+    cards, edges: a.edges, critical: a.critical, criticalTies: a.criticalTies, offMap, descriptions, viewer, prs, work, config, decisionGates: a.records.gates,
   });
   const warnings = [...raw.warnings, ...boardWarnings(a), ...a.records.warnings, ...result.warnings];
   const out = {

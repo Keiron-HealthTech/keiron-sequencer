@@ -182,8 +182,12 @@ test('an existing, unarchived card outside the project may be one end of any kin
   const w = world(['CRM-1', 'CRM-2'], [['AUTH-7', 'CRM-2']]);
   const r = plan({ edges: [e('AUTH-8', 'CRM-1'), e('AUTH-7', 'CRM-2', { kind: 'gate' })] }, w, { outside: OUTSIDE });
   assert.deepEqual(r.refusals, []);
-  assert.deepEqual(r.plan.ops, [created('AUTH-8', 'CRM-1', { offProject: 'AUTH-8' })]);
+  assert.deepEqual(r.plan.ops.filter(op => op.type !== 'notes.replace'), [created('AUTH-8', 'CRM-1', { offProject: 'AUTH-8' })]);
   assert.deepEqual(r.plan.keep, [{ from: 'AUTH-7', to: 'CRM-2', kind: 'gate', evidence: 'AUTH-7 before CRM-2' }]);
+  // The kept gate edge writes its "Sale después de" line into the blocked card's notes.
+  const notes = r.plan.ops.filter(op => op.type === 'notes.replace');
+  assert.deepEqual(notes.map(op => op.card), ['CRM-2']);
+  assert.match(notes[0].after.block, /- \*\*AUTH-7\.\*\* Sale después de AUTH-7: no necesita su código\./);
 
   const bad = plan({ edges: [e('AUTH-9', 'CRM-1'), e('AUTH-404', 'CRM-1'), e('AUTH-7', 'AUTH-8')] }, w, { outside: OUTSIDE });
   assert.equal(bad.plan, null);

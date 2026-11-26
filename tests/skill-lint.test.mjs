@@ -221,7 +221,7 @@ test('spike: notes start from notes-template, carry about 4 English cases, open 
   spikeSays('About 4 English given/when/then cases at card end');
   spikeSays('Start from `notes-template`');
   spikeSays('Run the implication check on every open guess before recording it');
-  for (const text of ['`resolved`', '`narrowed`', '`eliminated`', 'tag it with `impact` (`design` or `detail`) and `owner` (`people` or `code`)']) spikeSays(text);
+  for (const text of ['`resolved`', '`narrowed`', '`eliminated`', 'tag it with `impact` (`design`, `detail` or `gate`) and `owner` (`people` or `code`)']) spikeSays(text);
   spikeSays('Never auto-resolve a decision about policy, security posture, legal or retention, UX copy, or rollout timing');
   spikeSays('`piiInLogs`');
   spikeSays('use `[]` when there are none');

@@ -46,7 +46,15 @@ already in `edges`, `removals` or `rejected` are left out.
 
 Write `~/.keiron-sequencer/<slug>/harvest/harvest.json` (`schemaVersion: 1`, `project.slug`).
 
-- `edges[{from, to, kind, evidence}]`: `kind` is `code`, `deploy` or `gate`;
+- `edges[{from, to, kind, evidence}]`: `kind` is `code`, `deploy` or `gate`. A
+  `deploy` or `gate` edge needs none of the blocker's code: the plan writes
+  "Sale después de <blocker>: no necesita su código." into the blocked card's
+  notes, under «Orden con otras tarjetas», and /keiron-sequencer:next and
+  /keiron-sequencer:start read it as a gate on merging and deploying instead
+  of a blocker to stack on. A Linear relation with no such line is a `code`
+  dependency, so list a hand-made relation that only orders shipping here
+  with its kind (it is kept, and gets the line). Every kind still orders the
+  cards, for the backward-milestone, redundant and unordered-reference checks;
   `evidence` is required. Copy a draft only after checking it, and drop its
   `"draft": true` (a draft entry is rejected).
 
@@ -177,8 +185,9 @@ remove, the agent notes blocks, the descriptions with their text before and
 after, the unchanged and held counts, and the exact apply command. Each notes block starts with `+++ Notas del agente` and holds
 up to three sections, in this order: «Casos de aceptación», «Decisiones» and
 «Decisiones abiertas». An open decision ends with `(abierta, la deciden
-personas)` when people own it, `(acotada)` when the code narrowed it, or both
-as `(acotada, la deciden personas)`. A block under the old title, `+++ Notas
+personas)` when people own it, `(acotada)` when the code narrowed it, `(antes
+de mergear o desplegar)` when it is a gate, combined as `(acotada, la deciden
+personas)` or `(antes de mergear o desplegar, la deciden personas)`. A block under the old title, `+++ Notas
 del agente (casos de aceptación)`, is replaced, not duplicated. For a card
 the respike audited, the review's evidence under its block names the items
 that moved and where, and the ones left out; none of that is written to

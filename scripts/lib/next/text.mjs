@@ -7,6 +7,9 @@ const ISSUE_TAG = /<issue\b[^>]*\blabel="([^"]+)"[^>]*\/?>(?:<\/issue>)?/g;
 const MENTION = new RegExp(`\\[(${ID})\\]\\(<?https?://linear\\.app/[^)\\s>]*>?\\)`, 'g');
 const ISSUE_URL = new RegExp(`https?://linear\\.app/[^/\\s]+/issue/(${ID})(?:/[^\\s)>]*)?`, 'g');
 const QA_LIVE = new RegExp(`(${ID})\\s+deployado en QA`, 'g');
+// A card that only ships after another needs none of its code: the blocks relation between them is a gate on merging and
+// deploying, never a base to stack on. Harvest writes it for its deploy and gate edges; a person can write it too.
+const SHIPS_AFTER = new RegExp(`(?<![Nn]o )\\b[Ss]ale después de\\s+(${LIST})`, 'g');
 
 // Linear writes a card mention as an <issue> tag (MCP), a markdown link or a bare URL (GraphQL); each reads as its id.
 const plain = text => String(text ?? '').replace(ISSUE_TAG, '$1').replace(MENTION, '$1').replace(ISSUE_URL, '$1');
@@ -31,5 +34,6 @@ export function markers(description) {
     deferrable: /se puede diferir|carta elástica|\bdiferido\b/i.test(text),
     noPr: /\bno lleva PR\b/i.test(text),
     qaLive: [...new Set([...text.matchAll(QA_LIVE)].map(m => m[1]))],
+    after: [...new Set([...text.matchAll(SHIPS_AFTER)].flatMap(m => idsIn(m[1])))],
   };
 }

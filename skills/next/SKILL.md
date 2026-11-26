@@ -93,6 +93,12 @@ A `data-in-repo` warning means the records are still in the plugin repo's old
   - `textBlockers`: dependencies written only in card text, which Linear lacks;
   - `checks`: what the CLI cannot verify, such as a dependency that must be live
     in QA;
+  - `gates`: what must clear before the card merges or deploys, never before it
+    starts: `card` gates (a blocker the card only ships after, written
+    "Sale después de <CARD>" in its text, until that card is merged or done)
+    and `decision` gates (open decisions of its record tagged `gate`). Only a
+    plain blocks relation is a code dependency that stacks or blocks: a
+    "Sale después de" blocker, in any repo, never does;
   - `deferrable`, `size`, `estimate`, `critical`, `downstream`, `deadline` with
     `deadlineFrom` (`card` or `milestone`), `dueDate` and `milestoneTargetDate`.
 - `overdue[]`: every open card with an overdue deadline that is not free, with
@@ -138,8 +144,8 @@ Today is the JSON's `today`, the machine's local calendar date.
   (`L · unknown`). The tier is relative to this project's spiked cards. In
   `1109 lines · existing PR`, "existing PR" comes from the spike record's origin (the trial copied a real PR), not from GitHub;
   the CLI still decides whether the card is taken. Existing-PR cards have no
-  tier and no tag. Never show effort or `timeBox`. Then `unverified` and
-  `checks`, when present.
+  tier and no tag. Never show effort or `timeBox`. Then `unverified`,
+  `checks` and `gates` (as "before merge or deploy: …"), when present.
 - **The alternate**, one line: the card, its size (`size.label` when non-null, else the Linear `estimate` (rough size), else "no size"), its verdict tag as in the pick, and whether it is a
   different repo or only a different file zone.
 - **Overdue**: every `overdue[]` entry: key, title, the date (`dueDate` or

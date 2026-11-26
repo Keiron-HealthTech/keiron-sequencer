@@ -75,7 +75,7 @@ export function checkNotes(notes) {
   if (!Array.isArray(notes?.openDecisions)) errors.push('notes.openDecisions: expected an array (use [] when there are none)');
   else {
     notes.openDecisions.forEach((d, i) => {
-      if (d && typeof d === 'object' && !('impact' in d)) errors.push(`notes.openDecisions[${i}].impact: required (design or detail)`);
+      if (d && typeof d === 'object' && !('impact' in d)) errors.push(`notes.openDecisions[${i}].impact: required (design, detail or gate)`);
     });
   }
   errors.push(...validateNoteFields(notes).filter(e => !e.startsWith('notes:')));

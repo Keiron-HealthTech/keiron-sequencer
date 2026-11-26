@@ -496,7 +496,7 @@ test('impact, status, owner and eliminated validate when present and keep ORDER'
   assert.deepEqual(validateRecord({ ...FULL, openDecisions: [full] }), []);
   assert.deepEqual(Object.keys(canonicalRecord({ ...FULL, openDecisions: [full] }).openDecisions[0]), ['text', 'impact', 'status', 'owner', 'eliminated', 'ref']);
   assert.deepEqual(Object.keys(canonicalRecord({ ...FULL, openDecisions: [full] }).openDecisions[0].eliminated[0]), ['option', 'why']);
-  assert.deepEqual(OPEN_DECISION_IMPACTS, ['design', 'detail']);
+  assert.deepEqual(OPEN_DECISION_IMPACTS, ['design', 'detail', 'gate']);
   assert.deepEqual(OPEN_DECISION_STATUSES, ['open', 'narrowed']);
   assert.deepEqual(OPEN_DECISION_OWNERS, ['people', 'code']);
   const table = [

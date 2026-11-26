@@ -204,7 +204,7 @@ test('notes-template prints a skeleton that passes checkNotes once placeholders 
   assert.deepEqual(Object.keys(out.notes).sort(), ['cases', 'decisions', 'engram', 'findings', 'openDecisions', 'piiInLogs', 'scope']);
   assert.deepEqual(Object.keys(out.notes.openDecisions[0]), ['text', 'impact', 'status', 'owner', 'eliminated', 'ref']);
   assert.deepEqual(out.allowed, {
-    source: ['engram', 'linear', 'patch'], kind: ['reorder', 'split', 'under-scoped', 'risk'], impact: ['design', 'detail'],
+    source: ['engram', 'linear', 'patch'], kind: ['reorder', 'split', 'under-scoped', 'risk'], impact: ['design', 'detail', 'gate'],
     status: ['open', 'narrowed'], owner: ['people', 'code'], outcome: ['holds', 'resolved', 'wrong'],
   });
   assert.notDeepEqual(checkNotes(out.notes), []);

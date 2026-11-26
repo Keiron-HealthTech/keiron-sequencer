@@ -9,8 +9,9 @@ import { allowedRepos, loadConfig } from '../spike/config.mjs';
 import { packStale, readPack } from '../packs.mjs';
 import { displayData } from '../spike/home.mjs';
 import { runChain } from '../spike/run-base.mjs';
-import { chainTop, classifyBlocker, decideBase } from './base.mjs';
-import { buildBrief, recordNote, resolvePatches } from './brief.mjs';
+import { markers } from '../next/text.mjs';
+import { chainTop, classifyBlocker, decideBase, gateText } from './base.mjs';
+import { buildBrief, decisionGates, recordNote, resolvePatches } from './brief.mjs';
 import { cardRepos, carriesKey, currentCheckout, findResume, givenBranch, mapRepo, prsFor, refContains, remoteHeads, repoMatch, uniquePrs } from './checkout.mjs';
 import { branchNameFor, startSettings } from './config.mjs';
 import { routeFor, verdictFor } from './route.mjs';
@@ -74,13 +75,23 @@ function repoReasons(issue, checkout, config, found, warnings) {
   return { reasons: [{ ...reason('wrong-repo', message), checkouts }], repos };
 }
 
-async function gatherBlockers(cardKey, analyzed, flags, { key, fetchImpl }, warnings) {
+// A card the card only ships after ("Sale después de" in its text) needs none of its code: it is a gate on merging and
+// deploying until it is done, never a blocker, unless the user names it with --blocker.
+async function gatherBlockers(cardKey, analyzed, flags, { key, fetchImpl, description }, warnings) {
   const card = analyzed.cards.find(c => c.key === cardKey);
+  const after = new Set(markers(description).after.filter(k => k !== cardKey && !flags.blockers.includes(k)));
   const listed = new Map();
-  const add = (k, source) => { if (k !== cardKey && !listed.has(k)) listed.set(k, source); };
+  const add = (k, source) => { if (k !== cardKey && !listed.has(k) && !after.has(k)) listed.set(k, source); };
   for (const e of analyzed.edges) if (e.to === cardKey) add(e.from, 'linear');
   for (const k of card?.offMapBlockers ?? []) add(k, 'off-project');
   for (const k of flags.blockers) add(k, 'given');
+  const gates = [];
+  for (const k of [...after].sort()) {
+    const issue = await fetchStartIssue(k, key, { fetchImpl });
+    if (!issue) { warnings.push(`${cardKey} ships after ${k}, but Linear has no such card`); continue; }
+    if (issue.archivedAt || ['completed', 'canceled'].includes(issue.state?.type)) continue;
+    gates.push({ kind: 'card', card: k, text: gateText(k), state: issue.state });
+  }
   const skip = new Set(flags.skip);
   const skippedBlockers = [...listed].filter(([k]) => skip.has(k)).map(([k, source]) => ({ key: k, source }));
   const blockers = [];
@@ -99,7 +110,7 @@ async function gatherBlockers(cardKey, analyzed, flags, { key, fetchImpl }, warn
   for (const [flag, keys] of [['--blocker-pr', flags.blockerPrs.map(p => p.key)], ['--blocker-branch', flags.blockerBranches.map(b => b.key)], ['--skip-blocker', flags.skip]]) {
     for (const k of new Set(keys)) if (!known.has(k)) warnings.push(`${flag} ${k}: not a blocker of ${cardKey}, ignored`);
   }
-  return { blockers, skippedBlockers };
+  return { blockers, skippedBlockers, gates };
 }
 
 // Branches found by a blocker's id: pushed ones, then ones only in this checkout; never one that carries the card's own id.
@@ -233,14 +244,16 @@ export async function buildPlan(cardKey, { key, fetchImpl, git, gh, home, dataDi
   const branch = branchNameFor(settings?.branchNaming ?? null, issue.gitBranchName, issue.key);
   let blockers = [];
   let skippedBlockers = [];
+  let cardGates = [];
   let base = notComputed('not decided: the plan stops before the base');
   let resume = { ...NO_RESUME, ask: [], unavailable: null };
   const otherRepos = repoCheck.repos.filter(r => !r.dir || r.dir !== checkout.repoDir);
   let stale = staleNotComputed('the plan stops at the card');
   if (!cardStopped) {
     if (noProject) warnings.push(`${issue.key} has no project map, so no Linear blocks relation was read: only the --blocker flags give it blockers`);
-    const gathered = await gatherBlockers(cardKey, analyzed, flags, { key, fetchImpl }, warnings);
+    const gathered = await gatherBlockers(cardKey, analyzed, flags, { key, fetchImpl, description: issue.description }, warnings);
     skippedBlockers = gathered.skippedBlockers;
+    cardGates = gathered.gates;
     const heads = remoteHeads(git, { cwd, remote: settings.remote });
     const ctx = { currentRepoDir: checkout.repoDir, defaultBranchOf: dir => config.repos[dir]?.defaultBranch ?? null };
     const local = checkout.branches.local;
@@ -280,6 +293,7 @@ export async function buildPlan(cardKey, { key, fetchImpl, git, gh, home, dataDi
     siblings,
     blockers: blockers.map(({ pr, lookupFailed, ...b }) => b),
     skippedBlockers,
+    gates: [...cardGates, ...decisionGates(record)],
     base,
     fetch: fetchOf(settings, base),
     branch,
@@ -293,6 +307,7 @@ export async function buildPlan(cardKey, { key, fetchImpl, git, gh, home, dataDi
         : onMap.has(cardKey) ? recordNote(records, cardKey) : 'no record: the card is not on the execution map',
       otherRepos,
       pack,
+      cardGates,
     }),
     staleness: stale,
     typecheck: { configured: Boolean(settings?.typecheck.length), commands: settings?.typecheck ?? [] },

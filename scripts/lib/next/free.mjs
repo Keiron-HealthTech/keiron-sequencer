@@ -1,4 +1,4 @@
-import { chainTop, classifyBlocker, decideBase, isMerged, isOpen } from '../start/base.mjs';
+import { chainTop, classifyBlocker, decideBase, gateText, isMerged, isOpen } from '../start/base.mjs';
 import { cardRepos, carriesKey } from '../start/checkout.mjs';
 import { startedBy } from './clones.mjs';
 import { markers, textEdges } from './text.mjs';
@@ -25,7 +25,8 @@ function reachable(adjacency, from, to) {
 }
 
 // Classifies every open card: free (startable now, with its base) or, when overdue, why it is not.
-export function classify({ cards, edges, critical = [], criticalTies = [], offMap, descriptions, viewer, prs, work, config }) {
+// decisionGates: card -> the texts of its record's gate open decisions.
+export function classify({ cards, edges, critical = [], criticalTies = [], offMap, descriptions, viewer, prs, work, config, decisionGates = new Map() }) {
   const onMap = new Map(cards.map(c => [c.key, c]));
   const onPath = new Set([...critical, ...criticalTies]);
   const warnings = [];
@@ -102,9 +103,20 @@ export function classify({ cards, edges, critical = [], criticalTies = [], offMa
     return { branches, elsewhere };
   }
 
+  // A card the card only ships after is a gate until it is merged or done: never a blocker, so the card starts from the default.
+  function gatesOf(c) {
+    const done = key => (prs.byKey.get(key) ?? []).some(isMerged)
+      || [onMap.get(key)?.statusType, offMap.get(key)?.state?.type].includes('completed');
+    return [
+      ...markers(describe(c.key)).after.filter(key => key !== c.key && !done(key)).map(key => ({ kind: 'card', card: key, text: gateText(key) })),
+      ...(decisionGates.get(c.key) ?? []).map(text => ({ kind: 'decision', text })),
+    ];
+  }
+
   function blockersOf(c, cardDir, uncertain) {
     const out = [];
-    for (const key of blockerKeys(c)) {
+    const after = new Set(markers(describe(c.key)).after);
+    for (const key of blockerKeys(c).filter(k => !after.has(k))) {
       const mapCard = onMap.get(key);
       const off = mapCard ? null : offMap.get(key);
       if (!mapCard && !off) {
@@ -180,6 +192,7 @@ export function classify({ cards, edges, critical = [], criticalTies = [], offMa
       base: settled ? { kind: base.kind, ref: base.ref, pr: base.pr, costs: base.costs } : null,
       textBlockers: blockers.filter(b => b.textOnly).map(b => b.key),
       checks: markers(describe(c.key)).qaLive.map(k => `${k} must be live in QA`),
+      gates: gatesOf(c),
       unverified: uncertain.length ? uncertain.join('; ') : null,
     });
   }

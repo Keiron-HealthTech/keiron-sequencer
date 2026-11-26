@@ -60,7 +60,7 @@ test('a full record maps every brief field, with the size from the verdict and n
 
 test('no live record: the brief has no record, says why, and lists no patches', () => {
   assert.deepEqual(buildBrief({ record: null, recordNote: 'no record' }), {
-    record: null, recordNote: 'no record', patches: [], patchesNote: PATCHES_NOTE, otherRepos: [], pack: null,
+    record: null, recordNote: 'no record', patches: [], patchesNote: PATCHES_NOTE, otherRepos: [], pack: null, gates: [],
   });
   assert.equal(PATCHES_NOTE, 'reference only: chained diffs, not diffs against the default branch');
 });

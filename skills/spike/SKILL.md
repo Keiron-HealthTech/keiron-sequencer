@@ -218,8 +218,14 @@ reports nothing; run it again.
      the evidence. `narrowed`: it stays in `openDecisions` with
      `status: narrowed` and the options the code rules out in `eliminated`
      (`option`, `why`). `open`: it stays as it is. Then tag it with `impact`
-     (`design` or `detail`) and `owner` (`people` or `code`); only `design`
-     makes the verdict SDD.
+     (`design`, `detail` or `gate`) and `owner` (`people` or `code`); only
+     `design` makes the verdict SDD. Tag it `gate` when it is a rollout
+     precondition rather than a question about what to build: finding the
+     owner of a caller, granting a permission, waiting for log-mode data
+     before enforcing. A gate blocks merging or deploying the card, never
+     building it, so it counts toward no verdict, route or pack question;
+     /keiron-sequencer:next and /keiron-sequencer:start show it as a
+     condition to clear before merge or deploy.
    - Before recording a `reorder` finding, compare the two cards' milestones:
      milestones are delivered in order, so a reorder that would make a card
      wait on one in a later milestone is recorded as a milestone question

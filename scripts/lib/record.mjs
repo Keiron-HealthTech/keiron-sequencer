@@ -2,7 +2,9 @@ export const SCHEMA_VERSION = 1;
 export const ORIGINS = ['thin-spike', 'existing-pr'];
 export const FINDING_KINDS = ['reorder', 'split', 'under-scoped', 'risk'];
 export const CASE_SOURCES = ['engram', 'linear', 'patch'];
-export const OPEN_DECISION_IMPACTS = ['design', 'detail'];
+// A gate is a rollout precondition (a caller's owner, a permission to grant, log-mode data to wait for): it blocks merging
+// or deploying the card, never building it, so it counts toward no verdict, route or pack question.
+export const OPEN_DECISION_IMPACTS = ['design', 'detail', 'gate'];
 export const OPEN_DECISION_STATUSES = ['open', 'narrowed'];
 export const OPEN_DECISION_OWNERS = ['people', 'code'];
 export const PRIOR_FINDING_OUTCOMES = ['holds', 'resolved', 'wrong'];

@@ -17,8 +17,9 @@ export const packPath = (home, slug, card) => join(home, slug, 'packs', `${card}
 // The card text the people wrote, so publishing the agent notes never makes a pack stale.
 export const cardTextHash = issue => sha256(normalizeDescription(withoutNotesBlock(issue?.description ?? '')));
 
-// An open decision from before owner and status existed is asked too: it is the people's until the spike says otherwise.
-const asked = d => (d?.owner ?? 'people') === 'people' && ASKED_STATUSES.includes(d?.status ?? 'open');
+// An open decision from before owner and status existed is asked too: it is the people's until the spike says otherwise. A
+// gate is cleared before merging or deploying, not answered before starting, so it is never asked.
+const asked = d => (d?.owner ?? 'people') === 'people' && ASKED_STATUSES.includes(d?.status ?? 'open') && d?.impact !== 'gate';
 
 // The people-owned open decisions of a startable card, each with what the code already ruled out, to be answered in one
 // sitting before the card starts. options start empty: the skill adds the ones still standing.

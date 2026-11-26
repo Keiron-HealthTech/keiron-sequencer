@@ -127,6 +127,13 @@ Show, in this order:
 - The blockers: each with its Linear state, its PRs, its `status`, and
   every blocker `warning` (for example a blocker merged on GitHub whose card
   is still open in Linear). List `skippedBlockers`.
+- The `gates`, as "before merge or deploy": each `card` gate (a blocker the
+  card only ships after, written "Sale después de <CARD>" in its text: it is
+  no blocker and gives no base, so the card starts from the default branch)
+  with its Linear state, and each `decision` gate (an open decision of the
+  record tagged `gate`). They are in `brief.gates` too: carry them to the
+  workflow as conditions to clear before merging or deploying, never before
+  building. `--blocker <CARD>` makes such a card a code blocker again.
 - The base: `base.kind`, `base.ref`, the PR it stacks on, `base.note`, the
   stack costs, and `base.pushReviews` as "Push these reviews". A stack base
   can be a draft PR (its blocker `warning` says so), or a blocker branch with

@@ -32,7 +32,10 @@ function sizeOf(record, size) {
   return { label: size?.label ?? null, tier: size?.tier ?? null, lines: record.size.prodLines + record.size.testLines, files, repos, sharedWith };
 }
 
-export function buildBrief({ record, size = null, recordNote: note = null, patches = [], otherRepos = [], pack = null }) {
+// The conditions to clear before merging or deploying: the cards the card only ships after, then the record's gate decisions.
+export const decisionGates = record => (record?.openDecisions ?? []).filter(d => d?.impact === 'gate').map(d => ({ kind: 'decision', text: d.text }));
+
+export function buildBrief({ record, size = null, recordNote: note = null, patches = [], otherRepos = [], pack = null, cardGates = [] }) {
   return {
     record: record && {
       spikedAt: record.spikedAt, origin: record.origin, scope: record.scope, size: sizeOf(record, size), decisions: record.decisions,
@@ -44,5 +47,6 @@ export function buildBrief({ record, size = null, recordNote: note = null, patch
     patchesNote: PATCHES_NOTE,
     otherRepos,
     pack,
+    gates: [...cardGates, ...decisionGates(record)],
   };
 }

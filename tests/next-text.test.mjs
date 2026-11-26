@@ -36,11 +36,11 @@ test('the same dependency written twice, or on both cards, counts once', () => {
 });
 
 test('markers read deferrable, No lleva PR and deployado en QA', () => {
-  assert.deepEqual(markers('Carta elástica. No lleva PR. CRM-3 deployado en QA'), { deferrable: true, noPr: true, qaLive: ['CRM-3'] });
-  assert.deepEqual(markers('Se puede diferir'), { deferrable: true, noPr: false, qaLive: [] });
-  assert.deepEqual(markers('Diferido hasta enero'), { deferrable: true, noPr: false, qaLive: [] });
-  assert.deepEqual(markers('Necesita CRM-8 deployado en QA y CRM-9 deployado en QA'), { deferrable: false, noPr: false, qaLive: ['CRM-8', 'CRM-9'] });
-  assert.deepEqual(markers(''), { deferrable: false, noPr: false, qaLive: [] });
+  assert.deepEqual(markers('Carta elástica. No lleva PR. CRM-3 deployado en QA'), { deferrable: true, noPr: true, qaLive: ['CRM-3'], after: [] });
+  assert.deepEqual(markers('Se puede diferir'), { deferrable: true, noPr: false, qaLive: [], after: [] });
+  assert.deepEqual(markers('Diferido hasta enero'), { deferrable: true, noPr: false, qaLive: [], after: [] });
+  assert.deepEqual(markers('Necesita CRM-8 deployado en QA y CRM-9 deployado en QA'), { deferrable: false, noPr: false, qaLive: ['CRM-8', 'CRM-9'], after: [] });
+  assert.deepEqual(markers(''), { deferrable: false, noPr: false, qaLive: [], after: [] });
 });
 
 test('a Linear mention link or a bare Linear issue URL counts as its id', () => {

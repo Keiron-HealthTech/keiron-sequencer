@@ -1,3 +1,6 @@
+// The condition a card that only ships after another carries into next and start.
+export const gateText = key => `do not merge or deploy before ${key} is merged`;
+
 export const isMerged = p => Boolean(p.mergedAt) || /^merged$/i.test(p.state ?? '');
 export const isOpen = p => !isMerged(p) && /^open$/i.test(p.state ?? '');
 

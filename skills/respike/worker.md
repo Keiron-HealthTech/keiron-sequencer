@@ -152,8 +152,12 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs cross --track <id> --card <CARD> --
      read what the code already forces. `resolved`: it moves to
      `decisions` with the evidence. `narrowed`: it stays in
      `openDecisions` with `status: narrowed` and the ruled-out options in
-     `eliminated`. `open`: it stays. Then tag it with `impact` (`design` or
-     `detail`) and `owner` (`people` or `code`).
+     `eliminated`. `open`: it stays. Then tag it with `impact` (`design`,
+     `detail` or `gate`) and `owner` (`people` or `code`). `gate` is a
+     rollout precondition, not a question about what to build (a caller's
+     owner, a permission to grant, log-mode data to wait for): it blocks
+     merging or deploying the card, never building it, and never makes the
+     verdict SDD.
    - A `reorder` finding that would make a card wait on one in a later
      milestone is a milestone question (which card moves), not a plain
      order.

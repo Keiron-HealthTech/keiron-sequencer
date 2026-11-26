@@ -163,7 +163,7 @@ test('writes run in the order card.create, relation.create, relation.delete, not
 });
 
 test('an edge to an existing card outside the project resolves its id with IssueState and is written; archived since the plan is drift', async () => {
-  const harvest = { schemaVersion: 1, project: { slug: SLUG }, edges: [{ from: 'AUTH-8', to: 'CRM-1', kind: 'gate', evidence: 'auth first' }] };
+  const harvest = { schemaVersion: 1, project: { slug: SLUG }, edges: [{ from: 'AUTH-8', to: 'CRM-1', kind: 'code', evidence: 'auth first' }] };
   const outside = new Map([['AUTH-8', { id: 'uuid-AUTH-8', identifier: 'AUTH-8', archivedAt: null }]]);
   const fake = world();
   const plan = await planFor(fake, harvest, { outside });

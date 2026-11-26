@@ -299,9 +299,15 @@ export function itemsToTranslate(records, notes, selection = 'all') {
 const SECTIONS = [['case', 'Casos de aceptación'], ['decision', 'Decisiones'], ['openDecision', 'Decisiones abiertas']];
 const ORDER_HEADING = 'Orden con otras tarjetas';
 
-// How an open decision stands, said in the card: narrowed by the code, and decided by people rather than by the code.
+// How an open decision stands, said in the card: narrowed by the code, a gate to clear before merging or deploying, and
+// decided by people rather than by the code.
+const GATE_TAG = 'antes de mergear o desplegar';
+
 function openTag(d) {
-  const tags = [...(d.status === 'narrowed' ? ['acotada'] : []), ...(d.owner === 'people' ? [d.status === 'narrowed' ? 'la deciden personas' : 'abierta, la deciden personas'] : [])];
+  const tags = [
+    ...(d.status === 'narrowed' ? ['acotada'] : []), ...(d.impact === 'gate' ? [GATE_TAG] : []),
+    ...(d.owner === 'people' ? [d.status === 'narrowed' || d.impact === 'gate' ? 'la deciden personas' : 'abierta, la deciden personas'] : []),
+  ];
   return tags.length ? ` (${tags.join(', ')})` : '';
 }
 
@@ -646,6 +652,15 @@ export function computePlan({ harvest, records = [], notes = null, raw, descript
       message: `${where}: ${mentions.map(m => `${m.card} ${m.id} names ${m.other}`).join('; ')}, but ${from} will not block ${to}: `
         + 'keep the edge, or add an order note (order) saying what each card does if the other lands first',
     });
+  }
+
+  // A deploy or gate edge needs none of the blocker's code: the blocked card says so in its order notes, in the words next
+  // and start read ("Sale después de"), so the relation gates its merge and deploy instead of its start.
+  for (const entry of harvest.edges ?? []) {
+    if (entry.hold || entry.kind === 'code') continue;
+    const [from, to] = [resolve(entry.from), resolve(entry.to)];
+    if (from.startsWith('new:') || !onMap.has(to)) continue;
+    orders.set(to, [...(orders.get(to) ?? []), { card: from, es: `Sale después de ${from}: no necesita su código.` }]);
   }
 
   const descriptionEntries = harvest.descriptions ?? {};

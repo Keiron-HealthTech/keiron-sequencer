@@ -384,7 +384,7 @@ test('a Linear read that fails while reading a blocker exits 1', async t => {
 });
 
 const PLAN_KEYS = {
-  '': ['action', 'approve', 'base', 'blockers', 'brief', 'branch', 'card', 'checkout', 'fetch', 'reasons', 'resume', 'route', 'schemaVersion', 'siblings', 'skippedBlockers', 'staleness', 'typecheck', 'verdict', 'warnings'],
+  '': ['action', 'approve', 'base', 'blockers', 'brief', 'branch', 'card', 'checkout', 'fetch', 'gates', 'reasons', 'resume', 'route', 'schemaVersion', 'siblings', 'skippedBlockers', 'staleness', 'typecheck', 'verdict', 'warnings'],
   card: ['comments', 'commentsTruncated', 'description', 'gitBranchName', 'id', 'key', 'milestone', 'project', 'repos', 'state', 'title', 'url'],
   checkout: ['branch', 'defaultBranch', 'defaultBranchLocal', 'detached', 'dirty', 'head', 'name', 'notes', 'path', 'remote', 'repoDir'],
   siblings: ['dependents', 'milestone'],
@@ -394,7 +394,7 @@ const PLAN_KEYS = {
   resume: ['branches', 'elsewhere', 'found', 'prs', 'remote'],
   verdict: ['label', 'tier', 'value'],
   route: ['changeName', 'reasons', 'route', 'said'],
-  brief: ['otherRepos', 'pack', 'patches', 'patchesNote', 'record', 'recordNote'],
+  brief: ['gates', 'otherRepos', 'pack', 'patches', 'patchesNote', 'record', 'recordNote'],
   staleness: ['anchor', 'baseCommit', 'computed', 'filesFrom', 'groups', 'hunks', 'reason', 'ref', 'since', 'touched', 'unchecked'],
   typecheck: ['commands', 'configured'],
 };

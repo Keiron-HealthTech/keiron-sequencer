@@ -212,6 +212,6 @@ test('a replayed trial record with no risk areas or novelty gains them', () => {
 
 test('new notes without impact are refused with notes.openDecisions[i].impact', () => {
   const open = [{ text: 'a', impact: 'design', owner: 'people' }, { text: 'b', owner: 'code' }];
-  assert.ok(checkNotes({ ...notes, openDecisions: open }).includes('notes.openDecisions[1].impact: required (design or detail)'), checkNotes({ ...notes, openDecisions: open }).join('; '));
+  assert.ok(checkNotes({ ...notes, openDecisions: open }).includes('notes.openDecisions[1].impact: required (design, detail or gate)'), checkNotes({ ...notes, openDecisions: open }).join('; '));
   assert.deepEqual(checkNotes({ ...notes, openDecisions: [open[0]] }), []);
 });
