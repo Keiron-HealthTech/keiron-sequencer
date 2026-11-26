@@ -123,6 +123,20 @@ may be in the wrong milestone. Take it to the user like a
   nothing holds has its block removed. Linear says what each card builds now,
   never where an item went: the card that owns a moved item publishes it in
   its own notes, and the record keeps every item, marked.
+- **Started cards are left alone.** A card has started when Linear moved it
+  past Backlog, Todo and Triage, a PR carrying its key is open or merged, or a
+  branch carrying its key is pushed. The plan writes no notes and no
+  description on such a card, whatever asks for it (`notes`, an order line, a
+  "Sale después de" line or a `descriptions` entry): its text may have been
+  corrected by hand to match what shipped, and the record would revert it.
+  Relations are still added and removed on any card. The plan reads the PRs
+  and pushed branches of the project's repos from the spike config; with no
+  config only the Linear states decide (a `github-unread` warning), and a
+  read that fails counts every card Linear calls unstarted as started.
+- `writeStarted`: a list of started cards whose notes and description entry
+  are written anyway, on the user's yes for each card (for a built card whose
+  record the respike audit just corrected). The review marks each such op
+  `started`.
 - `descriptions`: `{ "<CARD>": { "text", "evidence", "hold"? } }`, a new
   text for the part of a card's description people wrote, usually the
   respike audit's proposal (`description` in the record's `audits`). Add an
@@ -162,7 +176,8 @@ is optional). The ref is the project URL, slug, UUID or identifier. A slug or
 URL is validated before any request. A UUID or identifier such as `P-CRM-371`
 costs exactly one read-only project query to learn the slug; then
 `harvest.json` and `notes.es.json` are validated, and Linear is read further
-only if they are valid. The plan never writes to Linear.
+only if they are valid. It also reads `gh pr list` and `git ls-remote` for the
+project's repos, to tell which cards have started. The plan never writes to Linear.
 
 stdout is one JSON line: `{status, plan, review, hash, counts, refusals}`.
 
@@ -182,7 +197,10 @@ stdout is one JSON line: `{status, plan, review, hash, counts, refusals}`.
 Show the user `plan.md`: the hash, warnings (`live-redundant` edges, untouched live
 cycles), new cards (they cannot be undone), splits, relations to add and
 remove, the agent notes blocks, the descriptions with their text before and
-after, the unchanged and held counts, and the exact apply command. Each notes block starts with `+++ Notas del agente` and holds
+after, the cards under "Not written: card started" (each with why it counts
+as started and how many lines would change: ask the user whether to name it
+in `writeStarted`, never add it yourself), the unchanged and held counts, and
+the exact apply command. Each notes block starts with `+++ Notas del agente` and holds
 up to three sections, in this order: «Casos de aceptación», «Decisiones» and
 «Decisiones abiertas». An open decision ends with `(abierta, la deciden
 personas)` when people own it, `(acotada)` when the code narrowed it, `(antes

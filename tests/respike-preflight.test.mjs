@@ -45,7 +45,7 @@ function withPrs({ extra = [], cycle = false } = {}) {
 }
 
 const pick = [PROJECT_URL, '--cards', B];
-const KEYS = ['schemaVersion', 'approve', 'action', 'project', 'previous', 'selection', 'built', 'ancestors', 'bases', 'order', 'tracks', 'asks', 'prChecks', 'handoffs', 'drops', 'stops', 'missingConfig', 'warnings'];
+const KEYS = ['schemaVersion', 'approve', 'action', 'project', 'previous', 'fetched', 'selection', 'built', 'ancestors', 'bases', 'order', 'tracks', 'asks', 'prChecks', 'handoffs', 'drops', 'stops', 'missingConfig', 'warnings'];
 
 test('the plan carries every top-level key and no diff text', async () => {
   const { f } = withPrs();
@@ -164,7 +164,8 @@ test('preflight runs only read-only git; the combine writes its objects in a tem
   const r = await f.run('preflight', [...pick, '--stale']);
   assert.equal(r.code, 0, r.stderr);
   assert.equal(json(r).bases.backend.kind, 'combine');
-  const subs = f.git.calls.map(c => subcommandOf(c.argv));
+  // The one write is the default-branch fetch, which moves only that remote-tracking ref.
+  const subs = f.git.calls.filter(c => c.argv.join(' ') !== 'fetch -q origin main').map(c => subcommandOf(c.argv));
   assert.deepEqual([...new Set(subs)].filter(s => !READS.includes(s)), []);
   const merges = f.git.calls.filter(c => subcommandOf(c.argv) === 'merge-tree');
   assert.ok(merges.length > 0);

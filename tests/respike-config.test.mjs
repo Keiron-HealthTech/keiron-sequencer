@@ -630,7 +630,8 @@ test('over the whole draft step git only reads: the plan reads, remote -v and sy
   assert.ok(lines('web').some(l => l.path === 'repos.web.defaultBranch' && l.value === 'main'));
   assert.ok(lines('api').some(l => l.kind === 'skipped' && l.text.includes(join(root, 'api'))), JSON.stringify(lines('api')));
 
-  const subs = fx.git.calls.map(c => subcommandOf(c.argv));
+  // The plan's one write is the default-branch fetch, which moves only that remote-tracking ref.
+  const subs = fx.git.calls.filter(c => !/^fetch -q \S+ main$/.test(c.argv.join(' '))).map(c => subcommandOf(c.argv));
   assert.ok(subs.some(s => PLAN_READS.includes(s)), subs.join(' '));
   assert.deepEqual([...new Set(subs)].filter(s => !PLAN_READS.includes(s) && s !== 'remote' && s !== 'symbolic-ref'), []);
   assert.deepEqual(fx.git.calls.filter(c => subcommandOf(c.argv) === 'remote').map(c => c.argv), fx.git.calls.filter(c => subcommandOf(c.argv) === 'remote').map(() => ['remote', '-v']));

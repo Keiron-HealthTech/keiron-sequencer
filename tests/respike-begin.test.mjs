@@ -16,6 +16,8 @@ const P = 'CRM-3';
 const json = r => JSON.parse(r.stdout);
 const blocks = (...keys) => ({ nodes: keys.map(k => ({ type: 'blocks', relatedIssue: { identifier: k } })) });
 const pick = [PROJECT_URL, '--cards', B];
+// The plan fetches each repo's default branch first; it moves only that remote-tracking ref, so it is no write here.
+const defaultFetch = c => c.argv.join(' ') === 'fetch -q origin main';
 const WRITES = new Set(['fetch', 'clone', 'worktree add', 'worktree remove', 'read-tree', 'apply', 'add', 'write-tree', 'update-ref', 'checkout', 'config', 'commit', 'push', 'tag']);
 
 // A blocks B; P has an open PR and blocks B too.
@@ -89,7 +91,7 @@ test('begin after a complete run creates a new active run carrying the plan orde
   assert.deepEqual(state.executions[0].caps, { tokens: 5000, cards: 2 });
   assert.equal(state.executions[0].box, 300);
   assert.deepEqual(state.executions[0].sessions.map(s => [s.file, s.given]), [[session, true]]);
-  const seen = f.git.calls.slice(before).map(c => subcommandOf(c.argv));
+  const seen = f.git.calls.slice(before).filter(c => !defaultFetch(c)).map(c => subcommandOf(c.argv));
   assert.deepEqual(seen.filter(s => WRITES.has(s)), []);
   assert.ok(f.git.calls.slice(before).filter(c => subcommandOf(c.argv) === 'merge-tree').every(c => c.env?.GIT_OBJECT_DIRECTORY));
   assert.equal(r.stdout.includes(SENTINEL), false);
@@ -196,7 +198,7 @@ test('fetch on a bases-unknown plan fetches each missing PR head by its pull ref
   const before = f.git.calls.length;
   const r = await f.run('fetch', [...pick, '--approve', plan.approve]);
   assert.equal(r.code, 0, r.stderr);
-  const writes = f.git.calls.slice(before).filter(c => WRITES.has(subcommandOf(c.argv)));
+  const writes = f.git.calls.slice(before).filter(c => WRITES.has(subcommandOf(c.argv)) && !defaultFetch(c));
   assert.deepEqual(writes.map(c => [c.argv, c.cwd]), [[['fetch', '-q', 'origin', 'refs/pull/30/head'], f.repo.dir]]);
   assert.deepEqual(snapshotDir(f.home), home);
   assert.deepEqual(snapshotDir(f.dataDir), data);
@@ -213,7 +215,7 @@ test('fetch refuses a wrong hash or a plan with no bases-unknown ask with exit 5
   const { f } = missingHead();
   const plan = json(await f.run('preflight', pick));
   const before = f.git.calls.length;
-  const fetches = () => f.git.calls.slice(before).filter(c => subcommandOf(c.argv) === 'fetch').length;
+  const fetches = () => f.git.calls.slice(before).filter(c => subcommandOf(c.argv) === 'fetch' && !defaultFetch(c)).length;
   assert.equal((await f.run('fetch', pick)).code, 2);
   assert.equal((await f.run('fetch', [...pick, '--approve', 'abcdefabcdef'])).code, 5);
   const sent = f.linear.sent.length;

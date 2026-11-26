@@ -99,6 +99,50 @@ function fixupLinks(records) {
   return [...links, ...combined.values()];
 }
 
+const firstLine = text => String(text).split('\n').map(l => l.trim()).find(Boolean) ?? 'unknown error';
+const noCredentials = text => text.replace(/\/\/[^/@\s]+@/g, '//***@');
+
+function revOf(git, cwd, ref) {
+  try {
+    return git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { cwd }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+// Staleness and bases are read from each repo's remote-tracking default branch, so it is fetched first. Only that ref
+// moves: no local branch is touched. A failed fetch leaves the ref as it is, and the plan says so.
+export function fetchDefaults(git, config, dirs) {
+  const fetched = [];
+  const warnings = [];
+  for (const dir of dirs) {
+    const { checkout: cwd, remote, defaultBranch: branch } = config.repos[dir] ?? {};
+    if (!cwd || !remote || !branch) continue;
+    const ref = `refs/remotes/${remote}/${branch}`;
+    const from = revOf(git, cwd, ref);
+    let error = null;
+    try {
+      git(['fetch', '-q', remote, branch], { cwd });
+    } catch (e) {
+      error = noCredentials(firstLine(e.message));
+    }
+    const to = revOf(git, cwd, ref);
+    let moved = 0;
+    if (from && to && from !== to) {
+      try {
+        moved = Number(git(['rev-list', '--count', `${from}..${to}`], { cwd }).trim());
+      } catch {
+        moved = null;
+      }
+    }
+    fetched.push({ repo: dir, remote, branch, from, to, moved, ...(error ? { error } : {}) });
+    if (error) {
+      warnings.push({ code: 'fetch-failed', repo: dir, message: `${dir}: could not fetch ${remote}/${branch} (${error}); the plan reads the ref as it is` });
+    }
+  }
+  return { fetched, warnings };
+}
+
 export async function buildRespikePlan(ref, key, {
   cards = null, stale = false, all = false, answers = { built: new Map(), unbuilt: new Set() }, config: given = null, coverageOnly = false,
 } = {}, deps) {
@@ -114,6 +158,7 @@ export async function buildRespikePlan(ref, key, {
   const records = new Map(live.map(r => [r.card, r]));
 
   const local = allowedRepos(config, slug).filter(d => config.repos[d]?.checkout);
+  const defaults = fetchDefaults(git, config, local);
   const refs = new Map(local.map(d => [d, readRefs(git, config.repos[d])]));
   const prs = readPrLists(gh, config, slug);
   const pin = (dir, branch) => pinBranch(git, config.repos[dir].checkout, branch);
@@ -160,6 +205,7 @@ export async function buildRespikePlan(ref, key, {
     action: null,
     project: { slug, name: raw.project.name },
     previous: { runId: latestRun(home, slug)?.state.runId ?? null, records: live.length, fromTrial: live.filter(r => !r.refs.runId).length },
+    fetched: defaults.fetched,
     selection,
     built: needed,
     ancestors,
@@ -172,7 +218,7 @@ export async function buildRespikePlan(ref, key, {
     drops: [],
     stops,
     missingConfig: covered.missingConfig,
-    warnings: [...classified.warnings, ...covered.warnings, ...noMilestone(analysis), ...dataInRepo(dataDir, repoDataDir, slug)],
+    warnings: [...defaults.warnings, ...classified.warnings, ...covered.warnings, ...noMilestone(analysis), ...dataInRepo(dataDir, repoDataDir, slug)],
   };
   if (!plan.missingConfig.length) {
     const open = activeRunFor(home, slug);

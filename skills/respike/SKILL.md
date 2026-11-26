@@ -110,8 +110,8 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs preflight <project ref> [--cards 
 The ref is the project URL, slug, UUID or identifier. With no flags the
 selection is the stale cards: the cards with no live record, or with
 default-branch commits since their spike in the hunks the card changed (± 3
-lines), read from the remote-tracking refs already there (no fetch); every
-other card's old patch is replayed. A commit elsewhere in the same file does
+lines), read from each repo's remote-tracking default branch, which the plan
+fetches first; every other card's old patch is replayed. A commit elsewhere in the same file does
 not make a card stale: the card is listed in `selection.touched` with the
 commit count and files, and not selected. The check falls back to the whole
 file when the record's run has no base commit (trial records), when an
@@ -123,8 +123,15 @@ first spike does: offer it only when the user asks to re-spike everything. `--bu
 `preflight`, `config`, `fetch`, `fast-forward` and `begin` of this respike: different flags give a
 different plan and hash.
 
-Preflight reads Linear, `gh pr list` and git in the configured checkouts, and
-writes nothing.
+Preflight reads Linear, `gh pr list` and git in the configured checkouts. Its
+one write is `git fetch <remote> <defaultBranch>` in each configured checkout,
+which moves only that remote-tracking ref, never a local branch; `config`,
+`fetch`, `fast-forward` and `begin` fetch the same way. `fetched` reports each
+repo's ref `from` and `to` and how many commits it `moved`. A fetch that fails
+(offline, auth) is a `fetch-failed` warning naming the repo, and the plan reads
+the ref as it was: say so. The fetch is no part of the hash: when `begin`
+fetches again and a moved ref changes the plan, it refuses with Exit 5 like
+any plan that moved.
 
 - **Exit 2** with `action: 'blocked'`: Show every entry of `missingConfig`, each with the cards that need it and its hint
   from stderr: `repo-missing`, `repo-not-local` (the repo needs a `checkout`
@@ -248,7 +255,8 @@ itself.
 
 Show, in this order:
 
-- The `action` and the `approve` hash.
+- The `action` and the `approve` hash, and `fetched`: each repo whose default
+  branch moved, with how many commits, and each fetch that failed.
 - The selection: `selection.mode`, each card with its `why` (`all`, `picked`,
   `stale`, `new`), the `selection.unknown` cards (staleness not computable,
   with the reason; not selected, the user can add them with `--cards`), the
@@ -713,7 +721,8 @@ and writes no record: it saves `inputs.json` under
   `mentions` (the fresh cases, decisions, open decisions and findings that
   name it).
 - `fresh`: the cases and decisions of every record this run spiked.
-- `skipped`: `merged` cards (not audited: harvest leaves their notes alone)
+- `skipped`: `merged` cards (not audited: harvest writes no notes on a card
+  that has started)
   and cards with `no-record`.
 
 Judge each card, item by item:

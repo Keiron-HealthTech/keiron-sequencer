@@ -84,15 +84,22 @@ test('a branch is moved only by the fast-forward subcommand: update-ref or merge
   assert.match(cli, /COMMANDS = \{[^}]*'fast-forward': fastForward/);
 });
 
-test('git fetch is run only by the fetch subcommand', () => {
+test('git fetch is run only by the fetch subcommand, for PR heads, and by the plan, for each default branch', () => {
   assert.deepEqual([..."deps.git(['fetch', '-q'], {}); answers: ['fetch']".matchAll(GIT_SUBCOMMAND)].map(m => m[1]), ['fetch']);
   const fetches = RESPIKE.flatMap(f => [...read(f).matchAll(GIT_SUBCOMMAND)].filter(m => m[1] === 'fetch').map(m => ({ f, at: m.index })));
-  assert.equal(fetches.length, 1, JSON.stringify(fetches));
+  assert.equal(fetches.length, 2, JSON.stringify(fetches));
+  const within = (file, opening) => {
+    const text = read(file);
+    const start = text.indexOf(opening);
+    const end = text.indexOf('\n}\n', start);
+    assert.ok(start > 0 && end > start, opening);
+    return ({ f, at }) => f === file && at > start && at < end;
+  };
+  const inFetchHeads = within('scripts/respike.mjs', 'async function fetchHeads(');
+  const inDefaults = within('scripts/lib/respike/plan.mjs', 'export function fetchDefaults(');
+  assert.deepEqual(fetches.map(x => inFetchHeads(x) || inDefaults(x)), [true, true]);
+  assert.match(read('scripts/lib/respike/plan.mjs'), /git\(\['fetch', '-q', remote, branch\]/);
   const cli = read('scripts/respike.mjs');
-  const start = cli.indexOf('async function fetchHeads(');
-  const end = cli.indexOf('\n}\n', start);
-  assert.ok(start > 0 && end > start);
-  assert.deepEqual(fetches.map(({ f, at }) => f === 'scripts/respike.mjs' && at > start && at < end), [true]);
   assert.match(cli, /COMMANDS = \{[^}]*fetch: fetchHeads/);
 });
 

@@ -21,7 +21,7 @@ const unknownFields = (value, allowed) => Object.keys(value).filter(k => !allowe
 
 const NEW_KEY = /^[a-z0-9][a-z0-9-]*$/;
 const PLACEHOLDER = /^new:([a-z0-9][a-z0-9-]*)$/;
-const TOP_FIELDS = ['schemaVersion', 'project', 'edges', 'removals', 'splits', 'newCards', 'rejected', 'notes', 'descriptions'];
+const TOP_FIELDS = ['schemaVersion', 'project', 'edges', 'removals', 'splits', 'newCards', 'rejected', 'notes', 'descriptions', 'writeStarted'];
 const DESCRIPTION_FIELDS = ['text', 'evidence', 'hold', 'ref'];
 const ENTRY_FIELDS = {
   edges: ['from', 'to', 'kind', 'evidence', 'ref', 'hold'],
@@ -116,6 +116,10 @@ export function validateHarvest(value) {
   const notesOk = notes === undefined || notes === 'all'
     || (Array.isArray(notes) && notes.every(k => typeof k === 'string' && CARD_KEY.test(k)) && new Set(notes).size === notes.length);
   if (!notesOk) err('notes must be "all" or a list of card keys');
+  const writeStarted = value.writeStarted;
+  if (writeStarted !== undefined && !(Array.isArray(writeStarted) && writeStarted.every(k => typeof k === 'string' && CARD_KEY.test(k)) && new Set(writeStarted).size === writeStarted.length)) {
+    err('writeStarted must be a list of distinct card keys');
+  }
   if (value.descriptions !== undefined) {
     if (!isObject(value.descriptions)) err('descriptions must be an object of card keys');
     else {
@@ -487,7 +491,19 @@ function postStateCheck(cards, live, ops, outsideUsed) {
   return { refusals, warnings };
 }
 
-export function computePlan({ harvest, records = [], notes = null, raw, descriptions = new Map(), outside = new Map() }) {
+const sameBlock = (before, block) => (before === null ? block === null : block !== null && normalizeDescription(before) === normalizeDescription(block));
+
+// How much a text would change, by distinct lines: a short summary for a card the plan leaves alone.
+function lineChange(before, after) {
+  const linesOf = text => new Set(normalizeDescription(text ?? '').split('\n').filter(l => l.trim()));
+  const [old, now] = [linesOf(before), linesOf(after)];
+  return { added: [...now].filter(l => !old.has(l)).length, removed: [...old].filter(l => !now.has(l)).length };
+}
+
+// started: card -> why it counts as started (its Linear state, a PR, a pushed branch). A started card gets no notes or
+// description op unless harvest.writeStarted names it; the review lists what would have changed. extraWarnings come from
+// the CLI's own reads.
+export function computePlan({ harvest, records = [], notes = null, raw, descriptions = new Map(), outside = new Map(), started = new Map(), extraWarnings = [] }) {
   const live = liveIndex(raw, descriptions);
   const { cards } = buildCardMap(raw);
   const onMap = new Set(cards.map(c => c.key));
@@ -663,6 +679,10 @@ export function computePlan({ harvest, records = [], notes = null, raw, descript
     orders.set(to, [...(orders.get(to) ?? []), { card: from, es: `Sale después de ${from}: no necesita su código.` }]);
   }
 
+  const writeStarted = new Set(harvest.writeStarted ?? []);
+  const keepsOff = card => started.has(card) && !writeStarted.has(card);
+  const startedOf = card => (started.has(card) ? { started: started.get(card) } : {});
+  const notWritten = [];
   const descriptionEntries = harvest.descriptions ?? {};
   for (const [card, entry] of Object.entries(descriptionEntries)) if (entry.hold) held.push({ id: `description:${card}`, hold: entry.hold, entry });
   const rewritten = new Set(Object.keys(descriptionEntries).filter(card => !descriptionEntries[card].hold));
@@ -694,6 +714,14 @@ export function computePlan({ harvest, records = [], notes = null, raw, descript
     const current = live.descriptions.get(card)?.description ?? '';
     const next = block === null ? withoutBlock(current) : replaceNotesBlock(current, block);
     const id = `notes:${card}`;
+    // A started card is never written, so a block it holds that the plan could not replace refuses nothing.
+    if (keepsOff(card)) {
+      const readable = next.count <= 1 && !next.unterminated;
+      if (!rewritten.has(card) && (!readable || !sameBlock(next.before, block))) {
+        notWritten.push({ id, card, started: started.get(card), ...(readable ? lineChange(next.before, block) : lineChange(current, block)) });
+      }
+      continue;
+    }
     if (next.count > 1) { conflict(`notes: ${card} has ${next.count} agent notes blocks in its description; leave one`); continue; }
     if (next.unterminated) { conflict(`notes: ${card} has an agent notes header with no closing +++; fix the description by hand`); continue; }
     const evidence = notesEvidence(record, cardOrders);
@@ -705,6 +733,7 @@ export function computePlan({ harvest, records = [], notes = null, raw, descript
     }
     ops.push({
       id, type: 'notes.replace', card, issueId: live.descriptions.get(card)?.id ?? live.byKey.get(card).id,
+      ...startedOf(card),
       evidence,
       before: { descriptionHash: descriptionHash(current), block: next.before },
       after: { descriptionHash: descriptionHash(next.description), block, description: next.description },
@@ -718,17 +747,23 @@ export function computePlan({ harvest, records = [], notes = null, raw, descript
     const id = `description:${card}`;
     if (!onMap.has(card)) { conflict(`descriptions: ${card} is not a card of the project`); continue; }
     if (!live.descriptions.has(card)) { conflict(`descriptions: the description of ${card} was not read; plan again`); continue; }
-    if (selected.includes(card) && !newBlocks.has(card)) continue;
+    if (selected.includes(card) && !newBlocks.has(card) && !keepsOff(card)) continue;
     const current = live.descriptions.get(card).description ?? '';
     const found = replaceNotesBlock(current, '');
+    if (keepsOff(card) && (found.count > 1 || found.unterminated)) {
+      notWritten.push({ id, card, started: started.get(card), ...lineChange(current, entry.text) });
+      continue;
+    }
     if (found.count > 1) { conflict(`descriptions: ${card} has ${found.count} agent notes blocks in its description; leave one`); continue; }
     if (found.unterminated) { conflict(`descriptions: ${card} has an agent notes header with no closing +++; fix the description by hand`); continue; }
     const block = newBlocks.has(card) ? newBlocks.get(card).block : found.before;
     const kept = [...withoutNotesBlock(current).matchAll(MARKER)].map(m => m[0]).filter(m => !entry.text.includes(m));
     const description = [entry.text.trimEnd(), ...(kept.length ? [kept.join('\n')] : []), ...(block ? [block] : [])].join('\n\n');
     if (normalizeDescription(description) === normalizeDescription(current)) { noop.push({ id, reason: 'description already current' }); continue; }
+    if (keepsOff(card)) { notWritten.push({ id, card, started: started.get(card), ...lineChange(current, description) }); continue; }
     ops.push({
       id, type: 'description.replace', card, issueId: live.descriptions.get(card).id ?? live.byKey.get(card).id,
+      ...startedOf(card),
       evidence: entry.evidence,
       before: { descriptionHash: descriptionHash(current), description: current },
       after: { descriptionHash: descriptionHash(description), description, notes: newBlocks.get(card)?.evidence ?? null },
@@ -737,7 +772,7 @@ export function computePlan({ harvest, records = [], notes = null, raw, descript
 
   const graph = postStateCheck(cards, live, ops, outsideUsed);
   refusals.push(...graph.refusals);
-  const warnings = [...graph.warnings, ...backwardRefs];
+  const warnings = [...graph.warnings, ...backwardRefs, ...extraWarnings];
   for (const w of raw.warnings ?? []) warnings.push({ kind: w.kind, card: w.key, message: w.message });
   warnings.sort(byWarning);
   if (refusals.length) return { plan: null, refusals: refusals.sort((a, b) => compare(a.kind, b.kind)), warnings };
@@ -750,6 +785,7 @@ export function computePlan({ harvest, records = [], notes = null, raw, descript
     keep: keep.sort(byPair),
     noop: noop.sort(byId),
     held: held.sort(byId),
+    notWritten: notWritten.sort(byId),
     splits: splits.sort((a, b) => compare(pairId(a.parent, a.new), pairId(b.parent, b.new))),
     warnings,
     irreversible: irreversible.sort(compare),
@@ -823,13 +859,14 @@ export function renderReview(plan, { refusals = [], approveCommand, project, war
   }
   const of = type => plan.ops.filter(op => op.type === type);
   const cards = of('card.create');
+  const startedTag = op => (op.started ? ` (started: ${op.started}; writeStarted)` : '');
   const notes = of('notes.replace').flatMap(op => [
-    `### ${op.card}: ${op.after.block === null ? 'remove the block' : op.before.block === null ? 'add the block' : 'replace the block'}`, '', op.evidence, '',
+    `### ${op.card}: ${op.after.block === null ? 'remove the block' : op.before.block === null ? 'add the block' : 'replace the block'}${startedTag(op)}`, '', op.evidence, '',
     ...(op.after.block === null ? [] : ['```text', op.after.block, '```', '']),
   ]);
   const text = description => ['```text', withoutNotesBlock(description).trimEnd(), '```'];
   const descriptions = of('description.replace').flatMap(op => [
-    `### ${op.card}: replace the description`, '', op.evidence, '', 'Before:', '', ...text(op.before.description), '', 'After:', '', ...text(op.after.description), '',
+    `### ${op.card}: replace the description${startedTag(op)}`, '', op.evidence, '', 'Before:', '', ...text(op.before.description), '', 'After:', '', ...text(op.after.description), '',
     ...(op.after.notes ? [`The notes block is written in the same op (${op.after.notes}):`, '', '```text', replaceNotesBlock(op.after.description, '').before, '```', ''] : []),
   ]);
   return [
@@ -847,6 +884,8 @@ export function renderReview(plan, { refusals = [], approveCommand, project, war
     ...section('Relations to remove', of('relation.delete').map(op => `- ${op.from} no longer blocks ${op.to}: ${op.evidence}`)),
     ...(notes.length ? ['## Agent notes', '', ...notes] : []),
     ...(descriptions.length ? ['## Descriptions', '', ...descriptions] : []),
+    ...section('Not written: card started', (plan.notWritten ?? []).map(n =>
+      `- ${n.id} (${n.started}): +${n.added} −${n.removed} lines; name it in writeStarted to write it`)),
     '## Unchanged',
     '',
     `${plan.keep.length} listed relation(s) already in Linear.`,

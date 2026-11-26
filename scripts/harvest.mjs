@@ -11,7 +11,9 @@ import {
 import {
   fetchDescriptions, fetchProject, fetchProjectMap, parseProjectRef, readLinearKey, redact,
 } from './lib/linear-fetch.mjs';
+import { readGithub, startedCards } from './lib/harvest-started.mjs';
 import { readRecords } from './lib/records.mjs';
+import { ghRunner, gitRunner } from './lib/spike/exec.mjs';
 import { dataDirFor } from './lib/spike/home.mjs';
 
 const SCRIPT = fileURLToPath(import.meta.url);
@@ -42,8 +44,12 @@ const slugArg = args => {
 
 const COMMANDS = { draft, cases, plan, apply, undo };
 
-export async function run(argv, { env = process.env, fetchImpl = fetch, keyFile, now = () => new Date(), dataDir = dataDirFor(env) } = {}) {
-  const deps = { env, fetchImpl, keyFile, now, dataDir };
+// home holds the spike config, which names the repos whose PRs and pushed branches tell a started card; it defaults to the
+// data dir, which is the spike home unless a caller splits them.
+export async function run(argv, {
+  env = process.env, fetchImpl = fetch, keyFile, now = () => new Date(), dataDir = dataDirFor(env), home = dataDir, gh = ghRunner(), git = gitRunner(),
+} = {}) {
+  const deps = { env, fetchImpl, keyFile, now, dataDir, home, gh, git };
   const [command, ...rest] = argv;
   try {
     return await (Object.hasOwn(COMMANDS, command) ? COMMANDS[command](rest, deps) : plan(argv, deps));
@@ -88,12 +94,12 @@ function cases(args, { dataDir }) {
   return ok({ slug, count: list.length, cases: of('case'), decisions: of('decision'), openDecisions: of('openDecision') });
 }
 
-async function plan(args, { env, fetchImpl, keyFile, now, dataDir }) {
+async function plan(args, { env, fetchImpl, keyFile, now, dataDir, home, gh, git }) {
   const parsed = projectRef(parseArgs(args));
   if (!parsed) return fail(2, ...USAGE);
   const { key, reason } = readLinearKey(env, keyFile);
   if (!key) return fail(3, reason);
-  return redacted(await writePlan(parsed, key, { fetchImpl, now, dataDir }), key);
+  return redacted(await writePlan(parsed, key, { fetchImpl, now, dataDir, home, gh, git }), key);
 }
 
 function refuse(files, project, refusals, warnings) {
@@ -121,7 +127,7 @@ async function outsideCards(harvest, raw, key, fetchImpl) {
   return outside;
 }
 
-async function writePlan(parsed, key, { fetchImpl, now, dataDir }) {
+async function writePlan(parsed, key, { fetchImpl, now, dataDir, home, gh, git }) {
   // The harvest files are keyed by slug, so an identifier or UUID ref costs exactly one project read before validation.
   let project = null;
   if (parsed.kind === 'identifier' || parsed.kind === 'uuid') {
@@ -149,7 +155,10 @@ async function writePlan(parsed, key, { fetchImpl, now, dataDir }) {
     return fail(1, failure(e));
   }
   const { records } = readRecords(join(dataDir, slug));
-  const r = computePlan({ harvest: input.harvest, records, notes: input.notes, raw, descriptions, outside });
+  const github = readGithub({ gh, git, home, slug: raw.project.slug });
+  const started = startedCards(raw, github);
+  const extraWarnings = github.unread ? [{ kind: 'github-unread', message: github.unread }] : [];
+  const r = computePlan({ harvest: input.harvest, records, notes: input.notes, raw, descriptions, outside, started, extraWarnings });
   if (!r.plan) return refuse(files, raw.project, r.refusals, r.warnings);
   const p = r.plan;
   const approveCommand = `node ${tilde(SCRIPT)} apply ${parsed.ref} --plan ${files.plan} --approve ${p.hash.slice(0, 12)}`;

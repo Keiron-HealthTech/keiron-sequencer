@@ -146,7 +146,7 @@ test('plan writes plan.json and plan.md under data/<slug>/harvest only, the hash
   assert.equal(out.plan, join(dir, 'plan.json'));
   assert.equal(out.review, join(dir, 'plan.md'));
   assert.deepEqual(out.refusals, []);
-  assert.deepEqual(out.counts, { ops: 1, keep: 0, noop: 0, held: 0, warnings: 0 });
+  assert.deepEqual(out.counts, { ops: 1, keep: 0, noop: 0, held: 0, warnings: 1 }, "the one warning: no spike config, so GitHub was not read");
 
   const plan = JSON.parse(readFileSync(out.plan, 'utf8'));
   assert.equal(plan.generatedAt, NOW.toISOString());
