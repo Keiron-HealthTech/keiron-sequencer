@@ -59,7 +59,6 @@ declare module 'claude-code' {
   interface PluginState {
     'keiron-sequencer': {
       snapshot: Shaped<Snapshot | null>
-      planned: Shaped<CardStatus | null>
       card: Shaped<CardStatus | null>
       owner: Shaped<{ hasOpened: boolean } | null>
     }

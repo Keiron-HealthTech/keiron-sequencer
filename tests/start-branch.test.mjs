@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { readStarted, startedKey, startedPath } from '../scripts/lib/start/started.mjs';
 import { guardNetwork } from './helpers/no-network.mjs';
 import { appRepo, CARD, FAKE_CHECKOUT, fakeStartFixture, GIT_BRANCH_NAME, HEAD_SHA, SENTINEL, startIssue } from './helpers/start-fixture.mjs';
 
@@ -290,4 +293,45 @@ test('--resume never renames: it takes no --name or --accept', async t => {
     assert.equal(r.code, 2, extra.join(' '));
   }
   assert.deepEqual(checkouts(f), []);
+});
+
+// The status line hook names this file the same way; the vector pins the two copies of the name together.
+test('the started file is named by an FNV-1a hash of the checkout path', () => {
+  assert.equal(startedKey('/w/app'), '977955ef');
+  assert.equal(startedPath('/h', '/w/app'), '/h/started/977955ef.json');
+});
+
+test('a created branch is written to the started file of its checkout, with what the status line reads from the plan', async t => {
+  const f = fixture(t);
+  const shown = await plan(f);
+  const r = await branch(f, [], shown.approve);
+  assert.equal(r.code, 0, r.stderr);
+  const file = readStarted(f.home, FAKE_CHECKOUT);
+  assert.equal(file.path, FAKE_CHECKOUT);
+  const entry = file.branches[GIT_BRANCH_NAME];
+  assert.deepEqual([entry.card, entry.slug, entry.branch, entry.action], [CARD, shown.card.project.slug, GIT_BRANCH_NAME, 'created']);
+  assert.deepEqual(entry.plan.route.reasons, shown.route.reasons);
+  assert.deepEqual(entry.plan.base, { kind: shown.base.kind, branch: shown.base.branch ?? null });
+  assert.ok(!Number.isNaN(Date.parse(entry.at)));
+});
+
+test('a resumed branch is written beside the others of the same checkout', async t => {
+  const f = fixture(t, { live: liveCheckout({ local: ['main', GIT_BRANCH_NAME] }) });
+  const r = await branch(f, ['--resume', GIT_BRANCH_NAME]);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(readStarted(f.home, FAKE_CHECKOUT).branches[GIT_BRANCH_NAME].action, JSON.parse(r.stdout).action);
+});
+
+test('a refused branch writes no started file', async t => {
+  const f = fixture(t);
+  await refused(f, [], 'deadbeef');
+  assert.equal(readStarted(f.home, FAKE_CHECKOUT), null);
+});
+
+test('a started file that cannot be written leaves the branch made and the output unchanged', async t => {
+  const f = fixture(t);
+  writeFileSync(join(f.home, 'started'), 'a file where the folder goes');
+  const r = await branch(f);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).action, 'created');
 });

@@ -9,6 +9,7 @@ import { runBaseline } from './lib/start/baseline.mjs';
 import { createBranch, fetchRemote, resumeBranch } from './lib/start/branch.mjs';
 import { parsePullUrl } from './lib/start/checkout.mjs';
 import { startSettings } from './lib/start/config.mjs';
+import { recordStart } from './lib/start/started.mjs';
 import { moveToInProgress } from './lib/start/move.mjs';
 import { approvedPlan, buildPlan } from './lib/start/plan.mjs';
 
@@ -113,12 +114,24 @@ function fetchCommand(args, deps) {
   });
 }
 
+// The status line reads this file, not the command text, so it lights however start was invoked. The branch is made
+// either way: a file that cannot be written only leaves the line off.
+function noteStart(deps, approved, done) {
+  if (!approved.checkout?.path || !done.branch) return;
+  try {
+    recordStart(deps.home, { plan: approved, branch: done.branch, action: done.action, checkoutPath: approved.checkout.path, dataDir: deps.dataDir, at: deps.now().toISOString() });
+  } catch {
+    // Nothing to report: the line is a convenience.
+  }
+}
+
 function branchCommand(args, deps) {
   return gated(args, deps, async (approved, planDeps, flags) => {
     const done = flags.resume === undefined
       ? createBranch(deps.git, approved, { cwd: deps.cwd, name: flags.name, accept: flags.accept ?? [] })
       : resumeBranch(deps.git, approved, flags.resume, { cwd: deps.cwd });
     if (done.refused) return done;
+    noteStart(deps, approved, done);
     const after = await recomputed(approved, planDeps);
     return { ...done, head: after.checkout.head, nextApprove: after.approve };
   }, { single: ['--name', '--resume'], many: ['--accept'], usable: f => f.resume === undefined || (f.name === undefined && !f.accept) });

@@ -46,6 +46,9 @@ checkout only.
 - Every bash fence below runs only `node ${CLAUDE_PLUGIN_ROOT}/scripts/start.mjs …`,
   except Step 9's two `packs.mjs` lines, which draft and answer this card's
   own decision pack.
+- Run each `start.mjs` and `packs.mjs` command as shown, one per Bash call: no
+  shell variable for the path, no `&&` chains, so each step's exit code and
+  output stand alone.
 
 Install: the user installs it as a plugin; do not run these yourself:
 `claude plugin marketplace add <owner>/keiron-sequencer`, then

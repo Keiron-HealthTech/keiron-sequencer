@@ -39,7 +39,10 @@ The plugin also ships a spike metro pane (`/spike-metro`) that shows a running s
 pass as a metro line, and a status line that turns on once `/keiron-sequencer:start`
 creates or resumes a card's branch in a session: the card, its route, the blocker it
 stacks on and the decisions still open in its pack (`ABC-7 · sdd · stacked on ABC-6 ·
-2 open decisions`). Both are a hooks module, so they need Claude Code's mods feature;
+2 open decisions`). `start.mjs branch` records each branch it makes or resumes in
+`~/.keiron-sequencer/started/`, keyed by checkout, and the status line reads that file for
+the session's checkout and branch, so it lights however the command was run, a terminal
+included. Both are a hooks module, so they need Claude Code's mods feature;
 the skills work without them.
 
 ## Install

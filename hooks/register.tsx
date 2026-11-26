@@ -15,8 +15,7 @@ export const statusArgv = (root: string) => ['/bin/sh', '-lc', 'exec node "$1/sc
 const snapshot = atom({ plugin: 'keiron-sequencer', key: 'snapshot' } as const, null, {
   shape: 'snapshot-1',
 })
-// The card the last start plan showed, and the card this session is on once start's branch step ran.
-const planned = atom({ plugin: 'keiron-sequencer', key: 'planned' } as const, null, { shape: 'card-2' })
+// The card this session's checkout and branch are on, from the file start's branch step wrote.
 const card = atom({ plugin: 'keiron-sequencer', key: 'card' } as const, null, { shape: 'card-2' })
 // Set once this session runs the spike CLI. The run state is shared by every session, so only its owner shows it unasked.
 const owner = atom({ plugin: 'keiron-sequencer', key: 'owner' } as const, null, { shape: 'owner-1' })
@@ -129,27 +128,38 @@ export async function poll(root: string, run: Run, at: string): Promise<Snapshot
 }
 
 type PlanJson = {
-  card?: { key?: string; project?: { slug?: string } }
+  card?: { key?: string; project?: { slug?: string | null } }
   base?: { kind?: string; branch?: string | null } | null
   branch?: { name?: string | null } | null
   route?: { route?: Route | null; said?: string | null; reasons?: string[] } | null
   brief?: { pack?: { stale?: unknown; answered?: unknown[]; open?: unknown[] } | null } | null
 }
 
-type PackJson = { questions?: { answer?: unknown }[] }
+type PackJson = { stamp?: unknown; questions?: { answer?: unknown }[] }
 
-const CARD = String.raw`([A-Z][A-Z0-9]*-\d+)`
-const START_CALL = new RegExp(String.raw`scripts/start\.mjs["']?\s+(?:(plan|branch|fetch|baseline|move)\s+)?` + CARD)
-const SPIKE_CALL = /scripts\/(?:re)?spike\.mjs["']?(?!\s+status\b)/
-export const isSpikeCall = (command: string) => SPIKE_CALL.test(command)
-const PACKS_CALL = /scripts\/packs\.mjs["']?\s+(answer|draft)\b/
+// What start.mjs branch writes for each branch it made or resumed, one file per checkout (scripts/lib/start/started.mjs).
+export type Started = { card: string; slug: string | null; branch: string; at: string; plan: PlanJson; packStamp?: unknown }
+type StartedFile = { path?: string; branches?: Record<string, Started> }
 
-export function startCallOf(command: string) {
-  const m = START_CALL.exec(command)
-  return m?.[2] ? { step: m[1] ?? 'plan', card: m[2] } : null
+// FNV-1a over the path's UTF-16 code units, the same name start.mjs gives the file.
+export function startedKey(checkoutPath: string) {
+  let hash = 0x811c9dc5
+  for (let i = 0; i < checkoutPath.length; i++) {
+    hash ^= checkoutPath.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return hash.toString(16).padStart(8, '0')
 }
 
-export const isPacksCall = (command: string) => PACKS_CALL.test(command)
+export function startedOf(text: string | undefined, checkoutPath: string, branch: string): Started | null {
+  const file = parsed<StartedFile>(text)
+  if (file?.path !== checkoutPath) return null
+  const entry = file.branches?.[branch]
+  return entry?.plan?.card?.key && entry.branch === branch ? entry : null
+}
+
+const SPIKE_CALL = /scripts\/(?:re)?spike\.mjs["']?(?!\s+status\b)/
+export const isSpikeCall = (command: string) => SPIKE_CALL.test(command)
 
 export const isPrCreate = (command: string) => /\bgh\s+pr\s+create\b/.test(command)
 
@@ -280,43 +290,58 @@ async function paint($: Dollar) {
   $.ui.status(isOwner && snap?.isRunning ? `🚃 ${snap.done}/${snap.total} · ${where}` : on ? cardLine(on) : undefined)
 }
 
-async function readPack($: Dollar, c: CardStatus) {
-  if (!c.slug) return null
-  const home = (await $.env.get('KEIRON_SEQUENCER_HOME')) || `${await $.env.get('HOME')}/.keiron-sequencer`
+const homeOf = async ($: Dollar) =>
+  (await $.env.get('KEIRON_SEQUENCER_HOME')) || `${await $.env.get('HOME')}/.keiron-sequencer`
+
+const readText = async ($: Dollar, path: string) => {
   try {
-    return parsed<PackJson>(await $.fs.read(`${home}/${c.slug}/packs/${c.key}.json`))
+    return await $.fs.read(path)
   } catch {
+    return undefined
+  }
+}
+
+// The checkout and branch the session is in, read the way start.mjs reads them, so the two name the same file.
+async function checkoutOf($: Dollar) {
+  try {
+    const { exitCode, stdout } = await $.process.run(['git', 'rev-parse', '--show-toplevel', '--abbrev-ref', 'HEAD'], { timeoutMs: 5_000 })
+    const [path, branch] = stdout.trim().split('\n')
+    return exitCode === 0 && path && branch ? { path, branch } : null
+  } catch {
+    // Not a git checkout, or git is missing.
     return null
   }
 }
 
-async function onStartCall($: Dollar, step: string, key: string, stdout: string | undefined) {
-  const json = parsed<PlanJson & { branch?: unknown }>(stdout)
-  if (!json) return
-  if (step === 'plan') {
-    const plan = cardOfPlan(json)
-    if (plan) await update($, planned, () => plan)
-  }
-  if (step === 'branch' && typeof json.branch === 'string') {
-    const name = json.branch
-    const plan = await read($, planned)
-    const base: CardStatus = plan?.key === key ? plan : {
-      key, slug: null, branch: null, currentBranch: null, route: null, isRouteFixed: true,
-      facts: { isMultiRepo: false, tier: null, newPaths: 0, fixupsReceived: 0, peopleDecisions: 0 }, stackedOn: null, pack: null,
-      flow: null, phase: null, isDone: false,
-    }
-    await update($, card, () => ({ ...base, branch: name, currentBranch: name }))
-  }
+const sameStamp = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+
+// The card a start file holds, with its pack read again. A pack drafted after the start has a new stamp, so it is fresh;
+// answers keep the stamp. The phase the session reached stays while the card and branch do.
+export function cardOfStart(s: Started, pack: PackJson | null, prev: CardStatus | null): CardStatus | null {
+  const plan = cardOfPlan(s.plan)
+  if (!plan) return null
+  const c: CardStatus = { ...plan, slug: s.slug ?? plan.slug, branch: s.branch, currentBranch: s.branch }
+  if (pack) c.pack = packOfFile(pack, sameStamp(pack.stamp, s.packStamp) ? Boolean(s.plan.brief?.pack?.stale) : false)
+  if (prev?.key === c.key && prev.branch === c.branch) return { ...c, flow: prev.flow, phase: prev.phase, isDone: prev.isDone }
+  return c
 }
 
-async function onPacksCall($: Dollar, command: string) {
-  const c = await read($, card)
-  if (!c) return
-  const pack = await readPack($, c)
-  if (!pack) return
-  // A draft writes the pack again from the current record and base, so it is fresh; an answer keeps what it was.
-  const isStale = /\bdraft\b/.test(command) ? false : c.pack?.isStale ?? false
-  await update($, card, prev => (prev ? { ...prev, pack: packOfFile(pack, isStale) } : prev))
+// Correctness rests on the file start.mjs writes, not on how the command was spelled, so this runs after every Bash
+// call and on each tick: a start chained, wrapped in a variable or run in a terminal lights the line all the same.
+async function sync($: Dollar) {
+  const at = await checkoutOf($)
+  if (!at) return
+  const home = await homeOf($)
+  const started = startedOf(await readText($, `${home}/started/${startedKey(at.path)}.json`), at.path, at.branch)
+  const prev = await read($, card)
+  if (!started) {
+    // No start on this branch: a card held from this checkout says the branch moved off it.
+    if (prev && prev.currentBranch !== at.branch) await update($, card, c => (c ? { ...c, currentBranch: at.branch } : c))
+    return
+  }
+  const pack = started.slug ? parsed<PackJson>(await readText($, `${home}/${started.slug}/packs/${started.card}.json`)) : null
+  const next = cardOfStart(started, pack, prev)
+  if (next && JSON.stringify(next) !== JSON.stringify(prev)) await update($, card, () => next)
 }
 
 async function onStep($: Dollar, step: Step | null) {
@@ -333,23 +358,11 @@ const quietly = async (work: () => Promise<void>) => {
   }
 }
 
-async function checkBranch($: Dollar) {
-  const c = await read($, card)
-  if (!c?.branch) return
-  try {
-    const { exitCode, stdout } = await $.process.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], { timeoutMs: 5_000 })
-    const current = exitCode === 0 ? stdout.trim() : null
-    if (current && current !== c.currentBranch) await update($, card, prev => (prev ? { ...prev, currentBranch: current } : prev))
-  } catch {
-    // Not a git checkout, or git is missing: the line keeps the branch start chose.
-  }
-}
-
 async function refresh($: Dollar) {
   const snap = await poll($.plugin.root, argv => $.process.run(argv, { timeoutMs: 20_000 }), new Date().toISOString())
   await update($, snapshot, () => snap)
   try {
-    await checkBranch($)
+    await sync($)
     await paint($)
     const own = await read($, owner)
     if (snap.isRunning && own && !own.hasOpened) {
@@ -370,13 +383,9 @@ export const register: Register = on => {
     return started
   })
 
-  // start and packs print JSON; their results are read after the call, and the call itself is never changed.
+  // Every Bash call may have started a card, however it was spelled; the call itself is never changed.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
-    const start = startCallOf(e.command)
-    const isPacks = isPacksCall(e.command)
-    const isPr = isPrCreate(e.command)
     const isSpike = isSpikeCall(e.command)
-    if (!start && !isPacks && !isPr && !isSpike) return next(e)
     const ran = await next(e)
     if (isSpike) {
       await quietly(async () => {
@@ -385,12 +394,9 @@ export const register: Register = on => {
         void quietly(() => refresh($))
       })
     }
-    if (ran.deny !== undefined || ran.isError) return ran
     await quietly(async () => {
-      const stdout = (ran.result as { stdout?: string } | undefined)?.stdout
-      if (start) await onStartCall($, start.step, start.card, stdout)
-      if (isPacks) await onPacksCall($, e.command)
-      if (isPr) await onStep($, { flow: 'superpowers', phase: 'done' })
+      await sync($)
+      if (isPrCreate(e.command) && ran.deny === undefined && !ran.isError) await onStep($, { flow: 'superpowers', phase: 'done' })
       await paint($)
     })
     return ran
