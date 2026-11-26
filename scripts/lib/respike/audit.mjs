@@ -21,7 +21,8 @@ export const latestPrCheck = record => [...(record?.audits ?? [])].filter(a => a
 const prCheckSummary = entry => {
   if (!entry) return null;
   const of = v => entry.verdicts.filter(x => x.verdict === v).map(x => x.id);
-  return { at: entry.at, holds: of('holds'), notBuilt: of('not-built'), missing: entry.missing ?? [] };
+  const moved = entry.verdicts.filter(x => x.verdict === 'moved').map(x => ({ id: x.id, card: x.card }));
+  return { at: entry.at, holds: of('holds'), moved, notBuilt: of('not-built'), missing: entry.missing ?? [] };
 };
 
 export const auditDir = (home, slug, runId) => join(runDir(home, slug, runId), 'audit');
@@ -148,6 +149,7 @@ export function validateVerdicts(value, inputs, { onMap }) {
     const items = isObject(v.items) ? v.items : {};
     if (!isObject(v.items)) err(`${card}: items must be an object of item ids`);
     const ids = new Set(at.items.map(i => i.id));
+    const prMoved = new Map(at.items.filter(i => i.audit?.check === 'pr' && i.audit.verdict === 'moved').map(i => [i.id, i.audit.card]));
     for (const id of ids) if (!(id in items)) err(`${card}: ${id} has no verdict`);
     for (const [id, item] of Object.entries(items)) {
       if (!ids.has(id)) { err(`${card}: ${id} is not an item of its record`); continue; }
@@ -156,6 +158,10 @@ export function validateVerdicts(value, inputs, { onMap }) {
       if (!AUDIT_VERDICTS.includes(item.verdict)) err(`${card} ${id}: verdict must be one of ${AUDIT_VERDICTS.join(', ')}`);
       if (!isText(item.note)) err(`${card} ${id}: note must be a non-empty string`);
       if (item.verdict === 'not-built' && at.kind !== 'built') err(`${card} ${id}: not-built is only for a built card`);
+      // No fresh record claims an item the PR check moved, so "the rest holds" would hand it back to this card.
+      if (prMoved.has(id) && !['moved', 'dropped'].includes(item.verdict)) {
+        err(`${card} ${id}: the PR check moved it to ${prMoved.get(id)}: keep it moved, to ${prMoved.get(id)} or to the card a fresh record shows owns it now, or drop it`);
+      }
       if (item.verdict === 'moved') {
         if (!(typeof item.card === 'string' && CARD_KEY.test(item.card))) err(`${card} ${id}: a moved item names the card that owns it now`);
         else if (item.card === card) err(`${card} ${id}: moved to itself`);

@@ -150,6 +150,9 @@ reports nothing; run it again.
      run (`spikedAt`, `findings`, `decisions`, `openDecisions`) on a respike,
      and `null` on a first spike. `packAnswers` (when present) lists the
      people's answers in the card's decision pack: see the notes rules.
+     `unordered` (when present) lists the cards whose work is already in the
+     trees though no blocks chain orders them before this card: the spike
+     order put them there by milestone and number. See the notes rules.
    - `action: 'pause'` with `reason`, `spent` and `cap`: a cap was reached.
      Report the reason and the spend, and stop. The trees are kept.
    - `action: 'complete'`: see Step 3.
@@ -213,7 +216,17 @@ reports nothing; run it again.
    `impact`, `status`, `owner` and `outcome` take. `end` refuses notes that
    do not fit, naming each `notes.*` path.
    - About 4 English given/when/then cases at card end (3 to 6; zero is
-     refused).
+     refused). Cases cover what this card's own change does. A behavior an
+     earlier card's work gives the tree (a check it adds, a field it
+     carries) is that card's case, not this one's, even when this card
+     relies on it.
+   - **An unordered card you use is a dependency.** When this card uses code
+     a card in `unordered` added (calls it, reads its option, relies on its
+     check), record a `reorder` finding naming that card: the `text` says
+     what this card uses, the `ref` is `linear:<CARD>`. Nothing else tells
+     Linear: a fixup fires only when a card edits an earlier card's lines,
+     and harvest proposes the blocks edge from this finding. A card in
+     `unordered` you only sit next to (the same file, no use) is no finding.
    - Run the implication check on every open guess before recording it: read
      what the code already forces. `resolved`: it moves to `decisions`, with
      the evidence. `narrowed`: it stays in `openDecisions` with

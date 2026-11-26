@@ -399,3 +399,25 @@ test('a card the plan writes notes into but whose description was not read is a 
   const r = plan({ rejected: [{ from: 'CRM-1', to: 'CRM-2', reason: 'r', order: 'La que llegue segunda rebasa.' }] }, w);
   assert.deepEqual(messages(r), ['notes: the description of CRM-2 was not read; plan again']);
 });
+
+// A stacked spike can record a use of another card's code with no fixup and no finding, so no edge is ever drafted and
+// nothing tells next or start. Every pair a published item names must be ordered, listed, or settled.
+test('a pair a published item names that no relation orders and no entry lists refuses the plan as unaddressed-reference', () => {
+  const w = world(['CRM-1', 'CRM-2', 'CRM-3', 'CRM-4', 'CRM-5'], [['CRM-3', 'CRM-4']], { over: { 'CRM-5': { state: { name: 'Done', type: 'completed' } } } });
+  const records = [
+    rec('CRM-2', {
+      decisions: [{ text: 'updateDeal reuses the viewer CRM-1 adds.' }, { text: 'Like CRM-5 did.' }],
+      openDecisions: [{ text: 'Ask CRM-99\'s owner.' }],
+      cases: [{ id: 'c1', given: 'g', when: 'w', then: 'it answers 403 (CRM-4)', audit: { check: 'pr', verdict: 'moved', card: 'CRM-4', note: 'n', at: 't' } }],
+    }),
+    rec('CRM-4', { decisions: [{ text: 'Uses CRM-3\'s loader.' }] }),
+  ];
+  const r = plan({}, w, { records });
+  assert.equal(r.plan, null);
+  assert.deepEqual(r.refusals.map(x => [x.kind, x.cards, x.mentions]), [['unaddressed-reference', ['CRM-1', 'CRM-2'], ['CRM-2 d1']]]);
+  assert.equal(r.refusals[0].message, 'CRM-2 d1 names CRM-1, but no relation orders the two cards and no edge, rejected or removals entry lists them: '
+    + 'add the edge when one needs the other\'s code, or reject it with an order note');
+  assert.deepEqual(plan({ edges: [e('CRM-1', 'CRM-2')] }, w, { records }).refusals, []);
+  assert.deepEqual(plan({ edges: [e('CRM-1', 'CRM-2', { hold: 'asking' })] }, w, { records }).refusals, []);
+  assert.deepEqual(plan({ rejected: [{ from: 'CRM-1', to: 'CRM-2', reason: 'r' }] }, w, { records }).refusals.map(x => x.kind), ['unordered-reference']);
+});

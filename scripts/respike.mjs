@@ -159,6 +159,7 @@ function runPlan(built, at) {
       prChecks: plan.prChecks,
       handoffs: plan.handoffs,
       drops: plan.drops,
+      moved: plan.moved,
       replay,
       map: { open: keysWhere(c => c.statusType !== 'completed'), completed: keysWhere(c => c.statusType === 'completed') },
     },
@@ -506,7 +507,7 @@ function auditStore(state, path, { home, dataDir, now }) {
 }
 
 // The PR check, before a run: without --verdicts it reads the plan the selection flags make and gathers each built card whose
-// record is unchecked or stale, with its diff; with --verdicts it stores the skill's holds and not-built verdicts, offline.
+// record is unchecked or stale, with its diff; with --verdicts it stores the skill's holds, moved and not-built verdicts, offline.
 async function auditBefore(args, deps) {
   if (args.includes('--verdicts')) {
     const a = parseArgs(args.filter(x => x !== '--before'), ['--verdicts']);
@@ -517,11 +518,11 @@ async function auditBefore(args, deps) {
   if (!a) return fail(2, ...USAGE);
   if (a.error) return fail(2, a.error, ...USAGE);
   return withKey(deps, async key => {
-    const { plan, raw, descriptions, config } = await buildRespikePlan(a.ref, key, { ...a.options, answers: { ...a.options.answers, hand: new Map(), drop: new Set() } }, deps);
+    const { plan, analysis, raw, descriptions, config } = await buildRespikePlan(a.ref, key, { ...a.options, answers: { ...a.options.answers, hand: new Map(), drop: new Set() } }, deps);
     const { slug } = plan.project;
     const dir = join(deps.home, slug, 'audit');
     const inputs = gatherPrCheck({
-      project: { id: raw.project.id, slug, name: plan.project.name }, plan, descriptions, gh: deps.gh, git: deps.git, config, now: deps.now(),
+      project: { id: raw.project.id, slug, name: plan.project.name }, plan, map: analysis.cards.map(c => c.key), descriptions, gh: deps.gh, git: deps.git, config, now: deps.now(),
       records: new Map(readRecords(join(deps.dataDir, slug)).records.filter(r => !r.archived && !r.supersededBy).map(r => [r.card, r])),
       writeDiff: (card, repoDir, text) => {
         const path = join(dir, `${card}.${repoDir}.diff`);

@@ -96,6 +96,29 @@ test('begin, then next, tree and end over three cards, completes the run: record
   assert.match((await run(['next'], deps)).stderr, /no active spike run/);
 });
 
+// A tiebreak, not a blocks edge, put CRM-1 first: its work is in the tree when CRM-2 and CRM-3 are spiked, and a use of
+// it would be a dependency Linear never records. CRM-2 blocks CRM-3, so CRM-2's work in CRM-3's tree is declared.
+test('next names the cards whose work is already in the tree but no blocks chain orders before the card', async () => {
+  const fixture = spikeFixture({ issues: [issue('CRM-1'), issue('CRM-2', { relations: blocks('CRM-3') }), issue('CRM-3')] });
+  await call(fixture, ['begin', PROJECT_URL]);
+  const dir = activeRunDir(fixture.home);
+  mkdirSync(join(dir, 'notes'), { recursive: true });
+  const briefs = [];
+  for (const [i, card] of ['CRM-1', 'CRM-2', 'CRM-3'].entries()) {
+    fixture.at(`2026-11-10T10:${10 + i * 10}:00.000Z`);
+    const brief = JSON.parse((await call(fixture, ['next'])).stdout);
+    assert.equal(brief.card, card);
+    briefs.push(brief);
+    const tree = JSON.parse((await call(fixture, ['tree', 'backend'])).stdout).path;
+    writeFileSync(join(tree, `${card}.txt`), `${card}\n`);
+    writeFileSync(join(dir, 'notes', `${card}.json`), JSON.stringify(notes));
+    fixture.at(`2026-11-10T10:${15 + i * 10}:00.000Z`);
+    const ended = await call(fixture, ['end', card]);
+    assert.equal(ended.code, 0, ended.stderr);
+  }
+  assert.deepEqual(briefs.map(b => b.unordered ?? null), [null, ['CRM-1'], ['CRM-1']]);
+});
+
 const twoCards = () => spikeFixture({ issues: [issue('CRM-1'), issue('CRM-2')] });
 
 async function cardOpen(fixture, flags = []) {

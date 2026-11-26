@@ -174,21 +174,33 @@ export function draftFromRecords(records, harvest) {
     for (const e of harvest?.[name] ?? []) decided.add(pairId(e.from, e.to)).add(pairId(e.to, e.from));
   }
   const found = new Map();
-  const add = (from, to, patch, note) => {
+  const pair = (from, to) => {
     const id = pairId(from, to);
-    if (!from || !to || from === to || [from, to].includes(COMBINE_FIXUP) || decided.has(id)) return;
-    if (!found.has(id)) found.set(id, { from, to, patches: new Map() });
-    const patches = found.get(id).patches;
-    if (!patches.get(patch)) patches.set(patch, note ?? null);
+    if (!from || !to || from === to || [from, to].includes(COMBINE_FIXUP) || decided.has(id)) return null;
+    if (!found.has(id)) found.set(id, { from, to, patches: new Map(), reorders: [] });
+    return found.get(id);
+  };
+  const add = (from, to, patch, note) => {
+    const patches = pair(from, to)?.patches;
+    if (patches && !patches.get(patch)) patches.set(patch, note ?? null);
   };
   for (const r of records) {
     for (const f of r.fixups?.received ?? []) add(r.card, f.from, f.patch, f.note);
     for (const f of r.fixups?.caused ?? []) add(f.to, r.card, f.patch, f.note);
+    // A use of an earlier card's code, with no edit of its lines, leaves no fixup: the spike names that card in a reorder.
+    for (const [i, f] of (r.findings ?? []).entries()) {
+      const named = f?.kind === 'reorder' && String(f.ref ?? '').match(/^linear:([A-Z]+-\d+)$/)?.[1];
+      if (named) pair(named, r.card)?.reorders.push(`${r.card} f${i + 1} (${JSON.stringify(f.text)})`);
+    }
   }
   // The note says what the fixup repaired: a fix to the earlier card's own patch is no dependency, so curation needs it.
   const shown = ([patch, note]) => (note ? `${patch} (note: ${JSON.stringify(note)})` : patch);
+  const evidenceOf = d => [
+    ...(d.patches.size ? [`fixup: ${[...d.patches].sort(([a], [b]) => compare(a, b)).map(shown).join(', ')}`] : []),
+    ...(d.reorders.length ? [`reorder: ${d.reorders.join(', ')}`] : []),
+  ].join('; ');
   const edges = [...found.entries()].sort(([a], [b]) => compare(a, b)).map(([, d]) => ({
-    from: d.from, to: d.to, kind: 'code', evidence: `fixup: ${[...d.patches].sort(([a], [b]) => compare(a, b)).map(shown).join(', ')}`, draft: true,
+    from: d.from, to: d.to, kind: 'code', evidence: evidenceOf(d), draft: true,
   }));
   const split = new Set((harvest?.splits ?? []).map(x => pairId(x.parent, x.new)));
   const splits = records
@@ -667,6 +679,32 @@ export function computePlan({ harvest, records = [], notes = null, raw, descript
       kind: 'unordered-reference', from, to, mentions: mentions.map(m => `${m.card} ${m.id}`),
       message: `${where}: ${mentions.map(m => `${m.card} ${m.id} names ${m.other}`).join('; ')}, but ${from} will not block ${to}: `
         + 'keep the edge, or add an order note (order) saying what each card does if the other lands first',
+    });
+  }
+
+  // A pair a published item names, with no relation ordering it and no entry listing it, is a use or an order nobody
+  // decided: a stacked spike can use another card's code with no fixup and no finding, so nothing else surfaces it.
+  const decidedPairs = new Set([...(harvest.edges ?? []), ...(harvest.rejected ?? []), ...(harvest.removals ?? [])]
+    .flatMap(x => [pairId(resolve(x.from), resolve(x.to)), pairId(resolve(x.to), resolve(x.from))]));
+  const byNumber = (a, b) => number(a) - number(b) || compare(a, b);
+  const unaddressed = new Map();
+  for (const [card, record] of [...liveRecords].sort(([a], [b]) => byNumber(a, b))) {
+    if (!onMap.has(card) || settled(card)) continue;
+    for (const other of [...onMap].sort(byNumber)) {
+      if (other === card || settled(other) || decidedPairs.has(pairId(card, other)) || ordered(card, other)) continue;
+      const named = mentionsOf(record, other);
+      if (!named.length) continue;
+      const cards = [card, other].sort(byNumber);
+      const id = cards.join(' ');
+      if (!unaddressed.has(id)) unaddressed.set(id, { cards, mentions: [] });
+      unaddressed.get(id).mentions.push(...named.map(n => ({ card, id: n, other })));
+    }
+  }
+  for (const { cards, mentions } of unaddressed.values()) {
+    refusals.push({
+      kind: 'unaddressed-reference', cards, mentions: mentions.map(m => `${m.card} ${m.id}`),
+      message: `${mentions.map(m => `${m.card} ${m.id} names ${m.other}`).join('; ')}, but no relation orders the two cards and no edge, `
+        + 'rejected or removals entry lists them: add the edge when one needs the other\'s code, or reject it with an order note',
     });
   }
 

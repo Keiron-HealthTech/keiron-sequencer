@@ -3,8 +3,11 @@ import { withoutNotesBlock } from '../harvest.mjs';
 import { PR_CHECK_VERDICTS, validateRecord } from '../record.mjs';
 import { againstOf, diffFiles, itemsOf, latestPrCheck } from './audit.mjs';
 
+const CARD_KEY = /^[A-Z]+-\d+$/;
+
 // The PR check holds a built card's record against what its PR or accepted local branch builds, before a run spikes on top
-// of it: each gap is answered in the plan (handed to a card the run spikes, or dropped), or the PR is fixed first.
+// of it: each gap is answered in the plan (handed to a card the run spikes, or dropped), or the PR is fixed first. An item
+// another card owns (a stacked spike recorded that card's behavior) is moved to it: the plan lists it and asks nothing.
 
 export const PR_CHECK_SCHEMA = 1;
 
@@ -59,6 +62,7 @@ export function prCheckPlan({ built, records, answers, spiked }) {
   const asks = [];
   const handoffs = [];
   const drops = [];
+  const moved = [];
   const hand = answers.hand ?? new Map();
   const drop = answers.drop ?? new Set();
   const used = new Set();
@@ -76,6 +80,8 @@ export function prCheckPlan({ built, records, answers, spiked }) {
       continue;
     }
     const entry = latestPrCheck(records.get(card));
+    const notes = new Map(itemsOf(records.get(card)).map(i => [i.id, i.audit?.note]));
+    for (const v of entry.verdicts.filter(x => x.verdict === 'moved')) moved.push({ from: card, id: v.id, to: v.card, note: notes.get(v.id) });
     for (const gap of gapsOf(records.get(card), entry)) {
       const key = `${card}:${gap.id}`;
       const { where, ...item } = gap;
@@ -97,7 +103,7 @@ export function prCheckPlan({ built, records, answers, spiked }) {
   }
   for (const [key, to] of hand) if (!used.has(key)) throw exitError(2, `--hand ${key}=${to}: ${key.replace(':', ' ')} is not a not-built item of a checked card`);
   for (const key of drop) if (!used.has(key)) throw exitError(2, `--drop ${key}: ${key.replace(':', ' ')} is not a not-built item of a checked card`);
-  return { checks, asks, handoffs, drops };
+  return { checks, asks, handoffs, drops, moved };
 }
 
 const withoutId = ({ id: _, ...rest }) => rest;
@@ -116,7 +122,8 @@ function readDiff(b, { gh, git, config }) {
 
 // The cards whose check is unchecked or stale, each with its PR diff saved by writeDiff(card, repoDir, text): the diff text
 // never goes into the inputs.
-export function gatherPrCheck({ project, plan, records, descriptions, gh, git, config, writeDiff, now }) {
+// map: every card key of the project, so a moved verdict is checked offline against the cards that exist.
+export function gatherPrCheck({ project, plan, map, records, descriptions, gh, git, config, writeDiff, now }) {
   const byCardBuilt = builtByCard(plan.built);
   const cards = plan.prChecks.filter(c => c.status === 'unchecked' || c.status === 'stale').map(({ card }) => {
     const record = records.get(card);
@@ -138,11 +145,11 @@ export function gatherPrCheck({ project, plan, records, descriptions, gh, git, c
       items: itemsOf(record),
     };
   });
-  return { schemaVersion: PR_CHECK_SCHEMA, check: 'pr', project, gatheredAt: now.toISOString(), cards };
+  return { schemaVersion: PR_CHECK_SCHEMA, check: 'pr', project, gatheredAt: now.toISOString(), map: [...map].sort(byCard), cards };
 }
 
 const CARD_FIELDS = ['items', 'missing'];
-const ITEM_FIELDS = ['verdict', 'note'];
+const ITEM_FIELDS = ['verdict', 'card', 'note'];
 
 export function validatePrVerdicts(value, inputs) {
   if (!isObject(value)) return ['the verdicts file must be a JSON object'];
@@ -152,6 +159,7 @@ export function validatePrVerdicts(value, inputs) {
   for (const k of Object.keys(value).filter(k => !['schemaVersion', 'cards'].includes(k))) err(`unknown top-level field ${k}`);
   if (!isObject(value.cards)) return [...errors, 'cards must be an object of card keys'];
   const gathered = new Map(inputs.cards.map(c => [c.card, c]));
+  const onMap = inputs.map ? new Set(inputs.map) : null;
   for (const [card, v] of Object.entries(value.cards)) {
     const at = gathered.get(card);
     if (!at) { err(`${card} is not a card the PR check gathered`); continue; }
@@ -165,7 +173,13 @@ export function validatePrVerdicts(value, inputs) {
       if (!ids.has(id)) { err(`${card}: ${id} is not an item of its record`); continue; }
       if (!isObject(item)) { err(`${card} ${id}: expected an object`); continue; }
       for (const k of Object.keys(item).filter(k => !ITEM_FIELDS.includes(k))) err(`${card} ${id}: unknown field ${k}`);
-      if (!PR_CHECK_VERDICTS.includes(item.verdict)) err(`${card} ${id}: the PR check gives holds or not-built`);
+      if (!PR_CHECK_VERDICTS.includes(item.verdict)) err(`${card} ${id}: the PR check gives holds, moved or not-built`);
+      if (item.verdict === 'moved') {
+        if (!(typeof item.card === 'string' && CARD_KEY.test(item.card))) err(`${card} ${id}: a moved item names the card that owns it now`);
+        else if (item.card === card) err(`${card} ${id}: moved to itself`);
+        else if (!onMap) err(`${card} ${id}: the gather holds no project map: run audit --before again`);
+        else if (!onMap.has(item.card)) err(`${card} ${id}: ${item.card} is not a card of the project map`);
+      } else if ('card' in item) err(`${card} ${id}: only a moved item names a card`);
       if (!isText(item.note)) err(`${card} ${id}: note must be a non-empty string`);
     }
     if ('missing' in v && (!Array.isArray(v.missing) || !v.missing.every(isText))) err(`${card}: missing must be a list of non-empty strings`);
@@ -175,10 +189,11 @@ export function validatePrVerdicts(value, inputs) {
 
 // Marks each item with its PR check and adds the check to the record's audits; nothing is renumbered or removed.
 export function markPrCheck(record, gathered, verdicts, { at }) {
-  const markOf = id => ({ check: 'pr', verdict: verdicts.items[id].verdict, note: verdicts.items[id].note, at });
+  const owner = id => (verdicts.items[id].verdict === 'moved' ? { card: verdicts.items[id].card } : {});
+  const markOf = id => ({ check: 'pr', verdict: verdicts.items[id].verdict, ...owner(id), note: verdicts.items[id].note, at });
   const entry = {
     check: 'pr', at, kind: 'built', against: gathered.against.map(againstOf),
-    verdicts: itemsOf(record).map(({ id }) => ({ id, verdict: verdicts.items[id].verdict })),
+    verdicts: itemsOf(record).map(({ id }) => ({ id, verdict: verdicts.items[id].verdict, ...owner(id) })),
     missing: verdicts.missing ?? [],
   };
   const next = {

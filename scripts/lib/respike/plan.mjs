@@ -41,6 +41,7 @@ export function approveHash(plan, answers = { built: new Map(), unbuilt: new Set
     prChecks: plan.prChecks ?? [],
     handoffs: plan.handoffs ?? [],
     drops: plan.drops ?? [],
+    moved: plan.moved ?? [],
     action: plan.action,
     codes: [...plan.asks, ...plan.stops].map(x => x.code),
   };
@@ -216,6 +217,7 @@ export async function buildRespikePlan(ref, key, {
     prChecks: [],
     handoffs: [],
     drops: [],
+    moved: [],
     stops,
     missingConfig: covered.missingConfig,
     warnings: [...defaults.warnings, ...classified.warnings, ...covered.warnings, ...noMilestone(analysis), ...dataInRepo(dataDir, repoDataDir, slug)],
@@ -229,7 +231,7 @@ export async function buildRespikePlan(ref, key, {
     plan.bases = decided.bases;
     const spiked = new Set(plan.order.filter(e => e.mode === 'spike').map(e => e.key));
     const checked = prCheckPlan({ built: plan.built, records, answers, spiked });
-    Object.assign(plan, { prChecks: checked.checks, handoffs: checked.handoffs, drops: checked.drops });
+    Object.assign(plan, { prChecks: checked.checks, handoffs: checked.handoffs, drops: checked.drops, moved: checked.moved });
     plan.asks = [...classified.asks, ...pending.asks, ...decided.asks, ...checked.asks];
     plan.warnings.push(...decided.warnings);
   }

@@ -12,7 +12,7 @@ import { repoTypecheck, typecheckLog } from './typecheck.mjs';
 const cardNumber = key => Number(String(key).match(/(\d+)$/)?.[1] ?? 0);
 const CARD_ENTRY = /^(\d{5})-(?:new|existing)$/;
 
-function reach(edges, from, { up = false } = {}) {
+export function reach(edges, from, { up = false } = {}) {
   const next = new Map();
   for (const e of edges) {
     const [a, b] = up ? [e.to, e.from] : [e.from, e.to];

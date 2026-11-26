@@ -89,6 +89,8 @@ test('an edge a chain already implies is never added, and a live edge the plan m
 test('a backward-milestone refusal goes to the user, and an unblocked pair that a record names needs an order note', () => {
   says('`backward-milestone` refusal is the user\'s call, never yours');
   says('`unordered-reference`');
+  says('`unaddressed-reference`');
+  says('`reorder` findings that name a card');
   says('`order`');
   says('`backward-reference` warning');
   says('a chain of relations already orders them');

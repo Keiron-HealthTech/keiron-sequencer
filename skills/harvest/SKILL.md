@@ -38,8 +38,10 @@ plan and, only on the user's command, writes it.
 ## Step 1: Draft
 
 `node ${CLAUDE_PLUGIN_ROOT}/scripts/harvest.mjs draft <slug>` reads the spike records
-only (no network, no key) and prints draft `code` edges from fixups and draft
-splits from `alias.splitFrom`. Every draft carries `"draft": true`. Pairs
+only (no network, no key) and prints draft `code` edges from fixups and from
+`reorder` findings that name a card in their `ref` (`linear:<CARD>`: the
+spike used that card's code with no edit of its lines, so no fixup shows it),
+and draft splits from `alias.splitFrom`. Every draft carries `"draft": true`. Pairs
 already in `edges`, `removals` or `rejected` are left out.
 
 ## Step 2: Curate
@@ -54,7 +56,7 @@ Write `~/.keiron-sequencer/<slug>/harvest/harvest.json` (`schemaVersion: 1`, `pr
   of a blocker to stack on. A Linear relation with no such line is a `code`
   dependency, so list a hand-made relation that only orders shipping here
   with its kind (it is kept, and gets the line). Every kind still orders the
-  cards, for the backward-milestone, redundant and unordered-reference checks;
+  cards, for the backward-milestone, redundant, unordered-reference and unaddressed-reference checks;
   `evidence` is required. Copy a draft only after checking it, and drop its
   `"draft": true` (a draft entry is rejected).
 
@@ -147,6 +149,17 @@ may be in the wrong milestone. Take it to the user like a
   that op is applied, remove the entry: left in, it would undo a later hand
   edit of the card on the next plan.
 
+Every pair a published item names needs a decision. The plan refuses as
+`unaddressed-reference` a pair where a case, decision, open decision or
+finding of one card names another open card on the map, while no relation
+or chain orders them and no `edges`, `rejected` or `removals` entry lists
+them: a stacked spike can use another card's code without a fixup or a
+finding, so this is the only place that surfaces it. Read the mention and
+the code it points at: add the edge when one card needs the other's code,
+or reject it with an `order` when the two only have to know about each
+other. An item a check marked moved, not built or dropped is not published,
+so it names nothing.
+
 A card outside the project may be one end of an edge when it exists and is not
 archived; the review marks it off-project.
 
@@ -188,7 +201,7 @@ stdout is one JSON line: `{status, plan, review, hash, counts, refusals}`.
 - **Exit 3**: no usable key. Tell the user where the CLI looks; never ask them
   to paste the key into the chat.
 - **Exit 4**: plan refused: invalid input, a conflict, a cycle that a planned
-  add closes, `backward-milestone`, `redundant`, `unordered-reference`, or `needs-translation`. No `plan.json` is
+  add closes, `backward-milestone`, `redundant`, `unordered-reference`, `unaddressed-reference`, or `needs-translation`. No `plan.json` is
   written (a stale one is removed); `plan.md` lists the refusals. Fix the input and plan again; take a
   `backward-milestone` to the user first.
 

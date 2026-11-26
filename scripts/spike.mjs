@@ -15,7 +15,7 @@ import { dataInRepoWarnings, REPO_DATA_DIR } from './lib/records.mjs';
 import { assertHomeOutsideWorkTree, dataDirFor, displayData, runDir, runIdAt, sequencerHome, withLock, writeAtomic, writeJsonAtomic } from './lib/spike/home.mjs';
 import { existingPrs, spikeOrder } from './lib/spike/order.mjs';
 import { LIMIT_FLAGS, limitsFrom, sessionsFrom } from './lib/spike/limits.mjs';
-import { closesCycle, mergeTracks } from './lib/spike/merge.mjs';
+import { closesCycle, mergeTracks, reach, runEdges } from './lib/spike/merge.mjs';
 import { isSlug, prunableSlugs, pruneRuns } from './lib/spike/prune.mjs';
 import { previousOf, replanAfterTurn, replayContext, replayEntry } from './lib/spike/replay.mjs';
 import { answeredOf, checkPackAnswers } from './lib/spike/pack-answers.mjs';
@@ -445,6 +445,14 @@ function adoptPlan(fresh, before, work) {
   if (added.length) fresh.plan.respike.replans = [...(fresh.plan.respike.replans ?? []), ...added];
 }
 
+// The done cards of the track whose work is in this card's trees though no blocks chain (nor a recorded crossing) orders
+// them first: the spike order put them there by milestone and number, so a card that uses their code needs them, and
+// Linear does not know it until the spike says so.
+function unorderedBefore(state, trackId, card) {
+  const above = reach(runEdges(state), card, { up: true });
+  return state.tracks[trackId].cards.filter(k => k !== card && state.cards[k].status === 'done' && !above.has(k));
+}
+
 async function nextCard(dir, state, trackId, { now, ...deps }, replayed = []) {
   const refused = refusedNext(state, trackId);
   if (refused) return refused;
@@ -482,6 +490,7 @@ async function nextCard(dir, state, trackId, { now, ...deps }, replayed = []) {
   if (packAnswers.length) state.cards[card].packAnswers = packAnswers;
   // What a built card's PR does not build, handed to this card at the plan: the spike covers it, or says why it cannot.
   const handed = (state.plan.respike?.handoffs ?? []).filter(h => h.to === card).map(({ to: _, ...h }) => h);
+  const unordered = unorderedBefore(state, trackId, card);
   const mark = issueMark(state, execution, at);
   window.mark = { ...execution.mark };
   saveState(dir, state, at);
@@ -489,6 +498,7 @@ async function nextCard(dir, state, trackId, { now, ...deps }, replayed = []) {
     mark, action: 'card', card, track: trackId, ...respike, ...replayContext(state.cards[card]), ...(resumed ? { resumed } : {}), title: planned.title, url: planned.url, description: planned.description,
     origin: planned.origin, pr: planned.pr, ...pr, offProject: planned.offProject, previous: previousOf(deps.dataDir, state.project.slug, card, state.runId, { sameRun: Boolean(state.cards[card].respikedBy) }),
     ...(handed.length ? { handed } : {}),
+    ...(unordered.length ? { unordered } : {}),
     ...(packAnswers.length ? { packAnswers } : {}),
     ...(existsSync(wipPath(dir, card)) ? { wip: wipPath(dir, card) } : {}), trees: openTrees(state, trackId), window: { start: window.start },
   });

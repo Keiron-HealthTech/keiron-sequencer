@@ -241,7 +241,7 @@ test('a built card is gathered with what its PR check found and where the plan h
   assert.equal(card.description, 'Abrir archivos de un hilo por su enlace.\n\nIncluye el bloqueo.');
   assert.deepEqual(card.record, { spikedAt: '2026-11-06T10:30:00.000Z', runId: OLD_RUN });
   assert.deepEqual(card.against, [{ repoDir: 'api', kind: 'pr', pr: { number: 77, url: PR_URL, isDraft: false }, branch: 'feat/crm-20', sha: 'b'.repeat(40) }]);
-  assert.deepEqual(card.prCheck, { at: PR_AT, holds: ['c3', 'd2', 'd3'], notBuilt: ['c1', 'c2', 'c4', 'd1'], missing: [] });
+  assert.deepEqual(card.prCheck, { at: PR_AT, holds: ['c3', 'd2', 'd3'], moved: [], notBuilt: ['c1', 'c2', 'c4', 'd1'], missing: [] });
   assert.deepEqual(card.handed, [{ id: 'c1', to: OWNER_A }, { id: 'c2', to: OWNER_A }, { id: 'c4', to: OWNER_B }, { id: 'd1', to: OWNER_A }]);
   assert.deepEqual(card.dropped, []);
   assert.deepEqual(card.items.map(i => [i.id, i.kind, i.audit.verdict]), [
@@ -372,6 +372,23 @@ test('verdicts that are incomplete, unknown or inconsistent are refused, and no 
   assert.equal(readFileSync(join(w.data, SLUG, `${BUILT}.json`), 'utf8'), before);
 });
 
+// The PR check found c2 is another card's behavior: no fresh record claims it, yet it must not flip back to this card's own.
+test('an item the PR check moved stays moved: holds is refused, another owner a fresh record shows is accepted', async () => {
+  const moved = builtRecord();
+  moved.cases[1].audit = { check: 'pr', verdict: 'moved', card: OWNER_B, note: `${OWNER_B} owns it.`, at: PR_AT };
+  moved.audits = [{ ...PR_CHECK, verdicts: PR_CHECK.verdicts.map(v => (v.id === 'c2' ? { id: 'c2', verdict: 'moved', card: OWNER_B } : v)) }];
+  const w = world({ records: [moved, ownerA(), ownerB(), unbuilt()] });
+  await w.audit([]);
+  const v = structuredClone(VERDICTS);
+  delete v.cards[LOCAL];
+  v.cards[BUILT].items.c2 = { verdict: 'holds', note: 'No fresh card claims it.' };
+  const refused = await w.audit(['--verdicts', verdictsFile(w, v)]);
+  assert.equal(refused.code, 2);
+  assert.match(refused.stderr, new RegExp(`${BUILT} c2: the PR check moved it to ${OWNER_B}: keep it moved, to ${OWNER_B} or to the card a fresh record shows owns it now, or drop it`));
+  v.cards[BUILT].items.c2 = { verdict: 'moved', card: OWNER_A, note: `${OWNER_A} c1 now owns it.` };
+  assert.equal((await w.audit(['--verdicts', verdictsFile(w, v)])).code, 0);
+});
+
 test('storing needs the gathered inputs, and a record re-spiked since the gather is refused', async () => {
   const w = world();
   const none = await w.audit(['--verdicts', verdictsFile(w, { ...VERDICTS, cards: { [BUILT]: VERDICTS.cards[BUILT] } })]);
@@ -402,7 +419,7 @@ test('the report shows the audit beside the comparison: each card\'s PR check, i
     card: BUILT, kind: 'built', against: [{ repoDir: 'api', kind: 'pr', pr: 77, branch: 'feat/crm-20', sha: 'b'.repeat(40) }],
     holds: ['c3', 'd2', 'd3'], moved: [{ id: 'c1', card: OWNER_A }, { id: 'c2', card: OWNER_A }, { id: 'c4', card: OWNER_B }, { id: 'd1', card: OWNER_A }],
     notBuilt: [], dropped: [], description: VERDICTS.cards[BUILT].description,
-    prCheck: { at: PR_AT, holds: ['c3', 'd2', 'd3'], notBuilt: ['c1', 'c2', 'c4', 'd1'], missing: [] },
+    prCheck: { at: PR_AT, holds: ['c3', 'd2', 'd3'], moved: [], notBuilt: ['c1', 'c2', 'c4', 'd1'], missing: [] },
   }]);
 });
 

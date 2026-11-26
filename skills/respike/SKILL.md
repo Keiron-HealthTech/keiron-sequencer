@@ -271,7 +271,9 @@ Show, in this order:
 - The PR checks in `prChecks`: each built card with a record, its PR or
   branch and its `status` (`current`, `unchecked`, `stale` when the head
   moved since the check, `skipped`), then the `handoffs` (each item a PR
-  does not build, handed to a card this run spikes) and the `drops`.
+  does not build, handed to a card this run spikes), the `drops`, and the
+  `moved` items (each item the check found another card owns, with that card
+  and the note: no question, shown so the user sees where it went).
 - Each repo's base in `bases`: `default`, `pr`, `local`, or `combine` with its
   heads (card and short sha), and "base N commits behind default" from
   `behind` when the base misses default-branch commits.
@@ -372,11 +374,25 @@ file per PR or branch under `~/.keiron-sequencer/<slug>/audit/`. Each of its
 `cards` is a built card whose check is unchecked or stale: what it is
 checked `against` (each with `diff.path` and the lines per file in
 `diff.files`, or an `error`), its `description` (the notes block cut out)
-and its old `items` (cases `c1`…, decisions `d1`…). Read each diff and judge
-each item: `holds` when the diff builds it, `not-built` when it does not,
-each with a one-line `note` naming the file or what is missing. What the
-description asks for and the diff does not build goes in `missing`, one line
-each (it is asked as `m1`, `m2`…). Write the verdicts next to the inputs as
+and its old `items` (cases `c1`…, decisions `d1`…), and `map`, every card
+key of the project. Read each diff and judge each item, each with a one-line
+`note` naming the file or what is missing:
+
+- `holds` when the diff builds it.
+- `moved`, with the `card` that owns it, when the item is another card's
+  behavior: a stacked spike records what its tree does after the card, so an
+  earlier card's work (a check it adds, a field it carries) can sit in the
+  record as if this card built it. The note says what that card builds and
+  how this card relies on it. A `ref` or a card key in the item is a hint,
+  never the verdict: an item can cite another card and still be this
+  card's own behavior.
+- `not-built` when it is this card's own behavior and the diff does not
+  build it.
+
+What the description asks for and the diff does not build goes in
+`missing`, one line each (it is asked as `m1`, `m2`…). Missing scope is
+behavior, never where it is tested: tests at another layer that cover the
+same behavior are no gap. Write the verdicts next to the inputs as
 `before-verdicts.json`:
 
 ```json
@@ -386,7 +402,8 @@ each (it is asked as `m1`, `m2`…). Write the verdicts next to the inputs as
     "CRM-20": {
       "items": {
         "c3": { "verdict": "holds", "note": "src/letters/files.ts finds a file by position." },
-        "c4": { "verdict": "not-built", "note": "The PR has no lock check." }
+        "c4": { "verdict": "not-built", "note": "The PR has no lock check." },
+        "c5": { "verdict": "moved", "card": "CRM-18", "note": "CRM-18 rejects writes to a locked letter; this card relies on it." }
       },
       "missing": []
     }
@@ -401,11 +418,13 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs audit <project ref> --before --ve
 ```
 
 It is offline, checks every card before it writes any record, marks each
-item with its `audit` (`check: 'pr'`, `verdict`, `note`, `at`) and adds the
-check, with the heads it saw and the `missing` scope, to the record's
-`audits`. A check never moves or drops an item: that is the user's answer
-to `not-built`. Exit 2: the verdicts do not validate (a verdict other than
-`holds` or `not-built` included). Exit 5: nothing was gathered, or a record
+item with its `audit` (`check: 'pr'`, `verdict`, the `card` of a moved one,
+`note`, `at`) and adds the check, with the heads it saw and the `missing`
+scope, to the record's `audits`. A moved item is not asked and harvest does
+not publish it under this card. A check never drops an item: that is the
+user's answer to `not-built`. Exit 2: the verdicts do not validate (a
+verdict other than `holds`, `moved` or `not-built`, or a moved item naming
+no card of the map, included). Exit 5: nothing was gathered, or a record
 was re-spiked since the gather.
 
 On `action: 'stop'` (code `cycle`, with its `members`): A `stop` creates
@@ -505,6 +524,10 @@ or `wrong`) instead of rewriting it. The brief's `handed` lists the items a
 built card's PR does not build that the user handed to this card at the
 plan (`from`, `id`, the case or text, the PR check's `note`): cover each in
 this card's cases or decisions, or say in a finding why the card cannot.
+The brief's `unordered` lists the cards whose work is in the trees though no
+blocks chain orders them first: a use of their code is a `reorder` finding
+naming the card, and the cases cover only this card's own change, as in
+/keiron-sequencer:spike.
 Record each of the brief's `packAnswers` as a decision with its pack ref
 and say where it went in the notes' `packAnswers`, as in
 /keiron-sequencer:spike; a finding that contradicts one blocks `end` until
@@ -716,7 +739,7 @@ and writes no record: it saves `inputs.json` under
 - `cards`: every open card on the map the run did not spike (unselected or
   replayed), with a live record. `kind` is `built` (an open PR, a draft or an
   accepted local branch, in `against`) or `unbuilt`. A built card has its
-  `prCheck` (what held and what was not built before the run, and the
+  `prCheck` (what held, what moved and to which card, and what was not built before the run, and the
   `missing` scope), and every card its `handed` items (each `id` with the
   card the plan handed it `to`) and `dropped` items. Each card has its
   `description` (the notes block cut out), its old `items` (cases `c1`… and
@@ -738,7 +761,10 @@ Judge each card, item by item:
   item is moved when the card it went to covers it. One that no card should
   build any more is `dropped`, a `dropped` item first. A built card's item
   the PR check found `not-built` that no fresh card covers stays
-  `not-built`. The rest `holds`.
+  `not-built`. An item the PR check moved stays `moved`, to the same card or
+  to the one a fresh record shows owns it now (or `dropped`): no fresh
+  record claims it, and `holds` would hand it back to this card, so the
+  store refuses it. The rest `holds`.
 - Judge every card in `cards`, or it stays `pending` in the report. An
   unbuilt card that no mention names and no fresh item matches holds, item by
   item, with the note that no fresh card claims it.
@@ -830,7 +856,7 @@ blocks nothing and changes no record. Show:
   `gathered`; for each card judged, its `kind`, what it was checked
   `against`, the items that hold, the `moved` ones with the card that owns
   each now, the `notBuilt` and `dropped` ones, the proposed `description`
-  and, for a built card, its `prCheck` (what held, what was not built and
+  and, for a built card, its `prCheck` (what held, what moved, what was not built and
   the `missing` scope before the run); the `pending` cards gathered but not
   judged yet; and the `skipped` ones (`merged`, `no-record`).
 - Under `## Tracks`, each entry of `tracks`: its id, status, `mergedInto` and

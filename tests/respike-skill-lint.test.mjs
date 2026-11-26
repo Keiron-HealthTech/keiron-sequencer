@@ -530,7 +530,8 @@ test('before the run, the PR check gathers, judges each item against the diff, s
   at.forEach(i => assert.ok(i >= 0, step));
   assert.deepEqual([...at].sort((a, b) => a - b), at, 'the PR check steps are out of order');
   for (const text of ['`--hand <CARD>:<item>=<CARD>`', '`--drop <CARD>:<item>`', '`--skip-check <CARD>`', 'fix the PR first', '`handed`', '`missing`',
-    'A check never moves or drops an item: that is the user\'s answer']) stepSays(step, text);
+    'A check never drops an item: that is the user\'s answer', '`moved`, with the `card` that owns it', 'never the verdict',
+    'Missing scope is behavior, never where it is tested']) stepSays(step, text);
   stepSays(sectionOf('Step 2: Show the plan'), 'The PR checks in `prChecks`');
 });
 
@@ -543,7 +544,8 @@ test('after the run, the audit holds every card left alone against the fresh rec
   at.forEach(i => assert.ok(i >= 0, step));
   assert.deepEqual([...at].sort((a, b) => a - b), at, 'the audit steps are out of order');
   for (const text of ['`holds`', '`moved`', '`not-built`', '`dropped`', '`handed`', '`prCheck`', '`mentions`', '`fresh`', '`skipped`', 'reads no PR',
-    'never changes `spikedAt`', 'Harvest then publishes only the items that hold', 'it reaches Linear only through /keiron-sequencer:harvest, on the user\'s yes']) stepSays(step, text);
+    'never changes `spikedAt`', 'Harvest then publishes only the items that hold', 'it reaches Linear only through /keiron-sequencer:harvest, on the user\'s yes',
+    'An item the PR check moved stays `moved`']) stepSays(step, text);
   stepSays(sectionOf('Step 9: Report'), 'Under `## Audit`, next to the comparison, `audit`');
 });
 

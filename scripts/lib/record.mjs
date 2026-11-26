@@ -9,10 +9,10 @@ export const OPEN_DECISION_STATUSES = ['open', 'narrowed'];
 export const OPEN_DECISION_OWNERS = ['people', 'code'];
 export const PRIOR_FINDING_OUTCOMES = ['holds', 'resolved', 'wrong'];
 // What a respike audit found for an old case or decision of a card it did not re-spike. The PR check, before the run, holds
-// a built card's record against its PR (holds or not-built); the fresh check, after the run, holds every such card against
+// a built card's record against its PR (holds, moved to the card that owns it, or not-built); the fresh check, after the run, holds every such card against
 // the records the run spiked. Only a built card has not-built items.
 export const AUDIT_VERDICTS = ['holds', 'moved', 'not-built', 'dropped'];
-export const PR_CHECK_VERDICTS = ['holds', 'not-built'];
+export const PR_CHECK_VERDICTS = ['holds', 'moved', 'not-built'];
 export const AUDIT_CHECKS = ['pr', 'fresh'];
 export const AUDIT_KINDS = ['built', 'unbuilt'];
 export const TOKEN_KEYS = ['input', 'cacheCreation', 'cacheRead', 'output', 'thinking'];

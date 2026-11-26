@@ -45,7 +45,7 @@ function withPrs({ extra = [], cycle = false } = {}) {
 }
 
 const pick = [PROJECT_URL, '--cards', B];
-const KEYS = ['schemaVersion', 'approve', 'action', 'project', 'previous', 'fetched', 'selection', 'built', 'ancestors', 'bases', 'order', 'tracks', 'asks', 'prChecks', 'handoffs', 'drops', 'stops', 'missingConfig', 'warnings'];
+const KEYS = ['schemaVersion', 'approve', 'action', 'project', 'previous', 'fetched', 'selection', 'built', 'ancestors', 'bases', 'order', 'tracks', 'asks', 'prChecks', 'handoffs', 'drops', 'moved', 'stops', 'missingConfig', 'warnings'];
 
 test('the plan carries every top-level key and no diff text', async () => {
   const { f } = withPrs();

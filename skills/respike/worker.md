@@ -79,7 +79,7 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs cross --track <id> --card <CARD> --
 
 1. `next` answers one of:
    - `action: 'card'`: the brief: `card`, `track`, `title`, `url`,
-     `description`, `origin`, `pr`, `offProject`, `previous`, `handed`, `packAnswers`, the open
+     `description`, `origin`, `pr`, `offProject`, `previous`, `handed`, `packAnswers`, `unordered`, the open
      `trees` (repo to path) and the `replayed` entries it ran first.
      `resumed: true` means work from an earlier execution is already in the
      trees: continue it. `wip` names work this card did before a crossing
@@ -118,6 +118,14 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs cross --track <id> --card <CARD> --
      that the user handed to this card at the plan: `from`, `id`, the case
      or the text, and the PR check's `note`. Cover each in this card's
      cases or decisions, or say in a finding why the card cannot.
+   - `unordered` (when present) lists the cards of your track whose work is
+     already in the trees though no blocks chain orders them before this
+     card. When this card uses code one of them added (calls it, reads its
+     option, relies on its check), record a `reorder` finding naming that
+     card: the `text` says what this card uses, the `ref` is
+     `linear:<CARD>`. Nothing else tells Linear: a fixup fires only on an
+     edit of an earlier card's lines, and harvest proposes the blocks edge
+     from this finding. Sitting in the same file with no use is no finding.
 3. Work the card in its trees. Open a repo's tree the first time the card
    needs it with `tree`, and edit only under the `path` it prints. The
    repo's setup runs there once. `action: 'setup-failed'` (Exit 1) names
@@ -147,7 +155,10 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs cross --track <id> --card <CARD> --
    is a placeholder; `priorFindings` lists the old findings), and
    `allowed`, the values `source`, `kind`, `impact`, `status`, `owner` and
    `outcome` take. `end` refuses notes that do not fit.
-   - Write between 3 and 6 given/when/then cases in English (about 4).
+   - Write between 3 and 6 given/when/then cases in English (about 4),
+     each about what this card's own change does. A behavior an earlier
+     card's work gives the tree is that card's case, even when this card
+     relies on it.
    - Run the implication check on every open guess before recording it:
      read what the code already forces. `resolved`: it moves to
      `decisions` with the evidence. `narrowed`: it stays in

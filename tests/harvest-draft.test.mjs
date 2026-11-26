@@ -101,3 +101,20 @@ test('a fixup draft carries each fixup\'s note, so a repair of the earlier card\
     'fixup: b/plain.patch',
   ]);
 });
+
+// A use of an unordered card's code leaves no fixup: the spike says so in a reorder finding naming the card, and the
+// draft turns it into a code edge from that card, beside any fixup evidence for the same pair.
+test('a reorder finding naming another card drafts a code edge from that card to the record\'s card', () => {
+  const finding = (ref, text) => ({ kind: 'reorder', text, ref });
+  const records = [
+    { ...record('ABC-7'), findings: [{ kind: 'risk', text: 'x', ref: 'linear:ABC-9' }, finding('linear:ABC-3', 'updateDeal reuses ABC-3\'s viewer.')] },
+    { ...record('ABC-8', { received: [{ from: 'ABC-2', patch: 'b/fixup-8-from-2.patch', note: null }] }), findings: [finding('linear:ABC-8', 'self'), finding('patch:b/x.patch', 'no card')] },
+    { ...record('ABC-2'), findings: [finding('linear:ABC-8', 'It calls ABC-8\'s loader.')] },
+  ];
+  assert.deepEqual(draftFromRecords(records, HARVEST).edges, [
+    { from: 'ABC-3', to: 'ABC-7', kind: 'code', evidence: 'reorder: ABC-7 f2 ("updateDeal reuses ABC-3\'s viewer.")', draft: true },
+    { from: 'ABC-8', to: 'ABC-2', kind: 'code', evidence: 'fixup: b/fixup-8-from-2.patch; reorder: ABC-2 f1 ("It calls ABC-8\'s loader.")', draft: true },
+  ]);
+  const rejected = { ...HARVEST, rejected: [{ from: 'ABC-3', to: 'ABC-7', reason: 'no code' }] };
+  assert.deepEqual(draftFromRecords(records, rejected).edges.map(e => [e.from, e.to]), [['ABC-8', 'ABC-2']]);
+});

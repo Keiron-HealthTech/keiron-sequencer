@@ -89,7 +89,7 @@ test('audit --before gathers each built card still to check, with its PR diff sa
   assert.equal(r.stdout.includes(SENTINEL), false);
 });
 
-test('the PR check stores holds and not-built marks and the missing scope; it gives no other verdict', async () => {
+test('the PR check stores holds and not-built marks and the missing scope; it gives no verdict but those and moved', async () => {
   const f = fixture();
   const out = await checked(f);
   assert.deepEqual(out.cards, [{ card: P1, holds: ['c1', 'c3', 'd1'], moved: [], notBuilt: ['c2'], dropped: [] }]);
@@ -103,11 +103,54 @@ test('the PR check stores holds and not-built marks and the missing scope; it gi
     verdicts: [{ id: 'c1', verdict: 'holds' }, { id: 'c2', verdict: 'not-built' }, { id: 'c3', verdict: 'holds' }, { id: 'd1', verdict: 'holds' }],
     missing: ['An export of the list.'],
   }]);
-  const moved = structuredClone(CHECKED);
-  moved.cards[P1].items.c1 = { verdict: 'moved', card: B, note: 'x' };
-  const refused = await f.run('audit', [PROJECT_URL, '--before', '--verdicts', f.verdicts(moved)]);
+  const dropped = structuredClone(CHECKED);
+  dropped.cards[P1].items.c1 = { verdict: 'dropped', note: 'x' };
+  const refused = await f.run('audit', [PROJECT_URL, '--before', '--verdicts', f.verdicts(dropped)]);
   assert.equal(refused.code, 2);
-  assert.match(refused.stderr, new RegExp(`${P1} c1: the PR check gives holds or not-built`));
+  assert.match(refused.stderr, new RegExp(`${P1} c1: the PR check gives holds, moved or not-built`));
+});
+
+// A stacked spike records what its tree does after the card, so an earlier card's behavior can sit in the record as if
+// the card built it: the judge says which card owns it, and the plan lists it without asking.
+const MOVED = structuredClone(CHECKED);
+MOVED.cards[P1].items.c2 = { verdict: 'moved', card: B, note: `${B} rejects the empty list; this card relies on it.` };
+
+test('the PR check marks an item another card owns as moved, naming that card of the map', async () => {
+  const f = fixture();
+  assert.equal((await f.run('audit', [...PICK, '--before'], { gh: f.gh })).code, 0);
+  for (const [item, error] of [
+    [{ verdict: 'moved', note: 'x' }, `${P1} c2: a moved item names the card that owns it now`],
+    [{ verdict: 'moved', card: P1, note: 'x' }, `${P1} c2: moved to itself`],
+    [{ verdict: 'moved', card: 'CRM-99', note: 'x' }, `${P1} c2: CRM-99 is not a card of the project map`],
+    [{ verdict: 'holds', card: B, note: 'x' }, `${P1} c2: only a moved item names a card`],
+  ]) {
+    const bad = structuredClone(CHECKED);
+    bad.cards[P1].items.c2 = item;
+    const r = await f.run('audit', [PROJECT_URL, '--before', '--verdicts', f.verdicts(bad)]);
+    assert.equal(r.code, 2);
+    assert.match(r.stderr, new RegExp(error));
+  }
+  const stored = await f.run('audit', [PROJECT_URL, '--before', '--verdicts', f.verdicts(MOVED)]);
+  assert.equal(stored.code, 0, stored.stderr);
+  assert.deepEqual(json(stored).cards, [{ card: P1, holds: ['c1', 'c3', 'd1'], moved: [{ id: 'c2', card: B }], notBuilt: [], dropped: [] }]);
+  const record = f.recordOf();
+  assert.deepEqual(validateRecord(record), []);
+  assert.deepEqual(record.cases[1].audit, { check: 'pr', verdict: 'moved', card: B, note: MOVED.cards[P1].items.c2.note, at: '2026-11-10T10:00:00.000Z' });
+  assert.deepEqual(record.audits.at(-1).verdicts[1], { id: 'c2', verdict: 'moved', card: B });
+});
+
+test('a moved item is no ask: the plan lists it with its owner, and no --hand or --drop answers it', async () => {
+  const f = fixture();
+  assert.equal((await f.run('audit', [...PICK, '--before'], { gh: f.gh })).code, 0);
+  assert.equal((await f.run('audit', [PROJECT_URL, '--before', '--verdicts', f.verdicts(MOVED)])).code, 0);
+  const plan = json(await f.run('preflight', PICK));
+  assert.deepEqual(plan.asks.filter(a => a.code === 'not-built').map(a => a.item), ['m1']);
+  assert.deepEqual(plan.moved, [{ from: P1, id: 'c2', to: B, note: MOVED.cards[P1].items.c2.note }]);
+  const ready = json(await f.run('preflight', [...PICK, '--drop', `${P1}:m1`]));
+  assert.equal(ready.action, 'ready');
+  const handed = await f.run('preflight', [...PICK, '--hand', `${P1}:c2=${B}`, '--drop', `${P1}:m1`]);
+  assert.equal(handed.code, 2);
+  assert.match(handed.stderr, /--hand CRM-6:c2=CRM-2: CRM-6 c2 is not a not-built item of a checked card/);
 });
 
 test('once checked, each not-built item and line of missing scope is an ask: hand it to a card the run spikes, or drop it', async () => {
