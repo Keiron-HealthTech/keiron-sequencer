@@ -172,7 +172,10 @@ Show, in this order:
   questions with their outcomes, the questions still open, and `stale` with
   its reason when the card text, the record or the base moved since it was
   drafted. Say a stale pack is stale: Step 9 drafts it again after the
-  fetch, and asks its open questions before routing.
+  fetch, and asks its open questions before routing. A redraft keeps each
+  answer whose question is asked in the same words; an answer the spike
+  already recorded as a decision (ref `pack:<CARD>#<id>`) is no longer asked,
+  and one the user reopened at the spike is asked again, without its answer.
 - The patches, with `brief.patchesNote`: they are reference only, chained on
   the earlier cards of the spike, and never applied to the tree.
 - The typecheck commands, and every entry of `warnings`.

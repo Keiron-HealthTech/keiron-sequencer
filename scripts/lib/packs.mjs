@@ -41,6 +41,16 @@ export function draftPack(record, issue, bases = {}) {
   };
 }
 
+// A redrafted pack keeps the answers to the questions still asked in the same words. An answered question the spike
+// recorded as a decision is no longer asked, so nothing is lost when it is reworded; one the user reopened at the spike
+// (packAnswers with reopened) is asked again, without its old answer.
+export function carryAnswers(oldPack, pack, record) {
+  const reopened = new Set((record?.packAnswers ?? []).filter(p => p.reopened).map(p => p.id));
+  const kept = new Map((oldPack?.questions ?? []).filter(q => q.answer && !reopened.has(q.id)).map(q => [q.text, q.answer]));
+  for (const q of pack.questions) q.answer = kept.get(q.text) ?? null;
+  return pack;
+}
+
 export function validatePack(p) {
   if (!isObject(p)) return ['pack: expected object'];
   const errors = [];

@@ -505,7 +505,10 @@ or `wrong`) instead of rewriting it. The brief's `handed` lists the items a
 built card's PR does not build that the user handed to this card at the
 plan (`from`, `id`, the case or text, the PR check's `note`): cover each in
 this card's cases or decisions, or say in a finding why the card cannot.
-Write the notes from `notes-template`:
+Record each of the brief's `packAnswers` as a decision with its pack ref
+and say where it went in the notes' `packAnswers`, as in
+/keiron-sequencer:spike; a finding that contradicts one blocks `end` until
+the user keeps or reopens it. Write the notes from `notes-template`:
 between 3 and 6 given/when/then cases in English (about 4), each open guess
 in `openDecisions` after its implication check, tagged with `impact` and
 `owner`, the attested `piiInLogs` paths (`[]` when none), no diff text. A

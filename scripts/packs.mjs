@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fail, isEntry, ok, parseArgs, redacted } from './lib/cli.mjs';
 import { analyzeProject, isExecutionCard } from './lib/graph.mjs';
 import { fetchDescriptions, fetchProjectMap, parseProjectRef, readLinearKey } from './lib/linear-fetch.mjs';
-import { draftPack, packStale, readPack, writePack } from './lib/packs.mjs';
+import { carryAnswers, draftPack, packStale, readPack, writePack } from './lib/packs.mjs';
 import { dataInRepoWarning, isLive, readRecords, REPO_DATA_DIR } from './lib/records.mjs';
 import { loadConfig } from './lib/spike/config.mjs';
 import { gitRunner } from './lib/spike/exec.mjs';
@@ -54,7 +54,8 @@ async function readProject(ref, key, { fetchImpl, dataDir, repoDataDir }) {
   return { raw, slug, records, issueOf, warnings: moved ? [{ kind: moved.kind, message: moved.message }] : [] };
 }
 
-// A fresh pack is kept; a stale one is drafted again, keeping the answers to the questions still asked in the same words.
+// A fresh pack is kept; a stale one is drafted again, keeping the answers to the questions still asked in the same words,
+// except one the spike reopened on the user's OK.
 function draftOne(card, { slug, records, issueOf, config, git, dataDir }, out) {
   const record = records.get(card);
   if (!record) return out.skipped.push({ card, reason: 'no record' });
@@ -63,8 +64,7 @@ function draftOne(card, { slug, records, issueOf, config, git, dataDir }, out) {
   if (old && !packStale(old, { issue: issueOf(card), record, bases })) return out.fresh.push(card);
   const pack = draftPack(record, issueOf(card), bases);
   if (!pack.questions.length) return out.skipped.push({ card, reason: 'no people-owned open decision' });
-  const kept = new Map((old?.questions ?? []).filter(q => q.answer).map(q => [q.text, q.answer]));
-  for (const q of pack.questions) q.answer = kept.get(q.text) ?? null;
+  carryAnswers(old, pack, record);
   writePack(dataDir, slug, pack);
   return out.drafted.push(card);
 }

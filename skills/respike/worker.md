@@ -79,7 +79,7 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs cross --track <id> --card <CARD> --
 
 1. `next` answers one of:
    - `action: 'card'`: the brief: `card`, `track`, `title`, `url`,
-     `description`, `origin`, `pr`, `offProject`, `previous`, `handed`, the open
+     `description`, `origin`, `pr`, `offProject`, `previous`, `handed`, `packAnswers`, the open
      `trees` (repo to path) and the `replayed` entries it ran first.
      `resumed: true` means work from an earlier execution is already in the
      trees: continue it. `wip` names work this card did before a crossing
@@ -164,6 +164,17 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs cross --track <id> --card <CARD> --
    - Never auto-resolve a decision about policy, security posture, legal or
      retention, UX copy, or rollout timing: it stays open with
      `owner: people`.
+   - **Pack answers are settled.** `packAnswers` in the brief lists the people's
+     answers to the card's decision pack (`id`, `question`, `outcome`). Each is
+     binding: record it as a decision stated as the outcome, not a mechanism,
+     with `ref` `pack:<CARD>#<id>`, and never reopen it at spike depth. In the
+     notes, `packAnswers` gives each one `now`: the `d<n>` that records it.
+     When the code contradicts an answer, write a finding with `contradicts:
+     pack:<CARD>#<id>` and the evidence; `end` then refuses the notes until you
+     return to the coordinator, who asks the user; record their call: keep the answer (`kept: <their
+     call>`) or reopen it as an open decision (`now: o<n>`, `reopened: <their
+     call>`). `end` refuses notes that leave an answered question without an
+     entry. A card with no pack, or nothing answered, has no `packAnswers`.
    - `piiInLogs` attests each `<repoDir>/<path>` whose code logs patient
      data. Both `openDecisions` and `piiInLogs` are required: use `[]` when
      there are none.

@@ -52,15 +52,17 @@ export const NOTES_ALLOWED = {
   outcome: PRIOR_FINDING_OUTCOMES,
 };
 
-// Every notes key with one placeholder item; on a respike each old finding is listed for its outcome. A string starting
-// with < is a placeholder: replace it, drop an item that does not apply, and list [] where there are none.
-export function notesTemplate(previous) {
+// Every notes key with one placeholder item; on a respike each old finding is listed for its outcome, and each answered
+// pack question for where it went. A string starting with < is a placeholder: replace it, drop an item that does not
+// apply, and list [] where there are none.
+export function notesTemplate(previous, packAnswers = []) {
   return {
     scope: { complete: true, note: null },
     cases: [{ given: '<the starting state>', when: '<the action>', then: '<the observable result>', source: one(CASE_SOURCES), ref: '<source>:<id, matching the source>' }],
     decisions: [{ text: '<a decision the spike settled, with its evidence>', ref: '<engram:<project>#<id> | linear:<KEY> | patch:<dir>/<file>.patch>' }],
     findings: [{ kind: one(FINDING_KINDS), text: '<what the spike found>', ref: '<ref>' }],
     ...(previous ? { priorFindings: previous.findings.map(f => ({ text: f.text, outcome: one(PRIOR_FINDING_OUTCOMES), ref: f.ref })) } : {}),
+    ...(packAnswers.length ? { packAnswers: packAnswers.map(a => ({ id: a.id, now: '<d<n>: the decision recording the answer, ref pack:<KEY>#<id> | o<n> with reopened, on the user\'s OK>' })) } : {}),
     openDecisions: [{
       text: '<a question the code does not settle>', impact: one(OPEN_DECISION_IMPACTS), status: one(OPEN_DECISION_STATUSES),
       owner: one(OPEN_DECISION_OWNERS), eliminated: [{ option: '<an option the code rules out>', why: '<the evidence>' }], ref: '<ref>',
@@ -145,6 +147,7 @@ function assemble(state, card, notes, readPatch) {
     findings: withOffProject(notes.findings, planned.offProject ?? []),
     ...(notes.priorFindings !== undefined ? { priorFindings: notes.priorFindings } : {}),
     openDecisions: notes.openDecisions,
+    ...(notes.packAnswers !== undefined ? { packAnswers: notes.packAnswers } : {}),
     ...derivedFields(state.cards[card], notes, planned.origin),
     ...crossingFields(state.cards[card]),
     refs: { engram: notes.engram ?? [], patches: [...patches].sort(compare), linear: planned.url, runId: state.runId },

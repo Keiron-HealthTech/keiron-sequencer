@@ -148,7 +148,8 @@ reports nothing; run it again.
      `resumed: true` means work from an earlier execution is already in the
      trees: continue it. `previous` is the card's record from an earlier
      run (`spikedAt`, `findings`, `decisions`, `openDecisions`) on a respike,
-     and `null` on a first spike.
+     and `null` on a first spike. `packAnswers` (when present) lists the
+     people's answers in the card's decision pack: see the notes rules.
    - `action: 'pause'` with `reason`, `spent` and `cap`: a cap was reached.
      Report the reason and the spend, and stop. The trees are kept.
    - `action: 'complete'`: see Step 3.
@@ -233,6 +234,17 @@ reports nothing; run it again.
    - Never auto-resolve a decision about policy, security posture, legal or
      retention, UX copy, or rollout timing: it stays open with
      `owner: people`, whatever the code suggests.
+   - **Pack answers are settled.** `packAnswers` in the brief lists the people's
+     answers to the card's decision pack (`id`, `question`, `outcome`). Each is
+     binding: record it as a decision stated as the outcome, not a mechanism,
+     with `ref` `pack:<CARD>#<id>`, and never reopen it at spike depth. In the
+     notes, `packAnswers` gives each one `now`: the `d<n>` that records it.
+     When the code contradicts an answer, write a finding with `contradicts:
+     pack:<CARD>#<id>` and the evidence; `end` then refuses the notes until you
+     ask the user and record their call: keep the answer (`kept: <their
+     call>`) or reopen it as an open decision (`now: o<n>`, `reopened: <their
+     call>`). `end` refuses notes that leave an answered question without an
+     entry. A card with no pack, or nothing answered, has no `packAnswers`.
    - `piiInLogs` attests each `<repoDir>/<path>` whose code logs patient data;
      the CLI never infers it. Both `openDecisions` and `piiInLogs` are
      required: use `[]` when there are none.

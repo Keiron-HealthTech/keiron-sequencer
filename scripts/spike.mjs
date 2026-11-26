@@ -18,6 +18,8 @@ import { LIMIT_FLAGS, limitsFrom, sessionsFrom } from './lib/spike/limits.mjs';
 import { closesCycle, mergeTracks } from './lib/spike/merge.mjs';
 import { isSlug, prunableSlugs, pruneRuns } from './lib/spike/prune.mjs';
 import { previousOf, replanAfterTurn, replayContext, replayEntry } from './lib/spike/replay.mjs';
+import { answeredOf, checkPackAnswers } from './lib/spike/pack-answers.mjs';
+import { readPack } from './lib/packs.mjs';
 import { changedSinceLast, clearGenerated, repoTypecheck, SPIKE_TYPECHECK_TIMEOUT_MS, typecheckLog } from './lib/spike/typecheck.mjs';
 import { buildCombined, COMBINE_ROUNDS, combinedFixupName } from './lib/spike/combined.mjs';
 import { COMBINE_FIXUP } from './lib/record.mjs';
@@ -475,6 +477,9 @@ async function nextCard(dir, state, trackId, { now, ...deps }, replayed = []) {
   noteStartTrees(state, card);
   const planned = state.plan.cards[card];
   const pr = planned.pr ? applyCardPr(state, trackId, planned.pr.repoDir, { ...deps, dir }) : {};
+  // The people's answers in the card's decision pack, kept on the card so end checks the notes against what the brief said.
+  const packAnswers = answeredOf(readPack(deps.dataDir, state.project.slug, card));
+  if (packAnswers.length) state.cards[card].packAnswers = packAnswers;
   // What a built card's PR does not build, handed to this card at the plan: the spike covers it, or says why it cannot.
   const handed = (state.plan.respike?.handoffs ?? []).filter(h => h.to === card).map(({ to: _, ...h }) => h);
   const mark = issueMark(state, execution, at);
@@ -484,6 +489,7 @@ async function nextCard(dir, state, trackId, { now, ...deps }, replayed = []) {
     mark, action: 'card', card, track: trackId, ...respike, ...replayContext(state.cards[card]), ...(resumed ? { resumed } : {}), title: planned.title, url: planned.url, description: planned.description,
     origin: planned.origin, pr: planned.pr, ...pr, offProject: planned.offProject, previous: previousOf(deps.dataDir, state.project.slug, card, state.runId, { sameRun: Boolean(state.cards[card].respikedBy) }),
     ...(handed.length ? { handed } : {}),
+    ...(packAnswers.length ? { packAnswers } : {}),
     ...(existsSync(wipPath(dir, card)) ? { wip: wipPath(dir, card) } : {}), trees: openTrees(state, trackId), window: { start: window.start },
   });
 }
@@ -1106,7 +1112,7 @@ async function notesTemplateFor(args, { home, dataDir }) {
   if (!state.plan.cards[card]) return fail(1, `${card} is not a card of run ${state.runId}`);
   if (!state.tracks[trackId].cards.includes(card)) return fail(1, `${card} is not a card of track ${trackId}`);
   const previous = previousOf(dataDir, state.project.slug, card, state.runId, { sameRun: Boolean(state.cards[card].respikedBy) });
-  return ok({ action: 'notes-template', card, notes: notesTemplate(previous), allowed: NOTES_ALLOWED });
+  return ok({ action: 'notes-template', card, notes: notesTemplate(previous, state.cards[card].packAnswers ?? []), allowed: NOTES_ALLOWED });
 }
 
 const notInProgress = card => fail(1, `${card} is not the card in progress`);
@@ -1123,7 +1129,7 @@ async function end(args, { home, dataDir, now, git, transcripts, runSetup, lock,
     if (state.tracks[trackId].current?.card !== card) return { result: notInProgress(card) };
     const notesFile = flags.notes ?? join(dir, 'notes', `${card}.json`);
     const notes = readNotes(notesFile);
-    const noteErrors = checkNotes(notes);
+    const noteErrors = [...checkNotes(notes), ...checkPackAnswers(notes, { card, answers: state.cards[card].packAnswers ?? [] })];
     if (noteErrors.length) return { result: fail(1, `the notes for ${card} are invalid:`, ...noteErrors) };
     return { dir, state, trackId, notesFile, notes };
   }, lock);

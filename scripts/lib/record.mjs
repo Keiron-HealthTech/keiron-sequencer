@@ -29,7 +29,9 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const ENGRAM_ID = /^[\w.-]+#\d+$/;
 const PATCH_PATH = /^[^/\s]+\/[^/\s]+\.patch$/;
 const CASE_ID = /^c\d+$/;
-const REF = /^(engram:[\w.-]+#\d+|linear:[A-Z]+-\d+|patch:[^/\s]+\/[^/\s]+\.patch)$/;
+const REF = /^(engram:[\w.-]+#\d+|linear:[A-Z]+-\d+|patch:[^/\s]+\/[^/\s]+\.patch|pack:[A-Z]+-\d+#q\d+)$/;
+// An answer from the card's decision pack, as the decision that records it names it.
+const PACK_REF = /^pack:[A-Z]+-\d+#q\d+$/;
 
 const isDatetime = v => typeof v === 'string' && DATETIME.test(v) && !Number.isNaN(Date.parse(v));
 const isDate = v => typeof v === 'string' && DATE.test(v) && !Number.isNaN(Date.parse(v));
@@ -56,7 +58,7 @@ function checker() {
     v.forEach((item, i) => each(item, `${path}[${i}]`));
     return true;
   };
-  const ref = (v, path) => check(typeof v === 'string' && REF.test(v), path, 'expected engram:<project>#<id>, linear:<KEY> or patch:<dir>/<file>.patch');
+  const ref = (v, path) => check(typeof v === 'string' && REF.test(v), path, 'expected engram:<project>#<id>, linear:<KEY>, patch:<dir>/<file>.patch or pack:<KEY>#q<n>');
   const note = (v, path) => check(v === null || isNonEmpty(v), path, 'expected non-empty string or null');
   return { errors, fail, check, has, object, array, text, count, card, datetime, oneOf, items, ref, note };
 }
@@ -177,6 +179,7 @@ function validateNotes(list, name, c, card) {
   c.items(list, `$.${name}`, (item, path) => {
     if (!c.object(item, path)) return;
     if (name === 'findings' && c.has(item, 'kind', path)) c.oneOf(item.kind, FINDING_KINDS, `${path}.kind`);
+    if (name === 'findings' && 'contradicts' in item) c.check(typeof item.contradicts === 'string' && PACK_REF.test(item.contradicts), `${path}.contradicts`, 'expected pack:<KEY>#q<n>');
     if (c.has(item, 'text', path)) c.text(item.text, `${path}.text`);
     if (c.has(item, 'ref', path)) c.ref(item.ref, `${path}.ref`);
     if (name === 'decisions' && 'audit' in item) validateAuditMark(item.audit, card, `${path}.audit`, c);
@@ -195,6 +198,16 @@ function validateRiskAreas(areas, c) {
     if (c.check(area.paths.length > 0, `${path}.paths`, 'expected at least one path')) {
       c.check(area.paths.every((p, i) => i === 0 || compare(String(area.paths[i - 1]), String(p)) < 0), `${path}.paths`, 'expected sorted, distinct paths');
     }
+  });
+}
+
+// Where each answered pack question went: the decision that records it, or the open decision the user reopened it as.
+function validatePackAnswers(list, c, path = '$.packAnswers') {
+  c.items(list, path, (item, at) => {
+    if (!c.object(item, at)) return;
+    if (c.has(item, 'id', at)) c.check(typeof item.id === 'string' && /^q\d+$/.test(item.id), `${at}.id`, 'expected a question id like q1');
+    if (c.has(item, 'now', at)) c.check(typeof item.now === 'string' && /^[do]\d+$/.test(item.now), `${at}.now`, 'expected d<n> or o<n>');
+    for (const key of ['kept', 'reopened']) if (key in item) c.text(item[key], `${at}.${key}`);
   });
 }
 
@@ -322,6 +335,7 @@ export function validateRecord(value) {
   for (const name of ['decisions', 'findings']) if (c.has(r, name, '$')) validateNotes(r[name], name, c, r.card);
   if ('priorFindings' in r) validatePriorFindings(r.priorFindings, c);
   if ('openDecisions' in r) validateOpenDecisions(r.openDecisions, c);
+  if ('packAnswers' in r) validatePackAnswers(r.packAnswers, c);
   if ('audits' in r) validateAudits(r.audits, r.card, c);
   if ('riskAreas' in r) validateRiskAreas(r.riskAreas, c);
   if ('novelty' in r) validateNovelty(r.novelty, c);
@@ -351,6 +365,7 @@ export function validateNoteFields(notes) {
   if (c.has(n, 'cases', '$')) validateCases(Array.isArray(n.cases) ? n.cases.map((x, i) => (isObject(x) ? { id: `c${i + 1}`, ...x } : x)) : n.cases, c);
   for (const name of ['decisions', 'findings']) if (c.has(n, name, '$')) validateNotes(n[name], name, c);
   if ('priorFindings' in n) validatePriorFindings(n.priorFindings, c);
+  if ('packAnswers' in n) validatePackAnswers(n.packAnswers, c);
   if (Array.isArray(n.openDecisions)) validateOpenDecisions(n.openDecisions, c);
   if ('engram' in n) c.items(n.engram, '$.engram', (id, path) => c.check(typeof id === 'string' && ENGRAM_ID.test(id), path, 'expected <project>#<id>'));
   return c.errors.map(e => `notes${e.slice(1)}`);
@@ -358,7 +373,7 @@ export function validateNoteFields(notes) {
 
 const ORDER = {
   record: ['schemaVersion', 'card', 'title', 'project', 'origin', 'spikedAt', 'archived', 'supersededBy', 'alias', 'scope',
-    'size', 'effort', 'fixups', 'cases', 'decisions', 'findings', 'priorFindings', 'openDecisions', 'audits', 'riskAreas', 'novelty', 'timeBox', 'replayed', 'mergedFrom', 'respikedBy', 'refs'],
+    'size', 'effort', 'fixups', 'cases', 'decisions', 'findings', 'priorFindings', 'openDecisions', 'packAnswers', 'audits', 'riskAreas', 'novelty', 'timeBox', 'replayed', 'mergedFrom', 'respikedBy', 'refs'],
   project: ['slug', 'name'],
   archived: ['at', 'reason'],
   supersededBy: ['card', 'spikedAt'],
@@ -380,7 +395,8 @@ const ORDER = {
   proposal: ['text', 'why'],
   openDecision: ['text', 'impact', 'status', 'owner', 'eliminated', 'ref'],
   eliminated: ['option', 'why'],
-  finding: ['kind', 'text', 'ref'],
+  finding: ['kind', 'text', 'ref', 'contradicts'],
+  packAnswer: ['id', 'now', 'kept', 'reopened'],
   priorFinding: ['text', 'outcome', 'ref'],
   riskArea: ['kind', 'paths'],
   novelty: ['newPaths'],
@@ -436,6 +452,7 @@ export function canonicalRecord(record) {
     })),
     findings: v => list(v, x => ordered(x, ORDER.finding)),
     priorFindings: v => list(v, x => ordered(x, ORDER.priorFinding)),
+    packAnswers: v => list(v, x => ordered(x, ORDER.packAnswer)),
     openDecisions: v => list(v, x => ordered(x, ORDER.openDecision, { eliminated: y => list(y, e => ordered(e, ORDER.eliminated)) })),
     riskAreas: v => list(v, x => ordered(x, ORDER.riskArea), byKeys('kind')),
     novelty: v => ordered(v, ORDER.novelty),
