@@ -1,8 +1,9 @@
 import { analyzeProject, isExecutionCard } from '../graph.mjs';
 import { planHash } from '../harvest.mjs';
 import { localDay, rankCards } from '../next-order.mjs';
-import { capacityOf, workingDays } from './capacity.mjs';
-import { fillCycle } from './fill.mjs';
+import { capacityOf, round2, workingDays } from './capacity.mjs';
+import { fillCycle, remainingFraction } from './fill.mjs';
+import { planOptions } from './options.mjs';
 import { makeSizer } from './size.mjs';
 
 export const CYCLE_PLAN_SCHEMA = 1;
@@ -12,7 +13,9 @@ const byCardNumber = (a, b) => cardNumber(a.key) - cardNumber(b.key) || (a.key <
 const codePoint = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const inside = (at, c) => Date.parse(at) >= Date.parse(c.startsAt) && Date.parse(at) < Date.parse(c.endsAt);
 
-export function computeCyclePlan({ raw, context, team, records, guesses = {}, availability = {}, now }) {
+// built: card -> its build state from GitHub and branches (readBuilt); buildWarnings: what that read could not see.
+// focus: milestone names whose cards, with their open blockers, rank ahead of everything else, in the order given.
+export function computeCyclePlan({ raw, context, team, records, guesses = {}, availability = {}, built = new Map(), buildWarnings = [], focus = [], now }) {
   const refusals = [];
   if (!context.next) refusals.push('the team has no next cycle');
   if (!context.members.length) refusals.push('the project has no members');
@@ -22,13 +25,14 @@ export function computeCyclePlan({ raw, context, team, records, guesses = {}, av
   const issueOf = new Map(raw.issues.map(i => [i.identifier, i]));
   const ours = key => issueOf.get(key)?.team?.id === team.id;
   const a = analyzeProject(raw, {});
-  const ranked = rankCards(a.cards, { today: localDay(now), critical: a.critical, criticalTies: a.criticalTies })
-    .filter(c => c.rank !== null).sort((x, y) => x.rank - y.rank);
   const done = new Set(raw.issues.filter(i => ['completed', 'canceled'].includes(i.state?.type)).map(i => i.identifier));
+  const focusOf = focusRanks(a, focus, done);
+  const ranked = rankCards(a.cards, { today: localDay(now), critical: a.critical, criticalTies: a.criticalTies })
+    .filter(c => c.rank !== null).sort((x, y) => (focusOf.get(x.key) ?? Infinity) - (focusOf.get(y.key) ?? Infinity) || x.rank - y.rank);
   const open = ranked.filter(c => ours(c.key)).map(c => {
     const i = issueOf.get(c.key);
     const later = i.cycle && i.cycle.number > context.next.number ? i.cycle.number : null;
-    return { key: c.key, id: i.id, title: i.title, state: i.state, assignee: i.assignee ?? null, offMapBlockers: c.offMapBlockers ?? [], cycleId: i.cycle?.id ?? null, laterCycle: later };
+    return { key: c.key, id: i.id, title: i.title, state: i.state, built: built.get(c.key) ?? null, assignee: i.assignee ?? null, offMapBlockers: c.offMapBlockers ?? [], cycleId: i.cycle?.id ?? null, laterCycle: later };
   });
   const inCycle = (id, kind) => open.filter(c => id && c.cycleId === id).map(c => ({ ...c, kind }));
   const fixed = [...inCycle(context.active?.id, 'carry-over'), ...inCycle(context.next.id, 'planned')];
@@ -37,23 +41,29 @@ export function computeCyclePlan({ raw, context, team, records, guesses = {}, av
 
   // Linear may auto-archive closed issues, so history keeps archived cards that would be on the map otherwise.
   const completed = raw.issues.filter(i => i.state?.type === 'completed' && i.completedAt && ours(i.identifier) && isExecutionCard({ ...i, archivedAt: null })).map(i => ({ key: i.identifier, assigneeId: i.assignee?.id ?? null, completedAt: i.completedAt, title: i.title }));
+  // Built work not Done in Linear: a merged card counts in the cycle it merged, the rest add their built share to this one.
+  const mergedOpen = open.filter(c => c.built?.kind === 'merged' && c.built.mergedAt).map(c => ({ key: c.key, assigneeId: c.assignee?.id ?? null, completedAt: c.built.mergedAt, built: true }));
+  const progress = open.filter(c => c.built && c.built.kind !== 'merged').map(c => ({ key: c.key, assigneeId: c.assignee?.id ?? null, share: round2(1 - remainingFraction(c.state, c.built)) }));
   const peopleIn = [...context.members.map(m => ({ id: m.id, name: m.name, member: true }))];
   for (const c of open) if (c.assignee && !peopleIn.some(p => p.id === c.assignee.id)) peopleIn.push({ ...c.assignee, member: false });
   const people = peopleIn.map(p => {
     const share = availability[p.id] ?? 100;
-    return { ...p, availability: share, ...capacityOf({ personId: p.id, completed, past: context.past, active: context.active, availability: share, next: context.next, sizeOf }) };
+    return { ...p, availability: share, ...capacityOf({ personId: p.id, completed: [...completed, ...mergedOpen], progress, past: context.past, active: context.active, availability: share, next: context.next, sizeOf }) };
   });
 
   const filled = fillCycle({ people, fixed, candidates, edges: a.edges.map(e => ({ from: e.from, to: e.to })), done, sizeOf });
   const before = key => ({ cycleId: issueOf.get(key).cycle?.id ?? null, assigneeId: issueOf.get(key).assignee?.id ?? null });
+  const addOp = c => ({
+    type: 'issue.update', card: c.key, issueId: c.id, set: { cycleId: context.next.id, ...(c.assigns ? { assigneeId: c.assignee.id } : {}) }, before: before(c.key),
+  });
   const ops = filled.cards.flatMap(c => {
-    if (c.band === 'committed') {
-      const set = { cycleId: context.next.id, ...(c.assigns ? { assigneeId: c.assignee.id } : {}) };
-      return [{ type: 'issue.update', card: c.key, issueId: c.id, set, before: before(c.key) }];
-    }
+    if (c.band === 'committed') return [addOp(c)];
     if (c.band === 'fixed' && c.assigns) return [{ type: 'issue.update', card: c.key, issueId: c.id, set: { assigneeId: c.assignee.id }, before: before(c.key) }];
     return [];
   }).sort((x, y) => codePoint(x.card, y.card));
+  // Apply adds these only with --with-stretch.
+  const stretchOps = filled.cards.filter(c => c.band === 'stretch').map(addOp).sort((x, y) => codePoint(x.card, y.card));
+  const options = planOptions({ people: filled.people, cards: filled.cards, focusKeys: new Set(focusOf.keys()) });
 
   const windows = [...(context.active ? [context.active] : []), ...context.past];
   const historyKeys = completed.filter(x => windows.some(c => inside(x.completedAt, c)));
@@ -69,15 +79,35 @@ export function computeCyclePlan({ raw, context, team, records, guesses = {}, av
     team: { id: team.id, key: team.key },
     activeCycle: context.active ? { id: context.active.id, number: context.active.number } : null,
     nextCycle: { ...context.next, workingDays: workingDays(context.next) },
-    inputs: { guesses, availability },
+    inputs: { guesses, availability, focus },
     people: filled.people,
     cards: filled.cards,
     ops,
+    stretchOps,
+    options,
     unspiked: { open: open.filter(c => sizeOf(c.key).source !== 'record').length, total: open.length },
+    warnings: buildWarnings,
     counts: { fixed: count('fixed'), committed: count('committed'), stretch: count('stretch'), leftOut: count('left-out'), ops: ops.length },
     generatedAt: now.toISOString(),
   };
   return { plan: { ...plan, hash: planHash(plan) }, needs, members: context.members, refusals, warnings: raw.warnings ?? [] };
+}
+
+// A focused card's open blockers come with it, or it would wait behind cards the focus meant to skip.
+function focusRanks(a, focus, done) {
+  const out = new Map();
+  const blockersOf = new Map();
+  for (const e of a.edges) if (!done.has(e.from)) blockersOf.set(e.to, [...(blockersOf.get(e.to) ?? []), e.from]);
+  focus.forEach((name, at) => {
+    const stack = a.cards.filter(c => c.milestone === name).map(c => c.key);
+    while (stack.length) {
+      const key = stack.pop();
+      if (out.has(key)) continue;
+      out.set(key, at);
+      stack.push(...(blockersOf.get(key) ?? []));
+    }
+  });
+  return out;
 }
 
 const pct = n => `${Math.round(n * 100)}%`;
@@ -85,13 +115,18 @@ const pts = n => `${n} pt${n === 1 ? '' : 's'}`;
 const cardsOf = n => `${n} card${n === 1 ? '' : 's'}`;
 const sizeLabel = c => `${c.tier}·${c.points}${c.sizeSource === 'guess' ? ' (guessed from card)' : c.sizeSource === 'default' ? ' (default M)' : ''}`;
 const sum = (list, f) => Math.round(list.reduce((s, x) => s + f(x), 0) * 100) / 100;
+const leftLabel = c => {
+  const why = [...(c.fraction === 1 ? [] : [pct(c.fraction)]), ...(c.built ? [c.built.evidence] : [])];
+  return why.length ? `${c.remaining} (${why.join(', ')})` : `${c.remaining}`;
+};
 const BAND_LABEL = { fixed: 'carry-over / planned', committed: 'committed', stretch: 'stretch' };
 
 function capacityLine(p, next) {
   if (p.basis === 'guessed') return `capacity guessed, no cycle history: ${next.workingDays} working days × ${p.availability}% → committed ${p.committed}, stretch ${p.stretch}`;
   const thin = p.basis === 'thin' ? ' (thin history: committed is 80% of the average)' : '';
   const cycles = p.cycles.map(n => (n === p.partial ? `${n} so far` : n)).join(', ');
-  return `history ${p.history.join(' · ')} (cycles ${cycles})${thin} → committed ${p.committed}, stretch ${p.stretch}`;
+  const built = p.builtPoints ? `, ${pts(p.builtPoints)} of it built and not Done in Linear` : '';
+  return `history ${p.history.join(' · ')} (cycles ${cycles}${built})${thin} → committed ${p.committed}, stretch ${p.stretch}`;
 }
 
 export function renderCycleReview(plan, { approveCommand }) {
@@ -99,10 +134,12 @@ export function renderCycleReview(plan, { approveCommand }) {
     `# Cycle plan: ${plan.project.name}, cycle ${plan.nextCycle.number}`,
     '',
     `- Next cycle: ${plan.nextCycle.startsAt.slice(0, 10)} to ${plan.nextCycle.endsAt.slice(0, 10)} (${plan.nextCycle.workingDays} working days), team ${plan.team.key}`,
+    ...(plan.inputs.focus?.length ? [`- Focus: ${plan.inputs.focus.join(', ')}, ranked first with their open blockers`] : []),
     `- Hash: \`${plan.hash}\``,
     `- Cards: ${plan.counts.fixed} already in a cycle, ${plan.counts.committed} committed, ${plan.counts.stretch} stretch, ${plan.counts.leftOut} left out`,
     '',
   ];
+  for (const w of plan.warnings ?? []) out.push(`> ${w}. A card the read could not see is sized by its Linear state.`, '');
   if (plan.unspiked.total && plan.unspiked.open * 3 > plan.unspiked.total) {
     out.push(`> ${plan.unspiked.open} of ${plan.unspiked.total} open cards have no spike record, so their sizes are guesses. Run /keiron-sequencer:spike first for measured sizes.`, '');
   }
@@ -121,7 +158,7 @@ export function renderCycleReview(plan, { approveCommand }) {
     for (const c of mine) {
       running = Math.round((running + c.remaining) * 100) / 100;
       const who = c.assigns ? ' (assigned by the plan)' : '';
-      out.push(`| ${c.key} ${c.title}${who} | ${c.kind === 'new' ? c.band : `${c.band}, ${c.kind}`} | ${sizeLabel(c)} | ${c.fraction === 1 ? c.remaining : `${c.remaining} (${pct(c.fraction)})`} | ${running} |`);
+      out.push(`| ${c.key} ${c.title}${who} | ${c.kind === 'new' ? c.band : `${c.band}, ${c.kind}`} | ${sizeLabel(c)} | ${leftLabel(c)} | ${running} |`);
     }
     out.push(`| | | | load | ${p.load} |`, '');
   }
@@ -131,9 +168,26 @@ export function renderCycleReview(plan, { approveCommand }) {
     for (const c of left) out.push(`- ${c.key} ${c.title}, ${sizeLabel(c)}: left out, ${c.reason}`);
     out.push('');
   }
+  out.push(...renderOptions(plan, approveCommand));
   out.push('## Apply', '',
     `Apply adds the ${cardsOf(plan.counts.committed)} marked committed to cycle ${plan.nextCycle.number} and sets an assignee only where a card has none.`,
-    'Stretch cards are not added: they are next if there is room. Carry-over cards move with Linear\'s own rollover.', '',
+    '`--with-stretch` also adds the stretch cards, and `--drop <CARD>` leaves a card out. Carry-over cards move with Linear\'s own rollover.', '',
     `${plan.ops.length} change${plan.ops.length === 1 ? '' : 's'}: \`${approveCommand}\``, '');
   return out.join('\n');
+}
+
+const OPTION_LABEL = { A: 'Committed only', B: 'With stretch' };
+export const optionCommand = (approveCommand, o) => [approveCommand, ...(o.withStretch ? ['--with-stretch'] : []), ...o.drop.map(k => `--drop ${k}`)].join(' ');
+
+function renderOptions(plan, approveCommand) {
+  const { options, recommended, reason } = plan.options ?? {};
+  if (!options || options.length < 2) return [];
+  const out = ['## Options', '', `Recommended: ${recommended}, because ${reason}.`, ''];
+  for (const o of options) {
+    const label = OPTION_LABEL[o.id] ?? `With stretch, dropping ${o.drop.join(', ')}`;
+    const loads = o.people.map(p => `${p.name} ${p.load} (committed ${p.committed}, stretch ${p.stretch})`).join(' · ');
+    out.push(`- **${o.id}. ${label}${o.id === recommended ? ' (recommended)' : ''}:** ${cardsOf(o.cards)} added. ${loads}`, `  \`${optionCommand(approveCommand, o)}\``);
+  }
+  out.push('');
+  return out;
 }

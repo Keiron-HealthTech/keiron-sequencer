@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fail, isEntry, lines, ok, parseArgs, redacted } from './lib/cli.mjs';
 import { applyCyclePlan } from './lib/cycle/apply.mjs';
+import { readBuilt } from './lib/cycle/built.mjs';
 import { computeCyclePlan, renderCycleReview } from './lib/cycle/plan.mjs';
 import { anchors, TIERS } from './lib/cycle/size.mjs';
 import { approvalError } from './lib/harvest.mjs';
@@ -12,17 +13,19 @@ import {
   fetchCycleContext, fetchDescriptions, fetchProject, fetchProjectMap, parseProjectRef, readLinearKey, redact,
 } from './lib/linear-fetch.mjs';
 import { readRecords } from './lib/records.mjs';
-import { dataDirFor } from './lib/spike/home.mjs';
+import { loadConfig } from './lib/spike/config.mjs';
+import { ghRunner, gitRunner } from './lib/spike/exec.mjs';
+import { dataDirFor, sequencerHome } from './lib/spike/home.mjs';
 
 const SCRIPT = fileURLToPath(import.meta.url);
 
 const USAGE = [
   'usage: node scripts/cycle.mjs needs <project ref> [--team KEY]',
-  'usage: node scripts/cycle.mjs [plan] <project ref> [--team KEY] [--availability "<name>=<percent>"]... [--guess <CARD>=<S|M|L|XL>]...',
-  'usage: node scripts/cycle.mjs apply <project ref> --plan <plan.json> --approve <hash> [--team KEY]',
+  'usage: node scripts/cycle.mjs [plan] <project ref> [--team KEY] [--availability "<name>=<percent>"]... [--guess <CARD>=<S|M|L|XL>]... [--focus <milestone number or name>]...',
+  'usage: node scripts/cycle.mjs apply <project ref> --plan <plan.json> --approve <hash> [--with-stretch] [--drop <CARD>]... [--team KEY]',
 ];
 
-const PLAN_FLAGS = [['--team'], ['--availability', '--guess']];
+const PLAN_FLAGS = [['--team'], ['--availability', '--guess', '--focus']];
 const failure = e => (/^Linear\b/.test(e.message) ? e.message : `internal error: ${e.message}`);
 const tilde = path => (path.startsWith(homedir() + '/') ? `~${path.slice(homedir().length)}` : path);
 const usage = (...why) => fail(2, ...why, ...USAGE);
@@ -36,8 +39,11 @@ class Usage extends Error {}
 
 const COMMANDS = { needs, plan, apply };
 
-export async function run(argv, { env = process.env, fetchImpl = fetch, keyFile, now = () => new Date(), dataDir = dataDirFor(env) } = {}) {
-  const deps = { env, fetchImpl, keyFile, now, dataDir };
+export async function run(argv, {
+  env = process.env, fetchImpl = fetch, keyFile, now = () => new Date(), dataDir = dataDirFor(env), home = sequencerHome(env),
+  gh = ghRunner(), git = gitRunner(), listDir,
+} = {}) {
+  const deps = { env, fetchImpl, keyFile, now, dataDir, home, gh, git, listDir };
   const [command, ...rest] = argv;
   try {
     return await (Object.hasOwn(COMMANDS, command) ? COMMANDS[command](rest, deps) : plan(argv, deps));
@@ -87,6 +93,22 @@ function parseGuesses(values) {
   return out;
 }
 
+// A milestone is named by its number ("6" matches "6. Los logs ...") or its whole name, ignoring case.
+function parseFocus(values, milestones) {
+  return [...new Set((values ?? []).map(v => {
+    const wanted = String(v).trim().toLowerCase();
+    const named = milestones.filter(m => {
+      const name = String(m.name ?? '').toLowerCase();
+      return name === wanted || (/^\d+$/.test(wanted) && new RegExp(`^${wanted}[.)\\s]`).test(name));
+    });
+    if (named.length !== 1) {
+      const why = named.length ? `matches ${named.length} milestones` : 'matches no milestone';
+      throw new Usage(`--focus ${JSON.stringify(v)} ${why} (milestones: ${milestones.map(m => JSON.stringify(m.name)).join(', ') || 'none'})`);
+    }
+    return named[0].name;
+  }))];
+}
+
 async function prepare(args, { env, keyFile, fetchImpl, now, dataDir }) {
   const a = parseArgs(args, ...PLAN_FLAGS);
   const parsed = projectRef(a);
@@ -96,8 +118,20 @@ async function prepare(args, { env, keyFile, fetchImpl, now, dataDir }) {
   if (!key) return { early: fail(3, reason) };
   const live = await read(parsed, key, { fetchImpl, now, team: a.flags.team });
   const availability = parseAvailability(a.flags.availability, live.context.members);
+  const focus = parseFocus(a.flags.focus, live.raw.milestones ?? []);
   const { records } = readRecords(join(dataDir, live.raw.project.slug));
-  return { parsed, key, live, records, guesses, availability };
+  return { parsed, key, live, records, guesses, availability, focus };
+}
+
+// Without a spike config there are no repos to read, so the plan falls back to Linear states and says so.
+function buildState(raw, team, { home, gh, git, listDir }) {
+  let config;
+  try {
+    config = loadConfig(home);
+  } catch (e) {
+    return { built: new Map(), warnings: [`build state not read: ${e.message}`] };
+  }
+  return readBuilt({ raw, team, config, gh, git, listDir });
 }
 
 async function needs(args, deps) {
@@ -117,7 +151,8 @@ async function plan(args, deps) {
   if (p.early) return p.early;
   const { raw, team, context } = p.live;
   const files = filesOf(deps.dataDir, raw.project.slug);
-  const r = computeCyclePlan({ raw, context, team, records: p.records, guesses: p.guesses, availability: p.availability, now: deps.now() });
+  const { built, warnings } = buildState(raw, team, deps);
+  const r = computeCyclePlan({ raw, context, team, records: p.records, guesses: p.guesses, availability: p.availability, built, buildWarnings: warnings, focus: p.focus, now: deps.now() });
   if (!r.plan) {
     rmSync(files.plan, { force: true });
     rmSync(files.review, { force: true });
@@ -128,7 +163,8 @@ async function plan(args, deps) {
   mkdirSync(files.dir, { recursive: true });
   writeFileSync(files.plan, `${JSON.stringify(r.plan, null, 2)}\n`);
   writeFileSync(files.review, renderCycleReview(r.plan, { approveCommand }));
-  return redacted(ok({ status: 'written', plan: files.plan, review: files.review, hash: r.plan.hash, counts: r.plan.counts }), p.key);
+  const out = ok({ status: 'written', plan: files.plan, review: files.review, hash: r.plan.hash, counts: r.plan.counts });
+  return redacted({ ...out, stderr: lines(warnings.map(w => `warning: ${w}`)) }, p.key);
 }
 
 async function otherProject(parsed, planned, key, fetchImpl) {
@@ -141,7 +177,8 @@ async function otherProject(parsed, planned, key, fetchImpl) {
 
 async function apply(args, { env, fetchImpl, keyFile, now, dataDir }) {
   // --team is accepted and unused: the plan already names its team, and the skill passes --team on every command.
-  const a = parseArgs(args, ['--plan', '--approve', '--team']);
+  const withStretch = args.includes('--with-stretch');
+  const a = parseArgs(args.filter(x => x !== '--with-stretch'), ['--plan', '--approve', '--team'], ['--drop']);
   const parsed = projectRef(a);
   if (!parsed) return usage('expected one project ref');
   if (!a.flags.plan || !a.flags.approve) return fail(5, 'apply needs --plan <plan.json> and --approve <hash> from the reviewed plan');
@@ -164,7 +201,7 @@ async function apply(args, { env, fetchImpl, keyFile, now, dataDir }) {
     mkdirSync(files.dir, { recursive: true });
     appendFileSync(files.log, `${redact(JSON.stringify(line), key)}\n`);
   };
-  const r = await applyCyclePlan(p, { apiKey: key, fetchImpl, now, appendLog, live: { raw, context } });
+  const r = await applyCyclePlan(p, { apiKey: key, fetchImpl, now, appendLog, live: { raw, context }, withStretch, drop: a.flags.drop ?? [] });
   if (r.code) return redacted(fail(r.code, ...r.messages), key);
   return redacted(ok({ status: 'applied', results: r.results }), key);
 }

@@ -25,6 +25,23 @@ test('remaining fraction: not started 1, in progress 0.75, in review 0.25', () =
   assert.deepEqual([TODO, DOING, REVIEW, { name: 'Backlog', type: 'backlog' }].map(remainingFraction), [1, 0.75, 0.25, 1]);
 });
 
+test('build state lowers the remaining fraction, and Linear wins when it says less is left', () => {
+  const merged = { kind: 'merged', fraction: 0.1 };
+  const pr = { kind: 'pr', fraction: 0.25 };
+  const branch = { kind: 'branch', fraction: 0.5 };
+  assert.deepEqual([remainingFraction(TODO, merged), remainingFraction(DOING, pr), remainingFraction(TODO, branch), remainingFraction(REVIEW, branch)], [0.1, 0.25, 0.5, 0.25]);
+});
+
+test('a built carry-over card counts at its built remaining work and names its evidence', () => {
+  const out = fill({
+    people: [person(A, 6, 8)],
+    fixed: [card('ABC-1', 'L', { kind: 'carry-over', state: DOING, assignee: A, built: { kind: 'pr', fraction: 0.25, evidence: 'draft PR app#3', mergedAt: null } })],
+  });
+  const [c] = out.cards;
+  assert.deepEqual([c.fraction, c.remaining, c.built], [0.25, 0.75, { kind: 'pr', evidence: 'draft PR app#3' }]);
+  assert.equal(out.people[0].load, 0.75);
+});
+
 test('fixed load past capacity flags the person over and gives them no new card', () => {
   const out = fill({
     people: [person(A, 6, 7.67)],

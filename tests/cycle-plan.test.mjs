@@ -154,3 +154,73 @@ test('the review marks the current cycle as so far', () => {
   assert.deepEqual([a.cycles, a.history], [[9, 8, 7], [2, 3, 5]]);
   assert.ok(renderCycleReview(p, { approveCommand: 'x' }).includes('cycles 9 so far, 8, 7'));
 });
+
+test('built cards: remaining work follows the build, a merged card counts in its merge cycle, the rest in this one', () => {
+  const built = new Map([
+    ['ABC-10', { kind: 'merged', fraction: 0.1, evidence: 'merged app#7', mergedAt: '2026-10-25T12:00:00.000Z' }],
+    ['ABC-11', { kind: 'pr', fraction: 0.25, evidence: 'draft PR app#8', mergedAt: null }],
+  ]);
+  const issues = [
+    ...HISTORY,
+    issue('ABC-10', { state: DOING, assignee: A, cycle: { id: ACTIVE.id, number: 9 } }),
+    issue('ABC-11', { state: DOING, assignee: A, cycle: { id: ACTIVE.id, number: 9 } }),
+  ];
+  const { plan: p } = plan(issues, { guesses: { 'ABC-31': 'L', 'ABC-10': 'S', 'ABC-11': 'L' }, built });
+  const cards = Object.fromEntries(p.cards.map(c => [c.key, c]));
+  assert.deepEqual([cards['ABC-10'].remaining, cards['ABC-10'].built], [0.1, { kind: 'merged', evidence: 'merged app#7' }]);
+  assert.deepEqual([cards['ABC-11'].remaining, cards['ABC-11'].fraction], [0.75, 0.25]);
+  const a = p.people.find(x => x.id === 'u-a');
+  // Cycle 9 so far: 75% of ABC-11 (L 3); cycle 8: ABC-3 (L 3) + ABC-10 merged (S 1); cycle 7: ABC-4 (XL 5).
+  assert.deepEqual([a.cycles, a.history, a.builtPoints], [[9, 8, 7], [2.25, 4, 5], 3.25]);
+  const md = renderCycleReview(p, { approveCommand: 'apply' });
+  assert.ok(md.includes('0.1 (10%, merged app#7)'), md);
+  assert.ok(md.includes('(cycles 9 so far, 8, 7, 3.25 pts of it built and not Done in Linear)'), md);
+});
+
+test('a build read that failed is a warning in the review', () => {
+  const { plan: p } = plan([...HISTORY, issue('ABC-20')], { buildWarnings: ['build state may be incomplete: gh pr list --repo acme/app failed (1): HTTP 502'] });
+  const md = renderCycleReview(p, { approveCommand: 'apply' });
+  assert.ok(md.includes('> build state may be incomplete: gh pr list --repo acme/app failed (1): HTTP 502. A card the read could not see is sized by its Linear state.'), md);
+});
+
+test('a focused milestone ranks first with its open blockers, and the focus is in the inputs, the hash and the review', () => {
+  const M1 = { id: 'ms-1', name: '1. First', sortOrder: 1 };
+  const M2 = { id: 'ms-2', name: '2. Logs', sortOrder: 2 };
+  const issues = [
+    ...HISTORY,
+    issue('ABC-20', { projectMilestone: { name: M1.name } }),
+    issue('ABC-21', { projectMilestone: { name: M1.name }, relations: { nodes: [{ type: 'blocks', relatedIssue: { identifier: 'ABC-30' } }] } }),
+    issue('ABC-30', { projectMilestone: { name: M2.name } }),
+    issue('ABC-31', { projectMilestone: { name: M2.name }, state: DONE }),
+  ];
+  const withMilestones = over => computeCyclePlan({
+    raw: { ...raw(issues), milestones: [M1, M2] }, context: CONTEXT, team: TEAM, records: RECORDS, now: NOW, guesses: { 'ABC-31': 'L' }, ...over,
+  }).plan;
+  const order = p => p.cards.filter(c => c.kind === 'new').map(c => c.key);
+  const plain = withMilestones({});
+  const focused = withMilestones({ focus: [M2.name] });
+  // Unfocused, the second milestone's card comes last; ABC-21 leads because a card waits on it.
+  assert.deepEqual(order(plain), ['ABC-21', 'ABC-20', 'ABC-30']);
+  // ABC-30 waits on ABC-21, so the blocker comes forward with it; ABC-20 keeps its place after them.
+  assert.deepEqual(order(focused), ['ABC-21', 'ABC-30', 'ABC-20']);
+  assert.deepEqual(focused.inputs.focus, [M2.name]);
+  assert.notEqual(focused.hash, plain.hash);
+  assert.ok(renderCycleReview(focused, { approveCommand: 'apply' }).includes('- Focus: 2. Logs, ranked first with their open blockers'));
+});
+
+test('the review offers the options with their apply commands and the recommendation', () => {
+  // Dev A: history 3 · 6 · 3 gives committed 3, stretch 4; ABC-20 and ABC-21 fill committed, and ABC-22 fits stretch.
+  const extra = doneIn(PAST[1], A, 'ABC-32', { title: 'Old card' });
+  const { plan: p } = plan([...HISTORY, extra, issue('ABC-20', { assignee: A }), issue('ABC-21', { assignee: A }), issue('ABC-22', { assignee: A })], {
+    guesses: { 'ABC-31': 'L', 'ABC-32': 'S', 'ABC-20': 'S', 'ABC-21': 'M', 'ABC-22': 'S' },
+  });
+  const bands = Object.fromEntries(p.cards.map(c => [c.key, c.band]));
+  assert.deepEqual([bands['ABC-20'], bands['ABC-21'], bands['ABC-22']], ['committed', 'committed', 'stretch']);
+  assert.deepEqual(p.stretchOps.map(o => [o.card, o.set.cycleId]), [['ABC-22', NEXT.id]]);
+  assert.deepEqual([p.options.options.map(o => o.id), p.options.recommended], [['A', 'B'], 'A']);
+  const md = renderCycleReview(p, { approveCommand: 'apply-cmd' });
+  assert.ok(md.includes("Recommended: A, because committed is each person's worst recent cycle; stretch cards are next if there is room."), md);
+  assert.ok(md.includes('- **A. Committed only (recommended):** 2 cards added. Dev A 3 (committed 3, stretch 4)'), md);
+  assert.ok(md.includes('- **B. With stretch:** 3 cards added. Dev A 4 (committed 3, stretch 4)'), md);
+  assert.ok(md.includes('`apply-cmd --with-stretch`'), md);
+});

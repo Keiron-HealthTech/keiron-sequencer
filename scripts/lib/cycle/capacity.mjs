@@ -24,19 +24,24 @@ const within = (at, c) => {
 };
 
 // The current cycle counts first with what is finished in it so far: planning happens before it ends, and it is often the
-// cycle with the most recent work.
-export function capacityOf({ personId, completed, past, active = null, availability = 100, next, sizeOf }) {
+// cycle with the most recent work. completed: cards Done in Linear, or merged and not Done yet (built: true), by when;
+// progress: cards built but not merged, each with the share of it built, all of it credited to the current cycle.
+export function capacityOf({ personId, completed, progress = [], past, active = null, availability = 100, next, sizeOf }) {
   const share = availability / 100;
   const counted = [];
   for (const c of [...(active ? [active] : []), ...past.slice(0, LOOKBACK_CYCLES)]) {
-    const cards = completed.filter(x => x.assigneeId === personId && x.completedAt && within(x.completedAt, c));
-    if (cards.length) counted.push({ number: c.number, sizes: cards.map(x => sizeOf(x.key)) });
+    const cards = [
+      ...completed.filter(x => x.assigneeId === personId && x.completedAt && within(x.completedAt, c)).map(x => ({ key: x.key, weight: 1, built: Boolean(x.built) })),
+      ...(c === active ? progress.filter(x => x.assigneeId === personId && x.share > 0).map(x => ({ key: x.key, weight: x.share, built: true })) : []),
+    ];
+    if (cards.length) counted.push({ number: c.number, sizes: cards.map(x => ({ ...sizeOf(x.key), weight: x.weight, built: x.built })) });
     if (counted.length === HISTORY_CYCLES) break;
   }
   const sizes = counted.flatMap(c => c.sizes);
-  const history = counted.map(c => c.sizes.reduce((sum, s) => sum + s.points, 0));
+  const history = counted.map(c => round2(c.sizes.reduce((sum, s) => sum + s.points * s.weight, 0)));
   const tally = {
     counted: sizes.length,
+    builtPoints: round2(sizes.filter(s => s.built).reduce((sum, s) => sum + s.points * s.weight, 0)),
     guessedCards: sizes.filter(s => s.source === 'guess').length,
     defaultCards: sizes.filter(s => s.source === 'default').length,
   };

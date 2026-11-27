@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyCyclePlan } from '../scripts/lib/cycle/apply.mjs';
+import { applyCyclePlan, chosenOps } from '../scripts/lib/cycle/apply.mjs';
+import { planHash } from '../scripts/lib/harvest.mjs';
 import { computeCyclePlan } from '../scripts/lib/cycle/plan.mjs';
 import { fetchCycleContext, fetchProjectMap } from '../scripts/lib/linear-fetch.mjs';
 import { fakeLinearStore } from './helpers/fake-linear.mjs';
@@ -112,5 +113,45 @@ test('an edited plan is refused with code 5 and nothing is sent', async () => {
   const edited = { ...plan, ops: plan.ops.slice(1) };
   const out = await applyCyclePlan(edited, { apiKey: KEY, fetchImpl: fake.fetchImpl, now: () => NOW, appendLog: () => {}, sleep: noSleep, live: { raw: null, context: null } });
   assert.equal(out.code, 5);
+  assert.equal(fake.mutations.length, 0);
+});
+
+// The fixture has no history, so committed equals stretch; move ABC-3 to stretch by hand and hash the plan again.
+const withStretchCard = plan => {
+  const { hash, ...rest } = plan;
+  const moved = { ...rest, ops: plan.ops.filter(o => o.card !== 'ABC-3'), stretchOps: plan.ops.filter(o => o.card === 'ABC-3') };
+  return { ...moved, hash: planHash(moved) };
+};
+const applyWith = async (fake, plan, opts) => applyCyclePlan(plan, {
+  apiKey: KEY, fetchImpl: fake.fetchImpl, now: () => NOW, appendLog: () => {}, sleep: noSleep, ...opts,
+  live: { raw: await fetchProjectMap('project-uuid', KEY, { fetchImpl: fake.fetchImpl }), context: await fetchCycleContext('project-uuid', TEAM.id, KEY, { fetchImpl: fake.fetchImpl, now: NOW }) },
+});
+
+test('stretch cards are added only with --with-stretch', async () => {
+  const { fake, plan } = await setup();
+  const p = withStretchCard(plan);
+  const plain = await applyWith(fake, p, {});
+  assert.deepEqual([plain.code, plain.results.map(r => r.card)], [0, ['ABC-1', 'ABC-2']]);
+  assert.equal(find(fake, 'ABC-3').cycle, null);
+  const stretch = await applyWith(fake, p, { withStretch: true });
+  assert.deepEqual(stretch.results.map(r => [r.card, r.status]), [['ABC-1', 'skipped'], ['ABC-2', 'skipped'], ['ABC-3', 'applied']]);
+  assert.equal(find(fake, 'ABC-3').cycle.id, 'cyc-10');
+});
+
+test('--drop leaves a card out, committed or stretch', async () => {
+  const { fake, plan } = await setup();
+  const out = await applyWith(fake, withStretchCard(plan), { withStretch: true, drop: ['ABC-2', 'ABC-3'] });
+  assert.deepEqual([out.code, out.results.map(r => r.card)], [0, ['ABC-1']]);
+  assert.equal(find(fake, 'ABC-2').cycle, null);
+});
+
+test('a --drop outside the changes, or --with-stretch on a plan with no stretch changes, is refused with code 5', async () => {
+  const { fake, plan } = await setup();
+  const p = withStretchCard(plan);
+  assert.match(chosenOps(p, { drop: ['ABC-3'] }).error, /--drop ABC-3: not among the changes this apply makes \(stretch cards need --with-stretch\)/);
+  const { stretchOps, hash, ...old } = plan;
+  const oldPlan = { ...old, hash: planHash(old) };
+  const out = await applyWith(fake, oldPlan, { withStretch: true });
+  assert.deepEqual([out.code, out.messages], [5, ['this plan has no stretch changes: run plan again']]);
   assert.equal(fake.mutations.length, 0);
 });

@@ -94,3 +94,24 @@ test('a current cycle with nothing finished yet is skipped like any other', () =
   const c = capacityOf({ personId: 'u-a', completed: SIX_NINE_EIGHT, past: PAST, active: ACTIVE, next: NEXT, sizeOf });
   assert.deepEqual([c.cycles, c.partial], [[8, 7, 6], null]);
 });
+
+test('built work not Done in Linear: a merged card counts in its merge cycle, the rest add their share to the current one', () => {
+  const ACTIVE = cycle(9, '2026-11-12T03:00:00.000Z', '2026-11-26T03:00:00.000Z');
+  const done = finished(ACTIVE, 'u-g', ['M']);
+  const [mergedNow] = finished(ACTIVE, 'u-g', ['L']);
+  const [mergedBefore] = finished(PAST[0], 'u-g', ['S']);
+  const completed = [...done, { ...mergedNow, built: true }, { ...mergedBefore, built: true }];
+  const [pr] = finished(ACTIVE, 'u-g', ['XL']);
+  const [someoneElse] = finished(ACTIVE, 'u-h', ['XL']);
+  const progress = [{ key: pr.key, assigneeId: 'u-g', share: 0.75 }, { key: someoneElse.key, assigneeId: 'u-h', share: 0.75 }];
+  const c = capacityOf({ personId: 'u-g', completed, progress, past: PAST, active: ACTIVE, next: NEXT, sizeOf });
+  // Cycle 9: M 2 + L 3 + 75% of XL 5 = 8.75; cycle 8: S 1.
+  assert.deepEqual([c.cycles, c.history, c.partial, c.counted, c.builtPoints], [[9, 8], [8.75, 1], 9, 4, 7.75]);
+});
+
+test('a current cycle with only built work in progress still counts', () => {
+  const ACTIVE = cycle(9, '2026-11-12T03:00:00.000Z', '2026-11-26T03:00:00.000Z');
+  const [pr] = finished(ACTIVE, 'u-i', ['L']);
+  const c = capacityOf({ personId: 'u-i', completed: [], progress: [{ key: pr.key, assigneeId: 'u-i', share: 0.5 }], past: PAST, active: ACTIVE, next: NEXT, sizeOf });
+  assert.deepEqual([c.cycles, c.history, c.partial, c.builtPoints], [[9], [1.5], 9, 1.5]);
+});

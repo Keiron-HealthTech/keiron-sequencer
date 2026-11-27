@@ -35,13 +35,21 @@ tell the user the CLI looks for `LINEAR_API_KEY` or
   default M.
 - **Capacity per person:** the tier points they finished on this project in
   their last 3 cycles with work: the current cycle first, with what is finished
-  in it so far, then the completed ones (looking back 6). With fewer than 3 such cycles
+  in it so far, then the completed ones (looking back 6). Built work counts
+  before Linear says Done: a card whose PR is merged into the default branch
+  counts in the cycle it merged, and the built share of an open PR or a branch
+  (its points × (1 − remaining)) counts in the current cycle. With fewer than 3 such cycles
   (thin history), committed is 80% of the mean instead of the lowest. Committed = the
   lowest × availability; stretch = the mean × availability. No history: 1 point
   per working day of the next cycle × availability, marked as guessed.
 - **Fixed load first:** carry-over cards (current cycle, unfinished) and cards
-  already in the next cycle are always in the plan, at their remaining work
-  (not started 100%, in progress 75%, in review 25%). A person whose fixed load
+  already in the next cycle are always in the plan, at their remaining work:
+  by Linear (not started 100%, in progress 75%, in review 25%) or by what is
+  built, whichever is less. The build is read the way /next reads it, GitHub PRs
+  (drafts included) across every repo of the project and pushed or local
+  branches: merged into the default branch 10% (an open [Prod] port adds
+  nothing), an open PR 25%, a branch with no PR 50%. A failed read is a warning
+  in the review, and the cards it could hide keep their Linear figure. A person whose fixed load
   passes committed is flagged over and gets no new card.
 - **Later cycles stay put:** a card already scheduled for a later cycle than
   the next is left out ("scheduled for cycle N"), never moved.
@@ -80,7 +88,12 @@ history cards the same way as open ones, so capacity and sizes share one scale.
 
 ## Step 4: Plan
 
-`node ${CLAUDE_PLUGIN_ROOT}/scripts/cycle.mjs plan <project-ref> [--team KEY] --availability "<name>=<percent>"... --guess <CARD>=<TIER>...`
+`node ${CLAUDE_PLUGIN_ROOT}/scripts/cycle.mjs plan <project-ref> [--team KEY] --availability "<name>=<percent>"... --guess <CARD>=<TIER>... [--focus <milestone>]...`
+
+Pass `--focus` only when the user asks for a milestone first ("take cards from
+the logs milestone"). It names a milestone by its number or whole name and
+ranks that milestone's cards, with their open blockers, ahead of the rest for
+this plan only; Linear's milestone order and /next are unchanged.
 
 stdout is one JSON line `{status, plan, review, hash, counts}`.
 
@@ -100,11 +113,16 @@ capacity (or that it was guessed, and how many history cards were sized by
 guess), committed and stretch with points and card counts, any over-commitment
 from fixed load, each card with its band, size and remaining work, the left-out
 cards with their reasons, a spike suggestion when many open cards have no
-record, the hash and the exact apply command. Say that apply adds only the
-committed cards to the next cycle and sets an assignee only where a card has
-none; stretch cards are not added (they are next if there is room), and
-carry-over cards move with Linear's own rollover. Then STOP and wait. Offer to
-re-plan with other availability or guesses.
+record, the hash, and the Options section: A (committed only), B (with stretch)
+and, when it helps, C (stretch less the lowest-ranked cards that take someone
+past the middle of their range; built cards are never dropped), each with its
+apply command, and the recommended one with its reason. A committed pinned by
+one outlier cycle (under half the next) recommends B or C. Say that apply sets
+an assignee only where a card has none, adds the committed cards, adds the
+stretch cards only with `--with-stretch`, leaves out any `--drop <CARD>`, and
+that carry-over cards move with Linear's own rollover. The user may pick an
+option or drop other cards. Then STOP and wait. Offer to re-plan with other
+availability, guesses or `--focus`.
 
 ## Step 6: Apply, only on the user's explicit command
 
@@ -112,7 +130,9 @@ The rule: never apply without the user's command and the hash. Do not apply on y
 initiative, after a silence, or because an earlier message approved a different
 plan. When the user's message asks for it with the hash:
 
-`node ${CLAUDE_PLUGIN_ROOT}/scripts/cycle.mjs apply <project-ref> [--team KEY] --plan <plan.json> --approve <hash>`
+`node ${CLAUDE_PLUGIN_ROOT}/scripts/cycle.mjs apply <project-ref> [--team KEY] --plan <plan.json> --approve <hash> [--with-stretch] [--drop <CARD>]...`
+
+Pass `--with-stretch` and `--drop` exactly as the option the user chose names them.
 
 It re-reads Linear, checks every change before the first write, writes, reads
 each change back, and appends one line per change to `applied.jsonl`.
@@ -121,7 +141,9 @@ each change back, and appends one line per change to `applied.jsonl`.
 - **Exit 1**: a write failed or did not show up when read back; it stopped
   there. Running the same apply again continues and never repeats a change.
 - **Exit 5**: approval refused: no `--plan` or `--approve`, a hash that does not
-  match, an edited plan, or a ref for another project. Nothing was sent.
+  match, an edited plan, a ref for another project, a `--drop` card that is not
+  among the changes, or `--with-stretch` on a plan with no stretch changes.
+  Nothing was sent.
 - **Exit 6**: Linear changed since the plan (the next cycle, a card's cycle,
   assignee or state) and nothing was written. Plan again and present the new
   plan.

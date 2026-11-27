@@ -3,9 +3,10 @@ import { round2 } from './capacity.mjs';
 export const IN_PROGRESS_LEFT = 0.75;
 export const IN_REVIEW_LEFT = 0.25;
 
-export function remainingFraction(state) {
-  if (state?.type !== 'started') return 1;
-  return /review/i.test(state.name ?? '') ? IN_REVIEW_LEFT : IN_PROGRESS_LEFT;
+// built: the card's build state from GitHub and its branches; the lower of the two readings wins, since Linear often lags.
+export function remainingFraction(state, built = null) {
+  const linear = state?.type !== 'started' ? 1 : /review/i.test(state.name ?? '') ? IN_REVIEW_LEFT : IN_PROGRESS_LEFT;
+  return Math.min(linear, built?.fraction ?? 1);
 }
 
 const BAND_RANK = { fixed: 0, committed: 0, stretch: 1 };
@@ -29,8 +30,9 @@ export function fillCycle({ people, fixed, candidates, edges, done, sizeOf }) {
   const out = new Map();
   const sized = c => {
     const s = sizeOf(c.key);
-    const fraction = remainingFraction(c.state);
-    return { tier: s.tier, points: s.points, sizeSource: s.source, fraction, remaining: round2(s.points * fraction) };
+    const fraction = remainingFraction(c.state, c.built);
+    const built = c.built ? { kind: c.built.kind, evidence: c.built.evidence } : null;
+    return { tier: s.tier, points: s.points, sizeSource: s.source, fraction, remaining: round2(s.points * fraction), built };
   };
   const place = (c, size, band, person, assigns, reason = null) => {
     if (person) person.load = round2(person.load + size.remaining);
