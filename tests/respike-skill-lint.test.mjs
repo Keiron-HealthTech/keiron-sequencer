@@ -261,7 +261,7 @@ test('the config rule: the skill never edits the file, and the CLI writes it onl
 });
 
 test('the config step runs its three forms in order: --out only on the draft, --draft only on the review and the write', () => {
-  const draftForm = `${RESPIKE}config <project ref> --out <draft.json> [--root <dir>]... [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]... [--hand <CARD>:<item>=<CARD>]... [--drop <CARD>:<item>]... [--skip-check <CARD>]...`;
+  const draftForm = `${RESPIKE}config <project ref> --out <draft.json> [--edit] [--root <dir>]... [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]... [--hand <CARD>:<item>=<CARD>]... [--drop <CARD>:<item>]... [--skip-check <CARD>]...`;
   const reviewForm = `${RESPIKE}config --draft <draft.json>`;
   const writeForm = `${RESPIKE}config --draft <draft.json> --approve <hash>`;
   const lines = commandLines('scripts/respike.mjs').filter(l => /respike\.mjs config\b/.test(l));
@@ -276,7 +276,7 @@ test('the config step runs its three forms in order: --out only on the draft, --
   const at = [`\n${draftForm}\n`, `\n${reviewForm}\n`, `\n${writeForm}\n`].map(form => configStep.indexOf(form));
   assert.ok(at.every(i => i >= 0), JSON.stringify(at));
   assert.deepEqual([...at].sort((a, b) => a - b), at, 'the config forms are out of order');
-  for (const flag of ['--out', '--draft', '--root']) assert.ok(hasToken(skill, flag), `SKILL.md does not document ${flag}`);
+  for (const flag of ['--out', '--edit', '--draft', '--root']) assert.ok(hasToken(skill, flag), `SKILL.md does not document ${flag}`);
 });
 
 test('the config step goes: show the gaps, draft into scratch, ask for roots once, show the report, review an edit, write on yes, report the backup, preflight again', () => {
@@ -319,6 +319,14 @@ test('an unparseable config is reported and the skill stops', () => {
   for (const anchor of ['`it is never replaced: fix or remove it by hand`', 'is not JSON', 'Report it and stop', 'never drafts from it and never replaces it', 'fixes it by hand']) {
     stepSays(configStep, anchor);
   }
+});
+
+test('the config step changes an existing entry through an --edit draft, never by hand in config.json', () => {
+  for (const anchor of [
+    'the draft with `--edit` holds the whole config.json even when nothing is missing', 'never by hand in config.json', '`edit: true`',
+    'draft again with `--edit` into a new file instead of stopping', 'Never offer the write for a draft whose `changes` is empty',
+  ]) stepSays(configStep, anchor);
+  stepSays(sectionOf('Step 6: The card loop').split('\n### Errors and the end\n')[1] ?? '', 'through the config step with `--edit` (Missing config), never a hand edit of config.json');
 });
 
 test('the config loop has its three end conditions', () => {

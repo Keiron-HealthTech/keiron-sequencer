@@ -50,7 +50,7 @@ const USAGE = [
   'usage: node scripts/spike.mjs prune [<slug>] [--dry-run]',
   'usage: node scripts/spike.mjs status [--project <project ref>]',
   'usage: node scripts/spike.mjs tracks [--project <project ref>]',
-  'usage: node scripts/spike.mjs config <project ref> --out <draft.json> [--root <dir>]...',
+  'usage: node scripts/spike.mjs config <project ref> --out <draft.json> [--edit] [--root <dir>]...',
   'usage: node scripts/spike.mjs config --draft <draft.json> [--approve <hash>]',
 ];
 

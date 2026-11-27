@@ -57,7 +57,7 @@ subagent per card, no headless runs.
    project, run:
 
    ```bash
-   node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs config <project ref> --out <draft.json> [--root <dir>]...
+   node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs config <project ref> --out <draft.json> [--edit] [--root <dir>]...
    node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs config --draft <draft.json>
    node ${CLAUDE_PLUGIN_ROOT}/scripts/spike.mjs config --draft <draft.json> --approve <hash>
    ```
@@ -83,6 +83,11 @@ subagent per card, no headless runs.
      /keiron-sequencer:respike's config step (Missing config: draft, review,
      write) for every other case. `message: 'nothing to draft'` means the config
      already covers the project: say nothing and go on.
+   - **Changing an existing entry** (a `setup` missing a step, a wrong
+     checkout or branch): draft with `--edit`, which writes the whole config
+     even when nothing is missing, make the change in that draft, review it
+     and write it on the user's yes with the new hash. Never edit
+     config.json by hand.
    - An empty `projects.<slug>.repos: []` is an error: leave the key out to
      allow every repo.
 2. Ask the user to add `~/.keiron-sequencer` as a Claude Code additional directory
@@ -185,7 +190,10 @@ reports nothing; run it again.
    prints its `path`; edit only under that path. The repo's setup commands run
    there once, sequentially. `action: 'setup-failed'` (Exit 1) names the
    command, its exit code and the log: fix the cause or report it; the next
-   `tree` call retries the setup.
+   `tree` call retries the setup. A cause in the configured `setup` itself
+   is changed with a `config --edit` draft (Preflight, item 1), never by
+   hand; then call `tree` again. A tree whose setup already passed never
+   runs it again: on the user's yes, run the added step once in its `path`.
    - For an existing-PR card (`origin: 'existing-pr'`) the CLI applies the PR's
      diff into that repo's tree once: at `tree <repoDir>` while the card is
      current, or at `next` when that tree is already open. Check `prDiff`:

@@ -62,7 +62,10 @@ the skills work without them.
   `/keiron-sequencer:spike` reads each card's repo from Linear, finds your
   checkouts next to the one you run it in, and asks you to confirm one line per
   repo (`api → ~/src/api`). It reads the rest from each checkout
-  and writes `~/.keiron-sequencer/config.json` on your yes. The shape is
+  and writes `~/.keiron-sequencer/config.json` on your yes. To change an entry
+  later (a setup step to add, another checkout), ask for it: the skill drafts
+  the whole file, makes the change in the draft and writes it on your yes, with
+  a backup. The shape is
   [docs/spike-config.example.json](docs/spike-config.example.json).
 - **Edit access** to `~/.keiron-sequencer` in Claude Code (`/add-dir ~/.keiron-sequencer`)
   before the first spike.

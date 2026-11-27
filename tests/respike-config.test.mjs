@@ -870,3 +870,99 @@ test('reading the trial reference from the home: a trial folder gap with trial p
   assert.equal(read.code, 0, read.stderr);
   assert.deepEqual(lineOf(json(read), 'old-gamma').map(l => l.kind), ['rename-trial-dirs']);
 });
+
+const PRISMA = ['npx', 'prisma', 'generate', '--schema', 'apps/base/prisma/schema.prisma'];
+
+test('--edit drafts the whole config.json when nothing is missing; an edited entry goes through review, a new hash and the write with its backup', async () => {
+  const fx = respikeFixture();
+  const before = readFileSync(join(fx.home, 'config.json'));
+  const state = homeState(fx);
+  const out = join(fx.scratch, 'draft-1.json');
+  const draft = await config(fx, [...pick, '--out', out, '--edit']);
+  assert.equal(draft.code, 0, draft.stderr);
+  const shown = json(draft);
+  assert.deepEqual([shown.action, shown.draft, shown.edit, shown.valid, shown.changes, shown.items], ['config-draft', out, true, true, [], []]);
+  assert.match(shown.approve, /^[0-9a-f]{12}$/);
+  assert.equal(readFileSync(out, 'utf8'), `${JSON.stringify(JSON.parse(before.toString('utf8')), null, 2)}\n`);
+  assert.deepEqual(homeState(fx), state);
+
+  const value = JSON.parse(readFileSync(out, 'utf8'));
+  const setup = [...value.repos.backend.setup, PRISMA];
+  value.repos.backend.setup = setup;
+  const edited = `${JSON.stringify(value, null, 2)}\n`;
+  writeFileSync(out, edited);
+  const review = await config(fx, ['--draft', out]);
+  assert.equal(review.code, 0, review.stderr);
+  const reviewed = json(review);
+  assert.deepEqual(reviewed.changes, [{ op: 'set', path: 'repos.backend.setup', before: [], after: setup }]);
+  assert.notEqual(reviewed.approve, shown.approve);
+  assert.equal((await config(fx, ['--draft', out, '--approve', shown.approve])).code, 5);
+  assert.deepEqual(homeState(fx), state);
+
+  const write = await config(fx, ['--draft', out, '--approve', reviewed.approve]);
+  assert.equal(write.code, 0, write.stderr);
+  assert.deepEqual(readFileSync(join(fx.home, 'config.json.bak')), before);
+  assert.equal(readFileSync(join(fx.home, 'config.json'), 'utf8'), edited);
+  assert.deepEqual(loadConfig(fx.home, { userHome: fx.deps.userHome }).repos.backend.setup, setup);
+});
+
+test('--edit beside a real gap keeps the proposed entries in the one draft', async () => {
+  const fx = riskMissing();
+  const out = join(fx.scratch, 'draft-1.json');
+  const plain = await config(fx, [...pick, '--out', join(fx.scratch, 'plain.json')]);
+  const draft = await config(fx, [...pick, '--out', out, '--edit']);
+  assert.equal(draft.code, 0, draft.stderr);
+  const { edit, items, changes, approve } = json(draft);
+  assert.equal(edit, true);
+  assert.deepEqual(items.map(i => i.code), ['risk-missing']);
+  assert.deepEqual(changes.map(c => c.path), ['repos.backend.risk']);
+  assert.equal(readFileSync(out, 'utf8'), readFileSync(join(fx.scratch, 'plain.json'), 'utf8'));
+  assert.equal(approve, json(plain).approve);
+});
+
+test('--edit with no config.json has nothing to edit: no file, no hash', async () => {
+  const fx = respikeFixture();
+  rmSync(join(fx.home, 'config.json'));
+  const before = homeState(fx);
+  const out = join(fx.scratch, 'draft-1.json');
+  const draft = await config(fx, [...pick, '--out', out, '--edit', '--root', rootDir()]);
+  assert.equal(draft.code, 0, draft.stderr);
+  assert.deepEqual([json(draft).draft, json(draft).approve, json(draft).message], [null, null, 'nothing to draft']);
+  assert.equal(existsSync(out), false);
+  assert.deepEqual(homeState(fx), before);
+});
+
+test('--edit over a config.json the plain draft cannot repair drafts it as it is, with its errors and no hash, and a hand fix in the draft gets one', async () => {
+  const bad = { name: 'x', url: 'https://github.com/acme/x.git', remote: 'origin' };
+  const fx = respikeFixture({ config: c => ({ ...c, repos: { ...c.repos, 'bad key': bad } }) });
+  const plain = await config(fx, [...pick, '--out', join(fx.scratch, 'plain.json')]);
+  assert.equal(json(plain).message, 'nothing to draft');
+  const out = join(fx.scratch, 'draft-1.json');
+  const draft = await config(fx, [...pick, '--out', out, '--edit']);
+  assert.equal(draft.code, 0, draft.stderr);
+  const shown = json(draft);
+  assert.deepEqual([shown.draft, shown.approve, shown.valid], [out, null, false]);
+  assert.ok(shown.errors.some(e => e.startsWith('repos.bad key')), JSON.stringify(shown.errors));
+  const value = JSON.parse(readFileSync(out, 'utf8'));
+  assert.deepEqual(value.repos['bad key'], bad);
+  delete value.repos['bad key'];
+  writeFileSync(out, `${JSON.stringify(value, null, 2)}\n`);
+  const review = await config(fx, ['--draft', out]);
+  assert.equal(review.code, 0, review.stderr);
+  assert.deepEqual(json(review).changes, [{ op: 'remove', path: 'repos.bad key', before: bad }]);
+  assert.match(json(review).approve, /^[0-9a-f]{12}$/);
+});
+
+test('--edit is refused with exit 2 everywhere but the draft: without --out, on the review and on the write', async () => {
+  const fx = respikeFixture();
+  const out = join(fx.scratch, 'draft-1.json');
+  writeFileSync(out, readFileSync(join(fx.home, 'config.json')));
+  const before = homeState(fx);
+  for (const argv of [[...pick, '--edit'], ['--draft', out, '--edit'], ['--draft', out, '--edit', '--approve', 'abc'], ['--edit', '--draft', out]]) {
+    const r = await config(fx, argv);
+    assert.equal(r.code, 2, `${argv.join(' ')}: ${r.stderr}`);
+    assert.match(r.stderr, /usage: node scripts\/respike\.mjs config/);
+  }
+  assert.equal(fx.linear.sent.length, 0);
+  assert.deepEqual(homeState(fx), before);
+});

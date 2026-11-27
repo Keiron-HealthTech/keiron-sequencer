@@ -38,7 +38,7 @@ const USAGE = [
   `usage: node scripts/respike.mjs fetch <project ref> --approve <hash> ${SELECT}`,
   `usage: node scripts/respike.mjs fast-forward <project ref> --repo <repoDir> --approve <hash> ${SELECT}`,
   `usage: node scripts/respike.mjs begin <project ref> --approve <hash> ${SELECT} [--max-tokens <n>] [--max-cards <n>] [--box <n>] [--workers <n>] [--checks <n>] [--session-file <transcript.jsonl>]`,
-  `usage: node scripts/respike.mjs config <project ref> --out <draft.json> [--root <dir>]... ${SELECT}`,
+  `usage: node scripts/respike.mjs config <project ref> --out <draft.json> [--edit] [--root <dir>]... ${SELECT}`,
   'usage: node scripts/respike.mjs config --draft <draft.json> [--approve <hash>]',
   'usage: node scripts/respike.mjs report <project ref> [--run <runId>]',
   `usage: node scripts/respike.mjs audit <project ref> --before ${SELECT}`,
@@ -253,8 +253,9 @@ async function begin(args, deps) {
   });
 }
 
-// --out drafts, --draft reviews, and --draft with --approve writes config.json. Every message and report goes out with
-// URL credentials masked: the change list and the diff carry the base file's own values.
+// --out drafts (with --edit, the whole file even when nothing is missing), --draft reviews, and --draft with --approve
+// writes config.json. Every message and report goes out with URL credentials masked: the change list and the diff carry
+// the base file's own values.
 async function config(args, deps) {
   let result;
   try {
@@ -342,8 +343,11 @@ function readPatchMap(trialLogDir) {
   }
 }
 
+// --edit drafts the whole config.json even when no entry is missing, so an existing entry can be changed in the draft
+// and go through the same review and hash. With no config.json there is nothing to edit: the plain draft bootstraps it.
 async function configDraft(args, deps) {
-  const a = selectionArgs(args, ['--out'], ['--root']);
+  const edit = args.includes('--edit');
+  const a = selectionArgs(args.filter(x => x !== '--edit'), ['--out'], ['--root']);
   if (!a) return fail(2, ...USAGE);
   if (a.error) return fail(2, a.error, ...USAGE);
   const { out, roots } = draftInputs(a, deps);
@@ -366,11 +370,12 @@ async function configDraft(args, deps) {
     const scan = scanRoots(deps.git, searched.searched);
     const repos = [...missingConfig.map(g => g.repo), ...(read.issues ?? []).map(i => i.repo).filter(dir => dir !== null)];
     const probe = toolProber(deps.runSetup, { cwd: deps.tmpRoot });
-    const { merged, items, fixes, stray, needs } = buildDraft({
+    const { merged: drafted, items, fixes, stray, needs } = buildDraft({
       raw, planning, missingConfig, slug, facts: draftFacts(deps.git, probe, { scan, targets, repos, planning, facts }), roots: searched,
       riskTemplate: readRiskTemplate(deps.riskTemplate), userHome: deps.userHome,
     });
-    const report = { base: baseReport(read), roots: { ...searched, missing: scan.missingRoots }, items, fixes, stray, warnings: coverage.warnings, needs };
+    const report = { base: baseReport(read), roots: { ...searched, missing: scan.missingRoots }, items, fixes, stray, warnings: coverage.warnings, needs, ...(edit ? { edit } : {}) };
+    const merged = drafted ?? (edit ? raw : null);
     if (merged === null) return ok({ action: 'config-draft', draft: null, approve: null, message: 'nothing to draft', ...report });
     const text = `${JSON.stringify(merged, null, 2)}\n`;
     writeFileSync(out, text, { flag: 'wx' });

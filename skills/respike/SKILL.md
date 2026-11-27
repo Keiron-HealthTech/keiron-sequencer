@@ -159,23 +159,34 @@ any plan that moved.
 
 The config step drafts the missing entries from the checkouts it finds, and
 the CLI writes the spike config only with the hash of the draft the user
-approved. Three forms, in this order: the draft, the review and the write.
+approved. It also changes an entry that exists but is wrong or incomplete
+(a `setup` missing a step, a stale `defaultBranch`): the draft with
+`--edit` holds the whole config.json even when nothing is missing, and the
+change goes into that draft. Three forms, in this order: the draft, the
+review and the write.
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs config <project ref> --out <draft.json> [--root <dir>]... [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]... [--hand <CARD>:<item>=<CARD>]... [--drop <CARD>:<item>]... [--skip-check <CARD>]...
+node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs config <project ref> --out <draft.json> [--edit] [--root <dir>]... [--cards <CARD>[,<CARD>]...] [--stale] [--all] [--built <CARD>=<branch>]... [--unbuilt <CARD>]... [--with-default <repoDir>]... [--hand <CARD>:<item>=<CARD>]... [--drop <CARD>:<item>]... [--skip-check <CARD>]...
 node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs config --draft <draft.json>
 node ${CLAUDE_PLUGIN_ROOT}/scripts/respike.mjs config --draft <draft.json> --approve <hash>
 ```
 
 The draft reads Linear and git and writes only its `--out` file; the review
 and the write need no key and run no git. The skill never reads config.json
-itself.
+itself, and never edits it: a change to an existing entry is made in an
+`--edit` draft, never by hand in config.json.
 
 1. **Draft.** Run the draft with the same selection flags as the preflight,
    with `--out` a new file in the session's scratch directory, never in
    `~/.keiron-sequencer` or a repo. Every round drafts into a new file: an
    existing `--out` is refused, so edits made to a draft are never
    overwritten.
+   - Add `--edit` when an existing entry needs a change: the user asked for
+     one, or a `setup-failed`, a typecheck or a preflight shows a configured
+     value is wrong or incomplete. The draft is then the whole config.json
+     as it is, with any missing entries proposed on top, and the output
+     carries `edit: true`. With no config.json there is nothing to edit:
+     `nothing to draft`, and the plain draft bootstraps the file.
    - Exit 2 with `no checkout roots` (stderr, the gap lines, no JSON): ask
      the user once which folders hold their checkouts. Never suggest a
      default folder. Pass each as `--root <dir>` and draft again. The draft
@@ -214,7 +225,9 @@ itself.
      review give a hash.
    - `message: 'nothing to draft'` (`draft: null`, `approve: null`): no
      file was written. Show each item's lines, say what is still missing,
-     and stop.
+     and stop. When the fix is a change to an existing entry (an `unfilled`
+     line that says to fix it by hand included), draft again with `--edit`
+     into a new file instead of stopping.
 3. **Not found.** For a line "not found under <roots>", offer the three
    options as written: clone it yourself, add a root with `--root <dir>`,
    or leave its cards out with `--cards`. A `--root <dir>` replaces the
@@ -234,7 +247,10 @@ itself.
 5. **Edits.** Edits go into the draft file in the scratch directory, never
    into config.json: the user's, or the skill's on the user's words. Then
    run the review: it prints a new change list, diff and hash for the
-   edited text. Show them.
+   edited text. Show them. An `--edit` draft starts with no change of its
+   own (`changes` empty unless an entry was missing): make the change in
+   it, then review. Never offer the write for a draft whose `changes` is
+   empty: it would only replace the backup with a copy of the same file.
 6. **Write.** One question: "Write config.json with draft <hash>? (backup
    to `config.json.bak`)". On an explicit yes, run the write only with the
    `approve` hash the CLI printed for the draft text the user approved. It
@@ -673,7 +689,17 @@ when you report `combined-ok`.
 
 - `action: 'setup-failed'` (Exit 1), at a replay, at `tree`, at `cross` or
   at `combine`: fix the cause or report it; the next call retries. At
-  `cross` nothing was merged and the crossing stays pending.
+  `cross` nothing was merged and the crossing stays pending. When the cause
+  is the repo's configured `setup` (a step missing, such as a code
+  generator whose output is gitignored, or a wrong command), propose the
+  change through the config step with `--edit` (Missing config), never a
+  hand edit of config.json. With a run open, after the write go back to the
+  call that failed, not to preflight (it refuses an open run with Exit 5):
+  each `tree` reads config.json again, so a tree whose setup failed retries
+  with the new steps. A tree whose setup already passed never runs it again
+  (a step missing there shows later, for example as a typecheck error on a
+  generated module): on the user's yes, run the added step once in that
+  tree's `path`; trees opened later run the new setup.
 - A tree that refuses (Exit 1) because its pinned base is gone or its
   combined base differs from the plan: report it; abandon only when the user
   asks, then preflight again. A repo with only a `url` is refused too: the
